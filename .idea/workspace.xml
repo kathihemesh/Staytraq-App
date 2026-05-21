@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="6fa93c33-b47e-44f3-8a6b-45f1692a6d9a" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/Staytraq App.iml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app" beforeDir="false" afterPath="$PROJECT_DIR$/app" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/app.json" beforeDir="false" afterPath="$PROJECT_DIR$/app/app.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/app/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/app/package.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/app/_layout.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/src/app/_layout.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/app/explore.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/app/index.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/app/src/app/index.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/animated-icon.module.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/animated-icon.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/animated-icon.web.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/app-tabs.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/app-tabs.web.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/external-link.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/hint-row.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/themed-text.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/themed-view.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/ui/collapsible.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/components/web-badge.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/constants/theme.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/src/constants/theme.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/global.css" beforeDir="false" afterPath="$PROJECT_DIR$/app/src/global.css" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/src/hooks/use-theme.ts" beforeDir="false" afterPath="$PROJECT_DIR$/app/src/hooks/use-theme.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/app/tsconfig.json" beforeDir="false" afterPath="$PROJECT_DIR$/app/tsconfig.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/web/app/api/send-reminder/route.ts" beforeDir="false" afterPath="$PROJECT_DIR$/web/app/api/send-reminder/route.ts" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/app" />
+    <option name="ROOT_SYNC" value="DONT_SYNC" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "kathihemesh"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/kathihemesh/Staytraq",
+    "accountId": "462e20e1-e83e-41c0-a002-e2d81d64ac71"
+  }
+}]]></component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 1,
+  "fromUser": false
+}]]></component>
+  <component name="ProjectId" id="3E39xC2EZBmPXRYst9SjCH1f5B1" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "master",
+    "ignore.virus.scanning.warn.message": "true",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "C:/Staytraq App",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "to.speed.mode.migration.done": "true",
+    "vue.rearranger.settings.migration": "true"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-024ed6589d45-c2ffad84badb-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-261.23567.174" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="6fa93c33-b47e-44f3-8a6b-45f1692a6d9a" name="Changes" comment="" />
+      <created>1779396629493</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1779396629493</updated>
+      <workItem from="1779396630519" duration="704000" />
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+  </component>
+</project>
