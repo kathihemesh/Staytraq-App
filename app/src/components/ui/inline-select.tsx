@@ -114,9 +114,14 @@ export function InlineSelect({
   const showEmphasisBorder = open || (isActive && hasSelection)
   const showPrimaryTint = usePrimaryAccent && (open || (isActive && hasSelection))
 
-  const triggerClassName = showEmphasisBorder
-    ? "h-11 flex-row items-center justify-center rounded-xl border-2 border-slate-200 bg-slate-50 shadow-sm dark:border-slate-700 dark:bg-slate-900"
-    : "h-11 flex-row items-center justify-center rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+  let triggerClassName = "h-11 flex-row items-center justify-center rounded-xl px-4"
+  if (showPrimaryTint) {
+    triggerClassName += " border-2 border-primary bg-primary/10 dark:bg-primary/20"
+  } else if (showEmphasisBorder) {
+    triggerClassName += " border-2 border-slate-200 bg-slate-50 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+  } else {
+    triggerClassName += " border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+  }
 
   const renderOptions = () => (
     <>
@@ -138,7 +143,7 @@ export function InlineSelect({
               style={sel && usePrimaryAccent ? { color: primaryColor } : undefined}
               className={clsx(
                 "text-[13px] font-semibold",
-                sel ? "" : "text-slate-800 dark:text-slate-100",
+                sel && usePrimaryAccent ? "" : "text-slate-800 dark:text-slate-100",
               )}
             >
               {opt.listLabel ?? opt.shortLabel}
@@ -187,14 +192,6 @@ export function InlineSelect({
         onPress={toggleOpen}
         activeOpacity={0.88}
         className={triggerClassName}
-        style={
-          showPrimaryTint
-            ? {
-                borderColor: primaryColor,
-                backgroundColor: isDark ? "rgba(0,145,255,0.12)" : "rgba(0,113,223,0.08)",
-              }
-            : undefined
-        }
       >
         <Text
           className={clsx(
@@ -240,7 +237,7 @@ export function InlineSelect({
       ) : null}
 
       {overlay && open && menuLayout ? (
-        <Modal transparent visible animationType="fade" onRequestClose={() => onOpenChange?.(false)}>
+        <Modal transparent visible animationType="none" statusBarTranslucent={true} onRequestClose={() => onOpenChange?.(false)}>
           <Animated.View entering={FadeIn.duration(120)} exiting={FadeOut.duration(90)} style={StyleSheet.absoluteFill}>
             <Pressable style={StyleSheet.absoluteFill} onPress={() => onOpenChange?.(false)} />
           </Animated.View>

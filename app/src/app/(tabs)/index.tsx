@@ -38,7 +38,10 @@ export default function DashboardScreen() {
   const hasLoadedOnce = useRef(false)
 
   const fetchDashboardData = useCallback(async (silent = false) => {
-    if (!user?.id) return
+    if (!user?.id) {
+      setDataLoading(false)
+      return
+    }
 
     try {
       if (!silent) {
@@ -275,17 +278,79 @@ export default function DashboardScreen() {
 
   if (dataLoading && !hasLoadedOnce.current) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark items-center justify-center">
-        <ActivityIndicator size="large" color={isDark ? "#0091ff" : "#0071df"} />
-        <Text className="text-sm text-muted dark:text-muted-dark mt-3">Loading Staytraq...</Text>
-      </View>
+      <SafeAreaView key="dashboard-loading" className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
+        {/* Header Skeleton */}
+        <View className="px-6 pt-4 pb-6 flex-row justify-between items-center">
+          <View className="gap-2">
+            <View className="h-7 w-28 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+            <View className="h-4 w-48 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+          </View>
+          <View className="flex-row gap-2">
+            <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+            <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+          </View>
+        </View>
+
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+          {/* Stats Grid Skeleton */}
+          <View className="px-6 pb-6 flex-row flex-wrap justify-between">
+            {[1, 2, 3, 4].map((i) => (
+              <View
+                key={i}
+                className="w-[48%] h-28 bg-card dark:bg-card-dark border border-border dark:border-border-dark p-4 rounded-3xl mb-4 shadow-sm opacity-65 gap-2"
+              >
+                <View className="flex-row justify-between items-center">
+                  <View className="h-8 w-8 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+                  <View className="h-3 w-14 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                </View>
+                <View className="h-6 w-20 bg-muted/25 dark:bg-muted-dark/25 rounded-md" />
+                <View className="h-3 w-24 bg-muted/10 dark:bg-muted-dark/10 rounded-md" />
+              </View>
+            ))}
+          </View>
+
+          {/* Charts Skeleton */}
+          <View className="px-6 gap-6">
+            <View className="h-56 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm opacity-60" />
+            <View className="h-56 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm opacity-60" />
+          </View>
+
+          {/* Recent Activity Skeleton */}
+          <View className="px-6 mt-6">
+            <View className="flex-row justify-between items-center mb-4">
+              <View className="h-5 w-32 bg-muted/20 dark:bg-muted-dark/20 rounded-md" />
+              <View className="h-4 w-16 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+            </View>
+            <View className="gap-3">
+              {[1, 2, 3].map((i) => (
+                <View
+                  key={i}
+                  className="flex-row items-center justify-between py-3 border-b border-border/20 dark:border-border-dark/20 opacity-60"
+                >
+                  <View className="flex-row items-center flex-1 pr-4">
+                    <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-full mr-3.5" />
+                    <View className="flex-1 gap-2">
+                      <View className="h-4 w-28 bg-muted/25 dark:bg-muted-dark/25 rounded-md" />
+                      <View className="h-3 w-20 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                    </View>
+                  </View>
+                  <View className="items-end gap-1.5">
+                    <View className="h-3.5 w-12 bg-muted/25 dark:bg-muted-dark/25 rounded-md" />
+                    <View className="h-3 w-10 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
     )
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
+    <SafeAreaView key="dashboard-loaded" className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
       <ScrollView
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 110 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={isDark ? "#0091ff" : "#0071df"} />

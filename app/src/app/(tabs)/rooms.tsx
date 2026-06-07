@@ -27,6 +27,8 @@ import {
   TouchableOpacity,
   View,
   useWindowDimensions,
+  LayoutAnimation,
+  UIManager,
 } from "react-native"
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import clsx from "clsx"
@@ -387,6 +389,23 @@ export default function RoomsScreen() {
   })
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
 
+  const hasActiveFilters =
+    filters.floor !== "All Floors" ||
+    filters.type !== "All Types" ||
+    filters.capacity !== "All Beds"
+
+  // Enable UIManager layout animations on Android
+  useEffect(() => {
+    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true)
+    }
+  }, [])
+
+  // Smooth layout animation on filter changes
+  useEffect(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+  }, [hasActiveFilters])
+
   const [addForm, setAddForm] = useState<{
     number: string
     floorNo: number | null
@@ -433,20 +452,17 @@ export default function RoomsScreen() {
   )
 
   const floorFilterOptions = useMemo(
-    () => [
-      { value: "All Floors", shortLabel: "Floor", listLabel: "Any floor" },
-      ...availableFloors.map((f) => ({
+    () =>
+      availableFloors.map((f) => ({
         value: f.label,
         shortLabel: f.value === 0 ? "G" : String(f.value),
-        listLabel: f.label,
+        listLabel: f.value === 0 ? "G" : String(f.value),
       })),
-    ],
     [availableFloors],
   )
 
   const typeFilterOptions = useMemo(
     () => [
-      { value: "All Types", shortLabel: "Type", listLabel: "Any type" },
       { value: "AC", shortLabel: "AC", listLabel: "AC" },
       { value: "Non-AC", shortLabel: "NON AC", listLabel: "NON AC" },
     ],
@@ -455,14 +471,13 @@ export default function RoomsScreen() {
 
   const capacityFilterOptions = useMemo(
     () =>
-      capacityOptions.map((opt) => ({
-        value: opt,
-        shortLabel:
-          opt === "All Beds"
-            ? "Beds"
-            : `${Number.parseInt(opt, 10) || ""}`,
-        listLabel: opt === "All Beds" ? "Any beds" : opt,
-      })),
+      capacityOptions
+        .filter((opt) => opt !== "All Beds")
+        .map((opt) => ({
+          value: opt,
+          shortLabel: `${Number.parseInt(opt, 10) || ""}`,
+          listLabel: opt.replace(" Beds", ""),
+        })),
     [capacityOptions],
   )
 
@@ -471,7 +486,7 @@ export default function RoomsScreen() {
       availableFloors.map((f) => ({
         value: String(f.value),
         shortLabel: f.value === 0 ? "G" : String(f.value),
-        listLabel: f.label,
+        listLabel: f.value === 0 ? "G" : String(f.value),
       })),
     [availableFloors],
   )
@@ -924,14 +939,18 @@ export default function RoomsScreen() {
                 <Text className={clsx("text-sm font-medium", stat.text, active ? "font-semibold" : "")}>
                   {stat.label}
                 </Text>
-                <Text
-                  className={clsx(
-                    "rounded-full px-2 py-0.5 text-xs font-semibold bg-black/10 dark:bg-white/10",
-                    stat.text,
-                  )}
-                >
-                  {statsById[stat.id]}
-                </Text>
+                {isLoading ? (
+                  <View className="h-4 w-6 bg-slate-200/50 dark:bg-slate-800/35 rounded-full items-center justify-center" />
+                ) : (
+                  <Text
+                    className={clsx(
+                      "rounded-full px-2 py-0.5 text-xs font-semibold bg-black/10 dark:bg-white/10",
+                      stat.text,
+                    )}
+                  >
+                    {statsById[stat.id]}
+                  </Text>
+                )}
               </TouchableOpacity>
             )
           })}
@@ -939,19 +958,38 @@ export default function RoomsScreen() {
       </ScrollView>
 
       <View className="mb-5 mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/85">
-        <View className="relative mb-3">
-          <View className="pointer-events-none absolute left-3 top-1/2 z-10 mt-[-7px]">
-            <Search size={16} color="#94a3b8" />
+        <View className="flex-row items-center mb-3 gap-2">
+          <View className="relative flex-1">
+            <View className="pointer-events-none absolute left-3 top-1/2 z-10 mt-[-7px]">
+              <Search size={16} color="#94a3b8" />
+            </View>
+            <TextInput
+              placeholder="Search by room number..."
+              placeholderTextColor="#94a3b8"
+              value={search}
+              onChangeText={setSearch}
+              autoCorrect={false}
+              clearButtonMode="while-editing"
+              className="h-11 rounded-xl border-0 bg-slate-50 pl-10 pr-3 text-[15px] leading-6 text-slate-900 dark:bg-black/35 dark:text-slate-50"
+            />
           </View>
-          <TextInput
-            placeholder="Search by room number..."
-            placeholderTextColor="#94a3b8"
-            value={search}
-            onChangeText={setSearch}
-            autoCorrect={false}
-            clearButtonMode="while-editing"
-            className="h-11 rounded-xl border-0 bg-slate-50 pl-10 pr-3 text-[15px] leading-6 text-slate-900 dark:bg-black/35 dark:text-slate-50"
-          />
+          {hasActiveFilters && (
+            <TouchableOpacity
+              onPress={() => {
+                LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut)
+                setFilters({
+                  floor: "All Floors",
+                  type: "All Types",
+                  status: filters.status,
+                  capacity: "All Beds",
+                })
+              }}
+              activeOpacity={0.8}
+              className="h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+            >
+              <X size={18} color={isDark ? "#e2e8f0" : "#64748b"} />
+            </TouchableOpacity>
+          )}
         </View>
         <View className="mt-1 flex-row gap-2">
           <InlineSelect
@@ -969,7 +1007,7 @@ export default function RoomsScreen() {
               void Haptics.selectionAsync()
               setOpenDropdown(o ? "filter-floor" : null)
             }}
-            onChange={(v) => setFilters((p) => ({ ...p, floor: v }))}
+            onChange={(v) => setFilters((p) => ({ ...p, floor: p.floor === v ? "All Floors" : v }))}
           />
           <InlineSelect
             key={`filter-type-${filters.type}-${openDropdown === "filter-type"}`}
@@ -986,7 +1024,7 @@ export default function RoomsScreen() {
               void Haptics.selectionAsync()
               setOpenDropdown(o ? "filter-type" : null)
             }}
-            onChange={(v) => setFilters((p) => ({ ...p, type: v }))}
+            onChange={(v) => setFilters((p) => ({ ...p, type: p.type === v ? "All Types" : v }))}
           />
           <InlineSelect
             key={`filter-capacity-${filters.capacity}-${openDropdown === "filter-capacity"}`}
@@ -1003,7 +1041,7 @@ export default function RoomsScreen() {
               void Haptics.selectionAsync()
               setOpenDropdown(o ? "filter-capacity" : null)
             }}
-            onChange={(v) => setFilters((p) => ({ ...p, capacity: v }))}
+            onChange={(v) => setFilters((p) => ({ ...p, capacity: p.capacity === v ? "All Beds" : v }))}
           />
         </View>
       </View>
@@ -1212,8 +1250,6 @@ export default function RoomsScreen() {
                           options={addFloorOptions}
                           value={String(editForm.floorNo ?? selectedRoom.floorNo)}
                           defaultTriggerLabel="Floor"
-                          accent="neutral"
-                          isActive={false}
                           overlay
                           keyboardHeight={keyboardHeight}
                           onChange={(v) => {
@@ -1251,8 +1287,6 @@ export default function RoomsScreen() {
                           ]}
                           value={editForm.type ?? selectedRoom.type}
                           defaultTriggerLabel="Type"
-                          accent="neutral"
-                          isActive={false}
                           overlay
                           keyboardHeight={keyboardHeight}
                           onChange={(v) => setEditForm((p) => ({ ...p, type: v as "AC" | "Non-AC" }))}
@@ -1525,7 +1559,7 @@ export default function RoomsScreen() {
         contentContainerStyle={{
           flexGrow: 1,
           paddingHorizontal: 8,
-          paddingBottom: !hideFab && !loadingFirst && !pgMissing && !pageError ? insets.bottom + 112 : insets.bottom + 24,
+          paddingBottom: insets.bottom + 110,
         }}
         renderItem={({ item }) => (
           <RoomRowCard

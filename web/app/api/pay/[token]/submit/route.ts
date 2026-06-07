@@ -8,34 +8,72 @@ export async function POST(
   try {
     const { token } = await params
     if (!token) {
-      return NextResponse.json({ error: 'Token is required' }, { status: 400 })
+      return NextResponse.json({ error: 'Portal token is required' }, { status: 400 })
     }
 
     const formData = await request.formData()
+    const paymentIdStr = formData.get('payment_id') as string | null
     const screenshot = formData.get('screenshot') as File | null
     const utr = formData.get('utr') as string | null
     const paymentMethod = formData.get('payment_method') as string || 'upi'
 
+    if (!paymentIdStr) {
+      return NextResponse.json({ error: 'Payment reference ID is required' }, { status: 400 })
+    }
+    const paymentId = parseInt(paymentIdStr, 10)
+
     const supabase = createAdminClient()
 
-    // 1. Fetch payment to verify it exists and is in a valid state
+    // 1. Verify owner portal_token and load owner_id, month, and year details
+    const { data: linkRecord, error: linkError } = await supabase
+      .from('monthly_payment_links')
+      .select('owner_id, month, year')
+      .eq('portal_token', token)
+      .single()
+
+    if (linkError || !linkRecord) {
+      return NextResponse.json({ error: 'Invalid or expired payment portal' }, { status: 404 })
+    }
+
+    // 2. Fetch the payment record and verify it matches the owner, month, and year constraints
     const { data: payment, error: paymentError } = await supabase
       .from('payments')
-      .select('id, owner_id, status')
-      .eq('payment_token', token)
+      .select('id, owner_id, status, month, year')
+      .eq('id', paymentId)
+      .eq('owner_id', linkRecord.owner_id)
+      .eq('month', linkRecord.month)
+      .eq('year', linkRecord.year)
       .single()
 
     if (paymentError || !payment) {
-      return NextResponse.json({ error: 'Payment not found' }, { status: 404 })
+      return NextResponse.json({ error: 'Payment invoice not found or does not match the active billing month' }, { status: 404 })
     }
 
     if (payment.status === 'paid') {
-      return NextResponse.json({ error: 'Payment is already paid' }, { status: 400 })
+      return NextResponse.json({ error: 'Payment has already been marked as paid' }, { status: 400 })
+    }
+
+    // 3. Security Check: Validate UTR number uniqueness to prevent fraud/re-submission
+    if (utr) {
+      const cleanUtr = utr.trim()
+      if (cleanUtr.length > 0) {
+        const { data: duplicatePayment, error: dupError } = await supabase
+          .from('payments')
+          .select('id, status')
+          .eq('utr_number', cleanUtr)
+          .limit(1)
+
+        if (duplicatePayment && duplicatePayment.length > 0) {
+          return NextResponse.json({ 
+            error: 'This transaction reference (UTR) has already been submitted for another payment. Please verify your reference number or contact the owner.' 
+          }, { status: 400 })
+        }
+      }
     }
 
     let screenshotPath = null
 
-    // 2. Upload screenshot if provided
+    // 4. Upload screenshot if provided
     if (screenshot && screenshot.size > 0) {
       const fileExt = screenshot.name.split('.').pop()
       const fileName = `${payment.owner_id}/${payment.id}/${Date.now()}.${fileExt}`
@@ -55,7 +93,7 @@ export async function POST(
       screenshotPath = fileName
     }
 
-    // 3. Update payment
+    // 5. Update payment
     const oldStatus = payment.status
     const updateData: any = {
       status: 'submitted',
@@ -68,7 +106,7 @@ export async function POST(
     }
     
     if (utr) {
-      updateData.utr_number = utr
+      updateData.utr_number = utr.trim()
     }
 
     const { error: updateError } = await supabase
@@ -81,7 +119,7 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to update payment' }, { status: 500 })
     }
 
-    // 4. Audit Log
+    // 6. Audit Log
     await supabase.from('payment_audit_log').insert({
       payment_id: payment.id,
       action: 'proof_submitted',

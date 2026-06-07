@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Alert, Platform } from "react-native"
+import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Alert, Platform, LayoutAnimation, UIManager } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
@@ -12,6 +12,12 @@ import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/
 export default function SettingsScreen() {
   const { user, logout } = useAuth()
   const { isDark, toggleTheme } = useTheme()
+
+  useEffect(() => {
+    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
+      UIManager.setLayoutAnimationEnabledExperimental(true)
+    }
+  }, [])
 
   const rentDueDayInput = useKeyboardAwareInput()
   const gracePeriodDaysInput = useKeyboardAwareInput()
@@ -32,7 +38,10 @@ export default function SettingsScreen() {
 
   // Fetch settings from database
   const fetchSettings = useCallback(async (silent = false) => {
-    if (!user?.id) return
+    if (!user?.id) {
+      setLoading(false)
+      return
+    }
     try {
       if (!silent) setLoading(true)
       setError(null)
@@ -179,10 +188,50 @@ export default function SettingsScreen() {
 
   if (loading) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark items-center justify-center">
-        <ActivityIndicator size="large" color={isDark ? "#0091ff" : "#0071df"} />
-        <Text className="text-sm text-muted dark:text-muted-dark mt-3 font-semibold">Reading preferences...</Text>
-      </View>
+      <SafeAreaView className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
+        {/* Header Skeleton */}
+        <View className="px-6 pt-4 pb-3 flex-row justify-between items-center border-b border-border/40 dark:border-border-dark/40 bg-card dark:bg-card-dark">
+          <View className="gap-2">
+            <View className="h-7 w-28 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+            <View className="h-4 w-56 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+          </View>
+          <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+        </View>
+
+        <View className="px-6 mt-6 gap-6">
+          {/* Section 1 Skeleton */}
+          <View>
+            <View className="h-4 w-36 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-3" />
+            <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-5">
+              <View>
+                <View className="h-3.5 w-24 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-2" />
+                <View className="h-11 w-full bg-muted/10 dark:bg-muted-dark/10 rounded-xl" />
+              </View>
+              <View>
+                <View className="h-3.5 w-24 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-2" />
+                <View className="h-11 w-full bg-muted/10 dark:bg-muted-dark/10 rounded-xl" />
+              </View>
+              <View>
+                <View className="h-3.5 w-32 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-2" />
+                <View className="h-11 w-full bg-muted/10 dark:bg-muted-dark/10 rounded-xl" />
+              </View>
+              <View className="h-12 w-full bg-muted/20 dark:bg-muted-dark/20 rounded-xl mt-2" />
+            </View>
+          </View>
+
+          {/* Section 2 Skeleton */}
+          <View>
+            <View className="h-4 w-32 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-3" />
+            <View className="h-16 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl" />
+          </View>
+
+          {/* Section 3 Skeleton */}
+          <View>
+            <View className="h-4 w-36 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-3" />
+            <View className="h-24 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl" />
+          </View>
+        </View>
+      </SafeAreaView>
     )
   }
 
@@ -210,7 +259,7 @@ export default function SettingsScreen() {
       </View>
 
       <KeyboardAwareScrollView
-        contentContainerStyle={{ paddingBottom: 40 }}
+        contentContainerStyle={{ paddingBottom: 110 }}
         showsVerticalScrollIndicator={false}
       >
           {/* Status Alerts */}
@@ -326,6 +375,7 @@ export default function SettingsScreen() {
 
               {/* Save Button */}
               <TouchableOpacity
+                key={`save-btn-${saving}`}
                 onPress={handleSaveSettings}
                 disabled={saving}
                 className={`bg-primary rounded-xl h-12 flex-row items-center justify-center mt-3 shadow-lg ${
@@ -375,8 +425,22 @@ export default function SettingsScreen() {
 
                 {/* Custom toggler */}
                 <TouchableOpacity
+                  key={`theme-toggle-${isDark}`}
                   onPress={() => {
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    
+                    // Smooth native layout animation on toggling theme
+                    LayoutAnimation.configureNext({
+                      duration: 400,
+                      create: {
+                        type: LayoutAnimation.Types.easeInEaseOut,
+                        property: LayoutAnimation.Properties.opacity,
+                      },
+                      update: {
+                        type: LayoutAnimation.Types.easeInEaseOut,
+                      },
+                    })
+                    
                     toggleTheme()
                   }}
                   className={`w-14 h-8 rounded-full p-1 flex-row items-center justify-between ${

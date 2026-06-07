@@ -401,6 +401,7 @@ export default function RemindersScreen() {
       <KeyboardAwareScrollView 
         className="flex-1"
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 110 }}
       >
           {/* Send status overlay alert */}
           {sendResult && (

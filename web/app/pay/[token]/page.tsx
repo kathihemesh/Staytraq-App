@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
-import { CheckCircle2, AlertCircle, Clock, Upload, ChevronRight, X, Image as ImageIcon, Loader2 } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Clock, Upload, X, Image as ImageIcon, Loader2, KeyRound, Phone, ArrowLeft } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,9 +12,16 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 
-type PaymentState = 'loading' | 'invalid' | 'pending' | 'submitted' | 'paid'
+type PaymentState = 'loading' | 'invalid' | 'verify_identity' | 'no_dues' | 'pending' | 'submitted' | 'paid'
 
 interface PaymentData {
+  portalMonth?: number
+  portalYear?: number
+  tenant: {
+    name: string
+    room_number: string
+    payment_code: string
+  }
   payment: {
     id: number
     amount: number
@@ -22,10 +29,8 @@ interface PaymentData {
     due_date: string
     month: number
     year: number
-    tenant_name: string
-    room_number: string
     verification_notes?: string | null
-  }
+  } | null
   settings: {
     upi_id: string
     upi_name: string
@@ -47,6 +52,10 @@ export default function TenantPaymentPage() {
   const [state, setState] = useState<PaymentState>('loading')
   const [data, setData] = useState<PaymentData | null>(null)
   
+  // Verification state
+  const [mobileNumber, setMobileNumber] = useState('')
+  const [isVerifying, setIsVerifying] = useState(false)
+
   // Form state
   const [utrNumber, setUtrNumber] = useState('')
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null)
@@ -54,30 +63,25 @@ export default function TenantPaymentPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // 1. Initial Load: Check if portal token is valid
   useEffect(() => {
-    async function fetchPayment() {
+    async function validatePortal() {
       try {
         const res = await fetch(`/api/pay/${token}`)
         if (!res.ok) {
-          if (res.status === 404) {
-            setState('invalid')
-          } else {
-            throw new Error('Failed to load payment')
-          }
+          setState('invalid')
           return
         }
 
         const json = await res.json()
-        setData(json)
-        
-        // Map backend status to page state
-        if (json.payment.status === 'paid') {
-          setState('paid')
-        } else if (json.payment.status === 'submitted') {
-          setState('submitted')
-        } else {
-          setState('pending') // covers 'pending' and 'late'
-        }
+        setData({
+          portalMonth: json.month,
+          portalYear: json.year,
+          tenant: { name: '', room_number: '', payment_code: '' },
+          payment: null,
+          settings: json.settings
+        })
+        setState('verify_identity')
       } catch (error) {
         console.error(error)
         setState('invalid')
@@ -85,21 +89,68 @@ export default function TenantPaymentPage() {
     }
 
     if (token) {
-      fetchPayment()
+      validatePortal()
     }
   }, [token])
+
+  // 2. Identity Verification Lookup by Mobile Number
+  const handleVerifyIdentity = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!mobileNumber.trim()) {
+      toast.error('Mobile number is required')
+      return
+    }
+
+    setIsVerifying(true)
+    try {
+      const res = await fetch(`/api/pay/${token}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mobile_number: mobileNumber })
+      })
+
+      if (!res.ok) {
+        const errJson = await res.json()
+        throw new Error(errJson.error || 'Failed to verify identity')
+      }
+
+      const json = await res.json()
+      
+      // Update tenant invoice data
+      setData(prev => ({
+        portalMonth: prev?.portalMonth,
+        portalYear: prev?.portalYear,
+        tenant: json.tenant,
+        payment: json.payment,
+        settings: prev?.settings || null
+      }))
+
+      if (!json.payment) {
+        setState('no_dues')
+      } else if (json.payment.status === 'paid') {
+        setState('paid')
+      } else if (json.payment.status === 'submitted') {
+        setState('submitted')
+      } else {
+        setState('pending')
+      }
+    } catch (error: any) {
+      console.error(error)
+      toast.error(error.message || 'No registered occupant found with this number.')
+    } finally {
+      setIsVerifying(false)
+    }
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Validate size (5MB max)
     if (file.size > 5 * 1024 * 1024) {
       toast.error('File size must be under 5MB')
       return
     }
 
-    // Validate type
     if (!file.type.startsWith('image/') && file.type !== 'application/pdf') {
       toast.error('Only images or PDF allowed')
       return
@@ -107,7 +158,6 @@ export default function TenantPaymentPage() {
 
     setScreenshotFile(file)
     
-    // Create preview for images
     if (file.type.startsWith('image/')) {
       const url = URL.createObjectURL(file)
       setScreenshotPreview(url)
@@ -124,12 +174,11 @@ export default function TenantPaymentPage() {
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmitProof = async (e: React.FormEvent) => {
     e.preventDefault()
-    
-    if (!data) return
+    if (!data || !data.payment) return
 
-    const { settings } = data
+    const { settings, payment } = data
     if (settings?.utr_required && !utrNumber) {
       toast.error('UTR/Reference Number is required')
       return
@@ -144,7 +193,8 @@ export default function TenantPaymentPage() {
 
     try {
       const formData = new FormData()
-      if (utrNumber) formData.append('utr_number', utrNumber)
+      formData.append('payment_id', payment.id.toString())
+      if (utrNumber) formData.append('utr', utrNumber)
       if (screenshotFile) formData.append('screenshot', screenshotFile)
 
       const res = await fetch(`/api/pay/${token}/submit`, {
@@ -154,16 +204,15 @@ export default function TenantPaymentPage() {
 
       if (!res.ok) {
         const errData = await res.json()
-        throw new Error(errData.error || 'Failed to submit payment')
+        throw new Error(errData.error || 'Failed to submit payment proof')
       }
 
       toast.success('Payment submitted successfully!')
       setState('submitted')
       
-      // Update local data status
       setData(prev => prev ? {
         ...prev,
-        payment: { ...prev.payment, status: 'submitted' }
+        payment: prev.payment ? { ...prev.payment, status: 'submitted' } : null
       } : null)
 
     } catch (error: any) {
@@ -174,13 +223,18 @@ export default function TenantPaymentPage() {
     }
   }
 
-  // UPI QR Code payload formatting
+  // Generates unique prefilled QR string using payment_code
   const generateUpiString = () => {
-    if (!data?.settings) return ''
+    if (!data?.settings || !data?.payment || !data?.tenant) return ''
     const { upi_id, upi_name } = data.settings
-    const { amount } = data.payment
-    // Formats properly as UPI intent URI
-    return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&am=${amount}&cu=INR`
+    const { amount, month, year } = data.payment
+    const { name, room_number, payment_code } = data.tenant
+    
+    // Unique txn reference and note to identify payment
+    const txnRef = `${payment_code}-${month}-${year}`
+    const note = `Rent Room ${room_number} - ${name} (${payment_code})`
+
+    return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&am=${amount}&tr=${encodeURIComponent(txnRef)}&tn=${encodeURIComponent(note)}&cu=INR`
   }
 
   return (
@@ -191,9 +245,9 @@ export default function TenantPaymentPage() {
       
       <div className="w-full max-w-md z-10">
         {/* Logo/Brand Area */}
-        <div className="mb-8 text-center">
+        <div className="mb-6 text-center">
           <h1 className="text-2xl font-bold tracking-tight text-white">Staytraq</h1>
-          <p className="text-sm text-neutral-400">Rent Payment Portal</p>
+          <p className="text-sm text-neutral-400">Secure Payment Portal</p>
         </div>
 
         <AnimatePresence mode="wait">
@@ -203,10 +257,10 @@ export default function TenantPaymentPage() {
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
-              className="flex flex-col items-center justify-center p-12 bg-neutral-900/50 border border-neutral-800 rounded-xl backdrop-blur-sm"
+              className="flex flex-col items-center justify-center p-12 bg-neutral-900/50 border border-neutral-800 rounded-2xl backdrop-blur-sm"
             >
               <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-              <p className="text-neutral-400 font-medium">Loading payment details...</p>
+              <p className="text-neutral-400 font-medium">Validating portal link...</p>
             </motion.div>
           )}
 
@@ -224,14 +278,117 @@ export default function TenantPaymentPage() {
                   </div>
                   <h2 className="text-xl font-semibold text-white mb-2">Invalid or Expired Link</h2>
                   <p className="text-neutral-400 text-sm">
-                    This payment link is no longer valid. Please contact your property owner for a new link.
+                    This payment link is no longer valid. Please contact your property owner for a new payment link.
                   </p>
                 </CardContent>
               </Card>
             </motion.div>
           )}
 
-          {state === 'pending' && data && (
+          {state === 'verify_identity' && (
+            <motion.div
+              key="verify_identity"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+            >
+              <form onSubmit={handleVerifyIdentity}>
+                <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-blue-500" />
+                  <CardHeader>
+                    <div className="flex items-center gap-3 mb-1">
+                      <div className="h-8 w-8 bg-primary/10 rounded-lg flex items-center justify-center">
+                        <KeyRound className="h-4 w-4 text-primary" />
+                      </div>
+                      <CardTitle className="text-white text-lg">Tenant Verification</CardTitle>
+                    </div>
+                    <CardDescription className="text-neutral-400">
+                      Enter your registered mobile number to fetch your active invoice and QR code for {data?.portalMonth ? months[data.portalMonth - 1] : ''} {data?.portalYear || ''}.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="mobile" className="text-neutral-300">Registered Mobile Number</Label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                          <Phone className="h-4 w-4 text-neutral-500" />
+                        </div>
+                        <Input
+                          id="mobile"
+                          type="tel"
+                          value={mobileNumber}
+                          onChange={(e) => setMobileNumber(e.target.value)}
+                          placeholder="e.g. 9876543210"
+                          className="pl-10 bg-neutral-950 border-neutral-800 text-white placeholder:text-neutral-600 focus-visible:ring-primary"
+                          required
+                          disabled={isVerifying}
+                        />
+                      </div>
+                    </div>
+                  </CardContent>
+                  <CardFooter>
+                    <Button 
+                      type="submit" 
+                      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
+                      disabled={isVerifying}
+                    >
+                      {isVerifying ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Finding Profile...
+                        </>
+                      ) : (
+                        'Verify & Proceed'
+                      )}
+                    </Button>
+                  </CardFooter>
+                </Card>
+              </form>
+            </motion.div>
+          )}
+
+          {state === 'no_dues' && data && (
+            <motion.div
+              key="no_dues"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="space-y-4"
+            >
+              <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl">
+                <CardContent className="pt-8 pb-8 flex flex-col items-center text-center">
+                  <div className="h-16 w-16 bg-green-500/10 rounded-full flex items-center justify-center mb-4 border border-green-500/20">
+                    <CheckCircle2 className="h-8 w-8 text-green-500" />
+                  </div>
+                  <h2 className="text-xl font-bold text-white mb-1">No Active Dues</h2>
+                  <p className="text-neutral-400 text-sm max-w-xs">
+                    Hey <span className="font-semibold text-white">{data.tenant.name}</span>, you currently do not have any pending invoices for verification.
+                  </p>
+                  
+                  <div className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl p-4 text-left mt-6">
+                    <div className="flex justify-between items-center text-xs mb-2">
+                      <span className="text-neutral-500">Occupant</span>
+                      <span className="font-semibold text-neutral-300">{data.tenant.name}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-xs">
+                      <span className="text-neutral-500">Room</span>
+                      <span className="font-semibold text-neutral-300">Room {data.tenant.room_number}</span>
+                    </div>
+                  </div>
+
+                  <Button 
+                    variant="ghost" 
+                    className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                    onClick={() => setState('verify_identity')}
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
+                  </Button>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+
+          {state === 'pending' && data && data.payment && (
             <motion.div
               key="pending"
               initial={{ opacity: 0, y: 20 }}
@@ -257,40 +414,39 @@ export default function TenantPaymentPage() {
                     )}
                   </div>
                   
-                  <div className="pt-4 flex items-end gap-2">
+                  <div className="pt-4 flex items-end justify-between">
                     <span className="text-4xl font-bold tracking-tight text-white">₹{data.payment.amount}</span>
+                    <Badge variant="outline" className="text-primary border-primary/20 bg-primary/5">
+                      Code: {data.tenant.payment_code}
+                    </Badge>
                   </div>
                 </CardHeader>
                 
                 <CardContent className="py-4 space-y-4">
                   <div className="flex justify-between text-sm">
                     <span className="text-neutral-400">Tenant</span>
-                    <span className="font-medium text-white">{data.payment.tenant_name}</span>
+                    <span className="font-semibold text-white">{data.tenant.name}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-neutral-400">Room</span>
-                    <span className="font-medium text-white">{data.payment.room_number}</span>
+                    <span className="font-semibold text-white">Room {data.tenant.room_number}</span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-neutral-400">Due Date</span>
-                    <span className="font-medium text-white">{new Date(data.payment.due_date).toLocaleDateString()}</span>
+                    <span className="font-semibold text-white">{new Date(data.payment.due_date).toLocaleDateString()}</span>
                   </div>
                 </CardContent>
               </Card>
 
               {/* Rejection Note if exists */}
               {data.payment.verification_notes && (
-                <motion.div 
-                  initial={{ opacity: 0, height: 0 }} 
-                  animate={{ opacity: 1, height: 'auto' }}
-                  className="bg-red-500/10 border border-red-500/20 rounded-lg p-4 flex gap-3"
-                >
+                <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex gap-3">
                   <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                   <div>
                     <h4 className="text-sm font-semibold text-red-500 mb-1">Previous Payment Rejected</h4>
                     <p className="text-sm text-red-400/90">{data.payment.verification_notes}</p>
                   </div>
-                </motion.div>
+                </div>
               )}
 
               {/* Payment Methods */}
@@ -318,8 +474,11 @@ export default function TenantPaymentPage() {
                     
                     <div className="w-full text-center space-y-1 mb-6">
                       <p className="text-sm text-neutral-400">Paying to</p>
-                      <p className="font-medium text-white text-lg">{data.settings.upi_name || 'Owner'}</p>
+                      <p className="font-semibold text-white text-lg">{data.settings.upi_name || 'Owner'}</p>
                       <p className="text-sm text-neutral-500 font-mono">{data.settings.upi_id}</p>
+                      <p className="text-[10px] text-neutral-500 bg-neutral-950 py-1 px-3 rounded-full inline-block mt-2">
+                        Prefilled transaction details will appear on scan
+                      </p>
                     </div>
 
                     {data.settings.payment_instructions && (
@@ -334,7 +493,7 @@ export default function TenantPaymentPage() {
               )}
 
               {/* Upload Proof Section */}
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <form onSubmit={handleSubmitProof} className="space-y-6">
                 <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-xl">
                   <CardHeader>
                     <CardTitle className="text-lg">Submit Proof</CardTitle>
@@ -410,7 +569,7 @@ export default function TenantPaymentPage() {
                       )}
                     </div>
                   </CardContent>
-                  <CardFooter className="bg-neutral-900/40 border-t border-neutral-800 pt-6">
+                  <CardFooter className="bg-neutral-900/40 border-t border-neutral-800 pt-6 flex flex-col gap-4">
                     <Button 
                       type="submit" 
                       className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium shadow-lg shadow-primary/20"
@@ -425,13 +584,21 @@ export default function TenantPaymentPage() {
                         'Submit Verification'
                       )}
                     </Button>
+                    <Button 
+                      type="button" 
+                      variant="ghost" 
+                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-auto"
+                      onClick={() => setState('verify_identity')}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" /> Use another profile
+                    </Button>
                   </CardFooter>
                 </Card>
               </form>
             </motion.div>
           )}
 
-          {state === 'submitted' && (
+          {state === 'submitted' && data && data.payment && (
             <motion.div
               key="submitted"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -441,35 +608,38 @@ export default function TenantPaymentPage() {
               <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-amber-500" />
                 <CardContent className="pt-8 pb-8 flex flex-col items-center">
-                  <motion.div 
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
-                    transition={{ type: "spring", stiffness: 200, damping: 20 }}
-                    className="h-20 w-20 bg-amber-500/10 rounded-full flex items-center justify-center mb-6 border border-amber-500/20"
-                  >
+                  <div className="h-20 w-20 bg-amber-500/10 rounded-full flex items-center justify-center mb-6 border border-amber-500/20">
                     <Clock className="h-10 w-10 text-amber-500" />
-                  </motion.div>
+                  </div>
                   <h2 className="text-2xl font-bold text-white mb-2">Under Review</h2>
                   <p className="text-neutral-400 text-center max-w-sm mb-6">
-                    Your payment details have been submitted. The owner will review and confirm your payment soon.
+                    Hey <span className="font-semibold text-white">{data.tenant.name}</span>, your payment details have been submitted. The owner will verify your payment soon.
                   </p>
                   
                   <div className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl p-4 text-left">
                     <div className="flex justify-between items-center text-sm mb-2">
                       <span className="text-neutral-500">Amount Paid</span>
-                      <span className="font-medium text-white">₹{data?.payment.amount}</span>
+                      <span className="font-semibold text-white">₹{data.payment.amount}</span>
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-neutral-500">Status</span>
                       <Badge variant="outline" className="text-amber-500 border-amber-500/20 bg-amber-500/10">Verification Pending</Badge>
                     </div>
                   </div>
+
+                  <Button 
+                    variant="ghost" 
+                    className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                    onClick={() => setState('verify_identity')}
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" /> Exit
+                  </Button>
                 </CardContent>
               </Card>
             </motion.div>
           )}
 
-          {state === 'paid' && (
+          {state === 'paid' && data && data.payment && (
             <motion.div
               key="paid"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -479,29 +649,32 @@ export default function TenantPaymentPage() {
               <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-1 bg-green-500" />
                 <CardContent className="pt-8 pb-8 flex flex-col items-center">
-                  <motion.div 
-                    initial={{ scale: 0, rotate: -45 }}
-                    animate={{ scale: 1, rotate: 0 }}
-                    transition={{ type: "spring", stiffness: 200, damping: 20 }}
-                    className="h-20 w-20 bg-green-500/10 rounded-full flex items-center justify-center mb-6 border border-green-500/20"
-                  >
+                  <div className="h-20 w-20 bg-green-500/10 rounded-full flex items-center justify-center mb-6 border border-green-500/20">
                     <CheckCircle2 className="h-10 w-10 text-green-500" />
-                  </motion.div>
+                  </div>
                   <h2 className="text-2xl font-bold text-white mb-2">Payment Confirmed</h2>
                   <p className="text-neutral-400 text-center max-w-sm mb-6">
-                    Your rent payment has been successfully verified by the owner. Thank you!
+                    Hey <span className="font-semibold text-white">{data.tenant.name}</span>, your rent payment has been verified. Thank you!
                   </p>
                   
                   <div className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl p-4 text-left">
                     <div className="flex justify-between items-center text-sm mb-2">
                       <span className="text-neutral-500">Amount Paid</span>
-                      <span className="font-medium text-white">₹{data?.payment.amount}</span>
+                      <span className="font-semibold text-white">₹{data.payment.amount}</span>
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-neutral-500">Status</span>
                       <Badge variant="outline" className="text-green-500 border-green-500/20 bg-green-500/10">Paid</Badge>
                     </div>
                   </div>
+
+                  <Button 
+                    variant="ghost" 
+                    className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                    onClick={() => setState('verify_identity')}
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" /> Exit
+                  </Button>
                 </CardContent>
               </Card>
             </motion.div>

@@ -37,7 +37,8 @@ import {
   Copy,
   Info,
   Edit2,
-  Trash2
+  Trash2,
+  MessageSquare
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
@@ -89,6 +90,15 @@ type Occupant = {
 const { width } = Dimensions.get("window")
 const CARD_WIDTH = width - 48
 
+const getMonthNumber = (monthName: string): number => {
+  const months = [
+    "january", "february", "march", "april", "may", "june",
+    "july", "august", "september", "october", "november", "december"
+  ];
+  const idx = months.indexOf(monthName.trim().toLowerCase());
+  return idx !== -1 ? idx + 1 : new Date().getMonth() + 1;
+}
+
 export default function PaymentsScreen() {
   const { user } = useAuth()
   const { isDark } = useTheme()
@@ -96,6 +106,12 @@ export default function PaymentsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [payments, setPayments] = useState<Payment[]>([])
   const [occupants, setOccupants] = useState<Occupant[]>([])
+
+  // Payment Reminder Portal States
+  const [reminderModalVisible, setReminderModalVisible] = useState(false)
+  const [reminderType, setReminderType] = useState<"friendly" | "firm">("friendly")
+  const [portalToken, setPortalToken] = useState("")
+  const [isRefreshingLink, setIsRefreshingLink] = useState(false)
   
   // Filtering, Search, & Sorting
   const [searchQuery, setSearchQuery] = useState("")
@@ -152,6 +168,29 @@ export default function PaymentsScreen() {
 
   // Carousel auto-slide properties
   const carouselRef = useRef<ScrollView>(null)
+  const lastInteractionTime = useRef(0)
+  const activeIndexRef = useRef(0)
+
+  useEffect(() => {
+    activeIndexRef.current = activeCardIndex
+  }, [activeCardIndex])
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const timeSinceInteraction = Date.now() - lastInteractionTime.current
+      if (timeSinceInteraction < 2000) {
+        return
+      }
+
+      const nextIndex = (activeIndexRef.current + 1) % 4
+      carouselRef.current?.scrollTo({
+        x: nextIndex * CARD_WIDTH,
+        animated: true,
+      })
+    }, 3000)
+
+    return () => clearInterval(timer)
+  }, [])
 
   // Generate 6 months list dynamically
   const filterMonths = useMemo(() => {
@@ -165,7 +204,10 @@ export default function PaymentsScreen() {
   }, [])
 
   const fetchPayments = useCallback(async (silent = false) => {
-    if (!user?.id) return
+    if (!user?.id) {
+      setLoading(false)
+      return
+    }
     try {
       if (!silent) {
         if (payments.length === 0) setLoading(true)
@@ -193,13 +235,91 @@ export default function PaymentsScreen() {
       if (tenantError) throw tenantError
       setOccupants((tenantData || []) as any)
 
+      // 3. Fetch portal_token for the selected month and year from monthly_payment_links
+      const [monthName, yearStr] = selectedMonth.split(" ")
+      const monthVal = getMonthNumber(monthName)
+      const yearVal = parseInt(yearStr, 10) || new Date().getFullYear()
+
+      const { data: linkData, error: linkError } = await supabase
+        .from("monthly_payment_links")
+        .select("portal_token")
+        .eq("owner_id", user.id)
+        .eq("month", monthVal)
+        .eq("year", yearVal)
+        .single()
+
+      if (linkError && linkError.code !== "PGRST116") {
+        console.error("Error fetching monthly portal link:", linkError)
+      }
+
+      let activePortalToken = linkData?.portal_token
+      if (!activePortalToken) {
+        // Generate portal_token on the fly if it's missing/null in DB for this month
+        activePortalToken = Math.random().toString(36).substring(2, 14)
+        await supabase
+          .from("monthly_payment_links")
+          .upsert({
+            owner_id: user.id,
+            month: monthVal,
+            year: yearVal,
+            portal_token: activePortalToken
+          }, { onConflict: "owner_id,month,year" })
+      }
+      setPortalToken(activePortalToken || "")
+
     } catch (err) {
       console.error("Error fetching payments records:", err)
     } finally {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id, payments.length])
+  }, [user?.id, payments.length, selectedMonth])
+
+  const handleRefreshPortalLink = async () => {
+    if (!user?.id) return
+    setIsRefreshingLink(true)
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    try {
+      const [monthName, yearStr] = selectedMonth.split(" ")
+      const monthVal = getMonthNumber(monthName)
+      const yearVal = parseInt(yearStr, 10) || new Date().getFullYear()
+
+      const newToken = Math.random().toString(36).substring(2, 14)
+      const { error } = await supabase
+        .from("monthly_payment_links")
+        .upsert({
+          owner_id: user.id,
+          month: monthVal,
+          year: yearVal,
+          portal_token: newToken
+        }, { onConflict: "owner_id,month,year" })
+
+      if (error) throw error
+      setPortalToken(newToken)
+      Alert.alert("Link Refreshed", `A new payment portal URL for ${selectedMonth} has been generated. The old link is now invalid.`)
+    } catch (err) {
+      console.error("Error refreshing portal link:", err)
+      Alert.alert(
+        "Error", 
+        "Failed to regenerate payment portal link. Please check if database schema updates have been applied in your SQL editor."
+      )
+    } finally {
+      setIsRefreshingLink(false)
+    }
+  }
+
+  // Prewritten notice messages
+  const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
+  const friendlyMessage = `Dear Tenant, this is a friendly reminder that rent is due soon. You can view your invoice details, scan the QR code, and submit your payment receipt securely here: ${portalUrl}\nThank you!`
+  const firmMessage = `Dear Tenant, this is a formal notice that your rent payment is now due. Please clear outstanding amounts immediately and submit your verification details on our portal: ${portalUrl}`
+
+  const currentReminderMessage = reminderType === "friendly" ? friendlyMessage : firmMessage
+
+  const handleCopyReminder = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    Clipboard.setString(currentReminderMessage)
+    Alert.alert("Copied", "Payment reminder notice copied to clipboard. You can now paste and send it via WhatsApp, SMS, or Email.")
+  }
 
   useEffect(() => {
     void fetchPayments()
@@ -691,17 +811,82 @@ export default function PaymentsScreen() {
 
   if (loading && payments.length === 0) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark items-center justify-center">
-        <ActivityIndicator size="large" color={isDark ? "#0091ff" : "#0071df"} />
-        <Text className="text-sm text-muted dark:text-muted-dark mt-3">Fetching transaction ledger...</Text>
-      </View>
+      <SafeAreaView key="payments-loading" className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
+        {/* Header Skeleton */}
+        <View className="px-6 pt-4 pb-3 flex-row justify-between items-center">
+          <View className="gap-2">
+            <View className="h-7 w-32 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+            <View className="h-4 w-60 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+          </View>
+          <View className="flex-row gap-2">
+            <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+            <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+          </View>
+        </View>
+
+        {/* Carousel Skeleton */}
+        <View className="mb-4 mt-2 px-6">
+          <View className="h-20 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm justify-center">
+            <View className="flex-row items-center gap-4">
+              <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-full" />
+              <View className="flex-1 gap-2">
+                <View className="h-3 w-16 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                <View className="h-5 w-24 bg-muted/25 dark:bg-muted-dark/25 rounded-md" />
+              </View>
+            </View>
+          </View>
+          {/* Dots */}
+          <View className="flex-row justify-center gap-1.5 mt-3">
+            <View className="h-1.5 w-5 bg-muted/30 dark:bg-muted-dark/30 rounded-full" />
+            <View className="h-1.5 w-1.5 bg-muted/15 dark:bg-muted-dark/15 rounded-full" />
+            <View className="h-1.5 w-1.5 bg-muted/15 dark:bg-muted-dark/15 rounded-full" />
+            <View className="h-1.5 w-1.5 bg-muted/15 dark:bg-muted-dark/15 rounded-full" />
+          </View>
+        </View>
+
+        {/* Search & Filter Skeleton */}
+        <View className="px-6 mb-3 gap-3">
+          <View className="h-11 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-2xl" />
+          <View className="flex-row justify-between items-center gap-2">
+            <View className="h-8 w-40 bg-muted/15 dark:bg-muted-dark/15 rounded-full" />
+            <View className="h-8 w-24 bg-muted/20 dark:bg-muted-dark/20 rounded-full" />
+          </View>
+        </View>
+
+        {/* Ledger list items skeleton */}
+        <View className="flex-1 px-6 mt-2">
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {[1, 2, 3, 4].map((i) => (
+              <View
+                key={i}
+                className="flex-row items-center bg-card dark:bg-card-dark border border-border dark:border-border-dark p-4 rounded-3xl mb-3 shadow-sm justify-between opacity-60"
+              >
+                <View className="flex-row items-center flex-1 pr-4">
+                  <View className="h-11 w-11 bg-muted/20 dark:bg-muted-dark/20 rounded-full mr-3.5" />
+                  <View className="flex-1 gap-2">
+                    <View className="flex-row items-center">
+                      <View className="h-4 w-28 bg-muted/25 dark:bg-muted-dark/25 rounded-md mr-2" />
+                      <View className="h-3.5 w-14 bg-muted/20 dark:bg-muted-dark/20 rounded-md" />
+                    </View>
+                    <View className="flex-row items-center gap-4">
+                      <View className="h-3 w-16 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                      <View className="h-3 w-20 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                    </View>
+                  </View>
+                </View>
+                <View className="h-4 w-12 bg-muted/25 dark:bg-muted-dark/25 rounded-md" />
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </SafeAreaView>
     )
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
+    <SafeAreaView key="payments-loaded" className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
       {/* Dynamic Header */}
-      <View className="px-6 pt-4 pb-3 flex-row justify-between items-center">
+      <View className="px-6 pt-3 pb-1.5 flex-row justify-between items-center">
         <View>
           <View className="flex-row items-center gap-2">
             <Text className="text-2xl font-black text-foreground dark:text-foreground-dark tracking-tight">
@@ -716,7 +901,7 @@ export default function PaymentsScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-          <Text className="text-xs text-muted dark:text-muted-dark font-medium mt-1">
+          <Text className="text-[11px] text-muted dark:text-muted-dark font-medium mt-0.5">
             Rental billing & verification ledger
           </Text>
         </View>
@@ -727,6 +912,16 @@ export default function PaymentsScreen() {
             className="h-10 w-10 border border-primary/20 rounded-xl items-center justify-center bg-primary"
           >
             <Plus size={18} color="#ffffff" strokeWidth={3} />
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+              setReminderModalVisible(true)
+            }}
+            className="h-10 w-10 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
+          >
+            <MessageSquare size={16} color={isDark ? "#0091ff" : "#0071df"} />
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -739,7 +934,7 @@ export default function PaymentsScreen() {
       </View>
 
       {/* Metric Snap Carousel */}
-      <View className="mb-4">
+      <View className="mb-2">
         <ScrollView
           ref={carouselRef}
           horizontal
@@ -751,6 +946,9 @@ export default function PaymentsScreen() {
           onScroll={handleCarouselScroll}
           scrollEventThrottle={16}
           contentContainerStyle={{ paddingHorizontal: 24 }}
+          onScrollBeginDrag={() => { lastInteractionTime.current = Date.now(); }}
+          onScrollEndDrag={() => { lastInteractionTime.current = Date.now(); }}
+          onMomentumScrollEnd={() => { lastInteractionTime.current = Date.now(); }}
         >
           {carouselData.map((card, i) => {
             const Icon = card.icon
@@ -760,30 +958,33 @@ export default function PaymentsScreen() {
                 style={{ width: CARD_WIDTH }} 
                 className="pr-4 py-1"
               >
-                <LinearGradient
-                  colors={card.colors}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  className={`flex-row items-center gap-4 rounded-3xl border ${card.border} px-5 py-4 h-20 shadow-sm`}
+                <View 
+                  className={`flex-row items-center gap-3 rounded-2xl border ${card.border} px-4 py-2 h-16 shadow-sm relative overflow-hidden`}
                 >
-                  <View className="h-10 w-10 rounded-full bg-white/20 items-center justify-center">
-                    <Icon size={18} color="#ffffff" />
+                  <LinearGradient
+                    colors={card.colors}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+                  />
+                  <View className="h-8 w-8 rounded-full bg-white/20 items-center justify-center">
+                    <Icon size={14} color="#ffffff" />
                   </View>
                   <View className="flex-1">
-                    <Text className={`text-[10px] font-extrabold uppercase tracking-widest ${card.text} opacity-80`}>
+                    <Text className={`text-[9px] font-extrabold uppercase tracking-widest ${card.text} opacity-80`}>
                       {card.title}
                     </Text>
-                    <Text className="text-xl font-black text-foreground dark:text-foreground-dark tracking-tight mt-0.5">
+                    <Text className="text-base font-black text-foreground dark:text-foreground-dark tracking-tight mt-0.5">
                       ₹{card.amount.toLocaleString()}
                     </Text>
                   </View>
-                </LinearGradient>
+                </View>
               </View>
             )
           })}
         </ScrollView>
         {/* Pagination Dots */}
-        <View className="flex-row justify-center gap-1.5 mt-2">
+        <View className="flex-row justify-center gap-1.5 mt-1">
           {carouselData.map((_, i) => (
             <View
               key={i}
@@ -796,9 +997,9 @@ export default function PaymentsScreen() {
       </View>
 
       {/* Filters & Search controls */}
-      <View className="px-6 mb-3 gap-3">
+      <View className="px-6 mb-2 gap-2">
         {/* Search */}
-        <View className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-2 shadow-sm">
+        <View className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-1.5 shadow-sm">
           <View className="mr-3">
             <Search size={16} color="#9ca3af" />
           </View>
@@ -807,7 +1008,7 @@ export default function PaymentsScreen() {
             onChangeText={setSearchQuery}
             placeholder="Search tenants or rooms..."
             placeholderTextColor="#9ca3af"
-            className="flex-1 text-base text-foreground dark:text-foreground-dark h-9"
+            className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery("")}>
@@ -876,8 +1077,9 @@ export default function PaymentsScreen() {
         <View className="flex-1 px-6">
           <FlatList
             data={filteredPayments}
-            keyExtractor={(item) => String(item.id)}
+            keyExtractor={(item) => `${item.id}-${item.status}`}
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 110 }}
             refreshControl={
               <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={isDark ? "#0091ff" : "#0071df"} />
             }
@@ -1580,6 +1782,99 @@ export default function PaymentsScreen() {
               >
                 <Text className="text-white font-bold text-sm">Save Transaction</Text>
               </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Reminder Notice Share Drawer/Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={reminderModalVisible}
+        onRequestClose={() => setReminderModalVisible(false)}
+      >
+        <View className="flex-1 bg-black/60 justify-end">
+          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[80%] border-t border-border dark:border-border-dark p-6">
+            <View className="flex-row justify-between items-center mb-5">
+              <Text className="text-base font-black text-foreground dark:text-foreground-dark">Tenant Payment Notice</Text>
+              <TouchableOpacity onPress={() => setReminderModalVisible(false)}>
+                <X size={18} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+
+            <View className="gap-5">
+              {/* Template Selectors */}
+              <View className="flex-row bg-muted/10 p-1 rounded-xl border border-border dark:border-border-dark">
+                <TouchableOpacity
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    setReminderType("friendly")
+                  }}
+                  className={`flex-1 py-2.5 rounded-lg items-center justify-center ${
+                    reminderType === "friendly" ? "bg-primary" : "bg-transparent"
+                  }`}
+                >
+                  <Text className={`text-xs font-black uppercase tracking-wider ${
+                    reminderType === "friendly" ? "text-white" : "text-muted"
+                  }`}>
+                    Friendly Reminder
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    setReminderType("firm")
+                  }}
+                  className={`flex-1 py-2.5 rounded-lg items-center justify-center ${
+                    reminderType === "firm" ? "bg-primary" : "bg-transparent"
+                  }`}
+                >
+                  <Text className={`text-xs font-black uppercase tracking-wider ${
+                    reminderType === "firm" ? "text-white" : "text-muted"
+                  }`}>
+                    Firm Notice
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Message Box */}
+              <View className="gap-2">
+                <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Notice Message Preview</Text>
+                <TextInput
+                  value={currentReminderMessage}
+                  editable={false}
+                  multiline
+                  className="border border-border dark:border-border-dark rounded-2xl p-4 text-sm leading-5 text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark min-h-[140px]"
+                />
+              </View>
+
+              {/* Action Buttons */}
+              <View className="gap-3 pt-2">
+                <TouchableOpacity
+                  onPress={handleCopyReminder}
+                  className="w-full bg-primary rounded-xl h-12 flex-row items-center justify-center active:scale-95 shadow-md shadow-primary/20"
+                >
+                  <Copy size={16} color="#ffffff" className="mr-2" />
+                  <Text className="text-white font-bold text-sm">Copy Message & Link</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={handleRefreshPortalLink}
+                  disabled={isRefreshingLink}
+                  className="w-full border border-border dark:border-border-dark rounded-xl h-12 flex-row items-center justify-center bg-card dark:bg-card-dark active:scale-95"
+                >
+                  {isRefreshingLink ? (
+                    <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
+                  ) : (
+                    <>
+                      <RefreshCw size={14} color={isDark ? "#0091ff" : "#0071df"} className="mr-2" />
+                      <Text className="text-primary font-bold text-sm">Regenerate Portal Link</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </View>

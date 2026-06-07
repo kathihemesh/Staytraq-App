@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { createClient } from "@/lib/supabase/client"
@@ -22,13 +22,18 @@ import { MobilePaymentDrawer } from "@/components/payments/mobile/MobilePaymentD
 import { ToastContainer, ToastItem } from "@/components/payments/Toast"
 import { usePaymentFilters, Payment } from "@/components/payments/usePaymentFilters"
 
+// ✅ IMPORTANT: Create Supabase client OUTSIDE component
+const supabase = createClient()
+
 export default function PaymentsPage() {
   const { user } = useAuth()
-  const supabase = createClient()
   const isMobile = useIsMobile()
 
   const [payments, setPayments] = useState<Payment[]>([])
   const [isLoading, setIsLoading] = useState(true)
+
+  // Prevent duplicate fetches
+  const isFetchingRef = useRef(false)
 
   // Drawer state
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
@@ -43,6 +48,7 @@ export default function PaymentsPage() {
       type,
       message,
     }
+
     setToasts((prev) => [...prev, newToast])
   }
 
@@ -50,9 +56,16 @@ export default function PaymentsPage() {
     setToasts((prev) => prev.filter((t) => t.id !== id))
   }
 
+  // ✅ OPTIMIZED FETCH
   const fetchPayments = useCallback(async () => {
     if (!user?.id) return
+
+    // Prevent multiple simultaneous fetches
+    if (isFetchingRef.current) return
+
+    isFetchingRef.current = true
     setIsLoading(true)
+
     try {
       const { data, error } = await supabase
         .from("payments")
@@ -80,34 +93,54 @@ export default function PaymentsPage() {
         `)
         .eq("owner_id", user.id)
         .order("due_date", { ascending: false })
+        .limit(200)
 
       if (error) throw error
 
       const mappedPayments = (data || []).map((p: any) => {
         const monthName =
           typeof p.month === "number" || !isNaN(Number(p.month))
-            ? new Date(2000, Number(p.month) - 1).toLocaleString("en-US", { month: "long" })
+            ? new Date(2000, Number(p.month) - 1).toLocaleString("en-US", {
+                month: "long",
+              })
             : p.month
 
-        // Normalise tenant and room from potential array structure
+        // Normalize tenant structure
         const tenantRaw = p.tenants_table
-        const tenant = Array.isArray(tenantRaw) ? tenantRaw[0] : tenantRaw
+        const tenant = Array.isArray(tenantRaw)
+          ? tenantRaw[0]
+          : tenantRaw
 
+        // Normalize room structure
         const roomRaw = tenant?.rooms_table
-        const room = Array.isArray(roomRaw) ? roomRaw[0] : roomRaw
+        const room = Array.isArray(roomRaw)
+          ? roomRaw[0]
+          : roomRaw
 
         return {
           id: String(p.id),
           tenantName: tenant?.name || "Unknown",
           roomNumber: room?.room_number || "—",
+
           amount: Number(p.total_amount),
           baseRent: Number(p.rent_amount) || 0,
           extraCharges: Number(p.extra_charges) || 0,
-          status: (p.status || "pending") as "paid" | "pending" | "late" | "submitted",
+
+          status: (p.status || "pending") as
+            | "paid"
+            | "pending"
+            | "late"
+            | "submitted",
+
           dueDate: p.due_date,
-          paidDate: p.paid_at ? p.paid_at.split("T")[0] : undefined,
+
+          paidDate: p.paid_at
+            ? p.paid_at.split("T")[0]
+            : undefined,
+
           month: monthName,
           year: p.year,
+
           payment_token: p.payment_token ?? undefined,
           screenshot_url: p.screenshot_path ?? undefined,
           utr_number: p.utr_number ?? undefined,
@@ -117,18 +150,24 @@ export default function PaymentsPage() {
 
       setPayments(mappedPayments)
     } catch (err: any) {
-      console.error("Failed to load payments from Supabase:", err)
-      addToast("error", "Failed to load payments.")
+      console.error("Failed to load payments:", err)
+
+      addToast(
+        "error",
+        "Failed to load payments."
+      )
     } finally {
+      isFetchingRef.current = false
       setIsLoading(false)
     }
-  }, [user?.id, supabase])
+  }, [user?.id])
 
+  // Initial fetch only
   useEffect(() => {
     fetchPayments()
   }, [fetchPayments])
 
-  // Filter Hook
+  // Filters
   const {
     searchValue,
     setSearchValue,
@@ -142,104 +181,232 @@ export default function PaymentsPage() {
     filteredPayments,
   } = usePaymentFilters(payments)
 
-  const handleMarkPaid = async (id: string, tenantName: string, roomNumber: string) => {
-    // Optimistic UI Update
+  // MARK PAID
+  const handleMarkPaid = async (
+    id: string,
+    tenantName: string,
+    roomNumber: string
+  ) => {
+    const paidDate = new Date()
+      .toISOString()
+      .split("T")[0]
+
+    // Optimistic update
     setPayments((prev) =>
       prev.map((p) =>
         p.id === id
-          ? { ...p, status: "paid" as const, paidDate: new Date().toISOString().split("T")[0] }
+          ? {
+              ...p,
+              status: "paid" as const,
+              paidDate,
+            }
           : p
       )
     )
 
-    // Update selected payment in drawer if open
+    // Update drawer
     if (selectedPayment?.id === id) {
       setSelectedPayment((prev) =>
-        prev ? { ...prev, status: "paid" as const, paidDate: new Date().toISOString().split("T")[0] } : null
+        prev
+          ? {
+              ...prev,
+              status: "paid" as const,
+              paidDate,
+            }
+          : null
       )
     }
 
-    addToast("success", `${tenantName} (Room ${roomNumber}) marked as paid.`)
-
-    try {
-      const res = await fetch(`/api/payments/${id}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "approve" }),
-      })
-      if (!res.ok) throw new Error(await res.text())
-    } catch (err: any) {
-      console.error("Failed to update status in Supabase:", err)
-      addToast("error", "Failed to update payment status on server.")
-      fetchPayments() // revert optimistic update
-    }
-  }
-
-  const handleApprovePayment = async (id: string, tenantName: string, roomNumber: string) => {
-    // Optimistic update
-    const paidDate = new Date().toISOString().split("T")[0]
-    setPayments((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, status: "paid" as const, paidDate } : p))
+    addToast(
+      "success",
+      `${tenantName} (Room ${roomNumber}) marked as paid.`
     )
-    if (selectedPayment?.id === id) {
-      setSelectedPayment((prev) => prev ? { ...prev, status: "paid" as const, paidDate } : null)
-    }
-    addToast("success", `${tenantName} (Room ${roomNumber}) payment approved.`)
 
     try {
-      const res = await fetch(`/api/payments/${id}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "approve" }),
-      })
-      if (!res.ok) throw new Error(await res.text())
+      const res = await fetch(
+        `/api/payments/${id}/verify`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "approve",
+          }),
+        }
+      )
+
+      if (!res.ok) {
+        throw new Error(await res.text())
+      }
     } catch (err: any) {
-      console.error("Failed to approve payment:", err)
-      addToast("error", "Failed to approve payment on server.")
-      fetchPayments() // revert optimistic update
+      console.error("Failed to update:", err)
+
+      addToast(
+        "error",
+        "Failed to update payment status."
+      )
+
+      fetchPayments()
     }
   }
 
-  const handleRejectPayment = async (id: string, tenantName: string, roomNumber: string, notes: string) => {
-    // Optimistic update back to pending
+  // APPROVE PAYMENT
+  const handleApprovePayment = async (
+    id: string,
+    tenantName: string,
+    roomNumber: string
+  ) => {
+    const paidDate = new Date()
+      .toISOString()
+      .split("T")[0]
+
     setPayments((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, status: "pending" as const, verification_notes: notes } : p))
+      prev.map((p) =>
+        p.id === id
+          ? {
+              ...p,
+              status: "paid" as const,
+              paidDate,
+            }
+          : p
+      )
     )
+
     if (selectedPayment?.id === id) {
-      setSelectedPayment((prev) => prev ? { ...prev, status: "pending" as const, verification_notes: notes } : null)
+      setSelectedPayment((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "paid" as const,
+              paidDate,
+            }
+          : null
+      )
     }
-    addToast("warning", `${tenantName} (Room ${roomNumber}) payment rejected.`)
+
+    addToast(
+      "success",
+      `${tenantName} (Room ${roomNumber}) payment approved.`
+    )
 
     try {
-      const res = await fetch(`/api/payments/${id}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reject", notes }),
-      })
-      if (!res.ok) throw new Error(await res.text())
+      const res = await fetch(
+        `/api/payments/${id}/verify`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "approve",
+          }),
+        }
+      )
+
+      if (!res.ok) {
+        throw new Error(await res.text())
+      }
     } catch (err: any) {
-      console.error("Failed to reject payment:", err)
-      addToast("error", "Failed to reject payment on server.")
-      fetchPayments() // revert optimistic update
+      console.error("Failed to approve:", err)
+
+      addToast(
+        "error",
+        "Failed to approve payment."
+      )
+
+      fetchPayments()
     }
   }
 
+  // REJECT PAYMENT
+  const handleRejectPayment = async (
+    id: string,
+    tenantName: string,
+    roomNumber: string,
+    notes: string
+  ) => {
+    setPayments((prev) =>
+      prev.map((p) =>
+        p.id === id
+          ? {
+              ...p,
+              status: "pending" as const,
+              verification_notes: notes,
+            }
+          : p
+      )
+    )
+
+    if (selectedPayment?.id === id) {
+      setSelectedPayment((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "pending" as const,
+              verification_notes: notes,
+            }
+          : null
+      )
+    }
+
+    addToast(
+      "warning",
+      `${tenantName} (Room ${roomNumber}) payment rejected.`
+    )
+
+    try {
+      const res = await fetch(
+        `/api/payments/${id}/verify`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            action: "reject",
+            notes,
+          }),
+        }
+      )
+
+      if (!res.ok) {
+        throw new Error(await res.text())
+      }
+    } catch (err: any) {
+      console.error("Failed to reject:", err)
+
+      addToast(
+        "error",
+        "Failed to reject payment."
+      )
+
+      fetchPayments()
+    }
+  }
+
+  // Drawer open
   const handleRowClick = (payment: Payment) => {
     setSelectedPayment(payment)
     setIsDrawerOpen(true)
   }
 
-  // Calculate totals based on the currently selected month
+  // Selected month calculations
   const paymentsForSelectedMonth = useMemo(() => {
-    return payments.filter((p) => `${p.month} ${p.year}` === selectedMonth)
+    return payments.filter(
+      (p) =>
+        `${p.month} ${p.year}` === selectedMonth
+    )
   }, [payments, selectedMonth])
 
   const totalCollected = paymentsForSelectedMonth
     .filter((p) => p.status === "paid")
     .reduce((sum, p) => sum + p.amount, 0)
+
   const totalPending = paymentsForSelectedMonth
     .filter((p) => p.status === "pending")
     .reduce((sum, p) => sum + p.amount, 0)
+
   const totalLate = paymentsForSelectedMonth
     .filter((p) => p.status === "late")
     .reduce((sum, p) => sum + p.amount, 0)
@@ -248,29 +415,34 @@ export default function PaymentsPage() {
     .filter((p) => p.status === "submitted")
     .reduce((sum, p) => sum + p.amount, 0)
 
-  const hasActiveFilters = searchValue !== "" || statusFilter !== "all"
+  const hasActiveFilters =
+    searchValue !== "" ||
+    statusFilter !== "all"
 
   const handleClearFilters = () => {
     setSearchValue("")
     setStatusFilter("all")
   }
 
-  // ─── Mobile Layout ────────────────────────────────────────────────────────
+  // MOBILE
   if (isMobile) {
     return (
       <DashboardLayout title={`Payments · ${selectedMonth.split(" ")[0]}`}>
         <div className="flex flex-col h-full overflow-hidden">
-          {/* Sticky header block */}
           <div
             className="sticky top-0 z-20 flex flex-col bg-background/90 px-4 pt-3 pb-2 border-b border-border"
-            style={{ backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" }}
+            style={{
+              backdropFilter: "blur(12px)",
+              WebkitBackdropFilter: "blur(12px)",
+            }}
           >
-            {/* Page title */}
             <h1 className="text-lg font-bold mb-3 leading-none">
-              Payments <span className="text-muted-foreground font-normal text-sm">· {selectedMonth}</span>
+              Payments{" "}
+              <span className="text-muted-foreground font-normal text-sm">
+                · {selectedMonth}
+              </span>
             </h1>
 
-            {/* Compact summary cards */}
             <MobileSummaryCards
               totalCollected={totalCollected}
               totalPending={totalPending}
@@ -278,7 +450,6 @@ export default function PaymentsPage() {
               totalSubmitted={totalSubmitted}
             />
 
-            {/* Compact filter bar */}
             <MobileFilterBar
               searchValue={searchValue}
               onSearchChange={setSearchValue}
@@ -291,21 +462,35 @@ export default function PaymentsPage() {
               onMonthChange={setSelectedMonth}
             />
 
-            {/* List section header */}
-            {!isLoading && filteredPayments.length > 0 && (
-              <div className="flex justify-between text-[11px] text-muted-foreground pt-1 pb-0.5">
-                <span>{filteredPayments.length} payment{filteredPayments.length !== 1 ? "s" : ""}</span>
-                <span>{filteredPayments.filter(p => p.status === "paid").length} paid</span>
-              </div>
-            )}
+            {!isLoading &&
+              filteredPayments.length > 0 && (
+                <div className="flex justify-between text-[11px] text-muted-foreground pt-1 pb-0.5">
+                  <span>
+                    {filteredPayments.length} payment
+                    {filteredPayments.length !== 1
+                      ? "s"
+                      : ""}
+                  </span>
+
+                  <span>
+                    {
+                      filteredPayments.filter(
+                        (p) => p.status === "paid"
+                      ).length
+                    }{" "}
+                    paid
+                  </span>
+                </div>
+              )}
           </div>
 
-          {/* Scrollable payment list */}
           <div className="flex-1 overflow-hidden px-4 pt-2">
             <MobilePaymentList
               payments={filteredPayments}
               isLoading={isLoading}
-              totalPayments={paymentsForSelectedMonth.length}
+              totalPayments={
+                paymentsForSelectedMonth.length
+              }
               onCardClick={handleRowClick}
               onMarkPaid={handleMarkPaid}
               onClearFilters={handleClearFilters}
@@ -316,7 +501,6 @@ export default function PaymentsPage() {
           </div>
         </div>
 
-        {/* Mobile bottom-sheet drawer */}
         <MobilePaymentDrawer
           payment={selectedPayment}
           isOpen={isDrawerOpen}
@@ -326,12 +510,15 @@ export default function PaymentsPage() {
           onRejectPayment={handleRejectPayment}
         />
 
-        <ToastContainer toasts={toasts} onDismiss={removeToast} />
+        <ToastContainer
+          toasts={toasts}
+          onDismiss={removeToast}
+        />
       </DashboardLayout>
     )
   }
 
-  // ─── Desktop Layout (unchanged) ───────────────────────────────────────────
+  // DESKTOP
   return (
     <DashboardLayout title={`Payments · ${selectedMonth.split(" ")[0]}`}>
       <div className="flex flex-col h-full max-w-7xl mx-auto w-full p-4 md:p-8 space-y-8">
@@ -375,7 +562,10 @@ export default function PaymentsPage() {
         onRejectPayment={handleRejectPayment}
       />
 
-      <ToastContainer toasts={toasts} onDismiss={removeToast} />
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={removeToast}
+      />
     </DashboardLayout>
   )
 }

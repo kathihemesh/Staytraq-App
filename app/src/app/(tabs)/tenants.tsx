@@ -82,7 +82,10 @@ export default function TenantsScreen() {
   const [notes, setNotes] = useState("")
 
   const fetchData = useCallback(async () => {
-    if (!user?.id) return
+    if (!user?.id) {
+      setLoading(false)
+      return
+    }
     try {
       setLoading(true)
 
@@ -348,15 +351,69 @@ export default function TenantsScreen() {
 
   if (loading && tenants.length === 0) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark items-center justify-center">
-        <ActivityIndicator size="large" color={isDark ? "#0091ff" : "#0071df"} />
-        <Text className="text-sm text-muted dark:text-muted-dark mt-3">Fetching tenants...</Text>
-      </View>
+      <SafeAreaView key="tenants-loading" className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
+        {/* Header Skeleton */}
+        <View className="px-6 pt-4 pb-3 flex-row justify-between items-center">
+          <View className="gap-2">
+            <View className="h-7 w-32 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+            <View className="h-4 w-56 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+          </View>
+          <View className="h-10 w-10 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+        </View>
+
+        {/* Search Input Skeleton */}
+        <View className="px-6 mb-4">
+          <View className="h-12 bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-2xl" />
+        </View>
+
+        {/* Filter Tabs Skeleton */}
+        <View className="h-12 mb-2 px-6 flex-row items-center gap-2">
+          <View className="h-8 w-16 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
+          <View className="h-8 w-20 bg-muted/15 dark:bg-muted-dark/15 rounded-xl" />
+          <View className="h-8 w-24 bg-muted/15 dark:bg-muted-dark/15 rounded-xl" />
+          <View className="h-8 w-24 bg-muted/15 dark:bg-muted-dark/15 rounded-xl" />
+        </View>
+
+        {/* Skeleton Directory Cards */}
+        <View className="flex-1 px-6">
+          <ScrollView showsVerticalScrollIndicator={false}>
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <View
+                key={i}
+                className="flex-row items-center bg-card dark:bg-card-dark border border-border dark:border-border-dark p-4 rounded-3xl mb-3 shadow-sm justify-between opacity-60"
+              >
+                <View className="flex-row items-center flex-1 pr-4">
+                  {/* Circle avatar skeleton */}
+                  <View className="h-11 w-11 bg-muted/20 dark:bg-muted-dark/20 rounded-full mr-3.5" />
+
+                  <View className="flex-1 gap-2">
+                    <View className="flex-row items-center">
+                      {/* Name skeleton */}
+                      <View className="h-4 w-28 bg-muted/25 dark:bg-muted-dark/25 rounded-md mr-2" />
+                      {/* Status badge skeleton */}
+                      <View className="h-3.5 w-14 bg-muted/20 dark:bg-muted-dark/20 rounded-md" />
+                    </View>
+
+                    <View className="flex-row items-center gap-4">
+                      {/* Room skeleton */}
+                      <View className="h-3 w-16 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                      {/* Phone skeleton */}
+                      <View className="h-3 w-24 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+                    </View>
+                  </View>
+                </View>
+                {/* Chevron skeleton */}
+                <View className="h-4 w-4 rounded-full bg-muted/20 dark:bg-muted-dark/20" />
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </SafeAreaView>
     )
   }
 
   return (
-    <SafeAreaView className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
+    <SafeAreaView key="tenants-loaded" className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
       {/* Header */}
       <View className="px-6 pt-4 pb-3 flex-row justify-between items-center">
         <View>
@@ -440,7 +497,9 @@ export default function TenantsScreen() {
         <View className="flex-1 px-6">
           <FlashList
             data={filteredTenants}
+            keyExtractor={(item) => `${item.id}-${item.status}`}
             showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 110 }}
             renderItem={({ item }) => {
               let badgeColor = "bg-success/10 text-success"
               if (item.status === "notice_period") badgeColor = "bg-warning/10 text-warning"
@@ -509,11 +568,11 @@ export default function TenantsScreen() {
         onRequestClose={() => setDetailModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 justify-end">
-          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[85%] border-t border-border dark:border-border-dark p-6">
+          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[92%] border-t border-border dark:border-border-dark">
             {selectedTenant && (
-              <View className="gap-6">
+              <View className="p-6 flex-col max-h-full">
                 {/* Header */}
-                <View className="flex-row justify-between items-start">
+                <View className="flex-row justify-between items-start mb-5">
                   <View className="flex-row items-center">
                     <View className="h-14 w-14 bg-primary/10 rounded-full items-center justify-center mr-4">
                       <User size={28} color={isDark ? "#0091ff" : "#0071df"} />
@@ -543,7 +602,11 @@ export default function TenantsScreen() {
                 </View>
 
                 {/* Details List */}
-                <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16 }} className="max-h-[60%]">
+                <ScrollView 
+                  showsVerticalScrollIndicator={false} 
+                  contentContainerStyle={{ gap: 16 }} 
+                  className="flex-shrink flex-grow-0 mb-6"
+                >
                   {/* Phone */}
                   {selectedTenant.mobile_number && (
                     <View className="flex-row items-center justify-between py-3 border-b border-border/40 dark:border-border-dark/40">
@@ -637,7 +700,7 @@ export default function TenantsScreen() {
                 </ScrollView>
 
                 {/* Primary Actions */}
-                <View className="flex-row gap-3 pb-6">
+                <View className="flex-row gap-3 pt-3 border-t border-border/40 dark:border-border-dark/40 pb-4">
                   <TouchableOpacity
                     onPress={() => handleDeleteTenant(selectedTenant.id, selectedTenant.room_id)}
                     className="h-12 w-12 border border-destructive/20 bg-destructive/5 rounded-xl items-center justify-center"

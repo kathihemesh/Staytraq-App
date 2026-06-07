@@ -234,6 +234,41 @@ export type Database = {
           }
         ]
       }
+      monthly_payment_links: {
+        Row: {
+          id: number
+          owner_id: string
+          month: number
+          year: number
+          portal_token: string
+          created_at: string
+        }
+        Insert: {
+          id?: number
+          owner_id: string
+          month: number
+          year: number
+          portal_token?: string
+          created_at?: string
+        }
+        Update: {
+          id?: number
+          owner_id?: string
+          month?: number
+          year?: number
+          portal_token?: string
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "monthly_payment_links_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "pg_owners"
+            referencedColumns: ["id"]
+          }
+        ]
+      }
       settings: {
         Row: {
           created_at: string
@@ -292,6 +327,7 @@ export type Database = {
           room_id: number | null
           status: Database["public"]["Enums"]["tenant_status"]
           updated_at: string | null
+          payment_code: string
         }
         Insert: {
           created_at?: string
@@ -312,6 +348,7 @@ export type Database = {
           room_id?: number | null
           status?: Database["public"]["Enums"]["tenant_status"]
           updated_at?: string | null
+          payment_code?: string
         }
         Update: {
           created_at?: string
@@ -332,6 +369,7 @@ export type Database = {
           room_id?: number | null
           status?: Database["public"]["Enums"]["tenant_status"]
           updated_at?: string | null
+          payment_code?: string
         }
         Relationships: [
           {
