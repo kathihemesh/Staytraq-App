@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { Stack } from "expo-router"
 import { StatusBar } from "expo-status-bar"
+import * as SystemUI from "expo-system-ui"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { AuthProvider } from "@/context/auth"
@@ -22,6 +23,11 @@ export default function RootLayout() {
 
 function RootLayoutNav() {
   const { colorScheme } = useTheme()
+  const backgroundColor = colorScheme === "dark" ? "#0f111a" : "#fafafa"
+
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(backgroundColor)
+  }, [backgroundColor])
 
   return (
     <>
@@ -29,17 +35,16 @@ function RootLayoutNav() {
       <Stack
         screenOptions={{
           headerShown: false,
-          animation: "fade",
-          animationDuration: 160,
+          animation: "none",
           gestureEnabled: true,
           contentStyle: {
-            backgroundColor: colorScheme === "dark" ? "#0f111a" : "#fafafa"
+            backgroundColor
           }
         }}
       >
-        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        <Stack.Screen name="(auth)" options={{ headerShown: false, animation: "none" }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: "none" }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false, animation: "none" }} />
         <Stack.Screen 
           name="reminders" 
           options={{ 

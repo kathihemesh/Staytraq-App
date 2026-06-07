@@ -13,7 +13,10 @@ import {
   Dimensions,
   Platform,
   Alert,
-  Clipboard
+  Clipboard,
+  Animated,
+  StyleSheet,
+  Share
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
@@ -112,6 +115,69 @@ export default function PaymentsScreen() {
   const [reminderType, setReminderType] = useState<"friendly" | "firm">("friendly")
   const [portalToken, setPortalToken] = useState("")
   const [isRefreshingLink, setIsRefreshingLink] = useState(false)
+
+  // Custom Toast State
+  const [toast, setToast] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    type: "success" | "error" | "info" | "warning";
+  }>({
+    visible: false,
+    title: "",
+    message: "",
+    type: "success",
+  })
+  const toastTranslateX = useRef(new Animated.Value(300)).current
+  const toastOpacity = useRef(new Animated.Value(0)).current
+  const toastTimeoutRef = useRef<any>(null)
+
+  const showToast = useCallback((title: string, message: string, type: "success" | "error" | "info" | "warning" = "success") => {
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current)
+    }
+
+    setToast({ visible: true, title, message, type })
+
+    // Reset anim state
+    toastTranslateX.setValue(300)
+    toastOpacity.setValue(0)
+
+    Animated.parallel([
+      Animated.spring(toastTranslateX, {
+        toValue: 0,
+        tension: 65,
+        friction: 10,
+        useNativeDriver: true,
+      }),
+      Animated.timing(toastOpacity, {
+        toValue: 1,
+        duration: 250,
+        useNativeDriver: true,
+      })
+    ]).start()
+
+    toastTimeoutRef.current = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(toastTranslateX, {
+          toValue: 300,
+          duration: 250,
+          useNativeDriver: true,
+        }),
+        Animated.timing(toastOpacity, {
+          toValue: 0,
+          duration: 250,
+          useNativeDriver: true,
+        })
+      ]).start(() => {
+        setToast((prev) => ({ ...prev, visible: false }))
+      })
+    }, 2000)
+  }, [toastTranslateX, toastOpacity])
+
+  // Custom Delete Confirm State
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
+  const [deletingPaymentId, setDeletingPaymentId] = useState<number | null>(null)
   
   // Filtering, Search, & Sorting
   const [searchQuery, setSearchQuery] = useState("")
@@ -296,13 +362,10 @@ export default function PaymentsScreen() {
 
       if (error) throw error
       setPortalToken(newToken)
-      Alert.alert("Link Refreshed", `A new payment portal URL for ${selectedMonth} has been generated. The old link is now invalid.`)
+      showToast("Link Refreshed", `A new payment portal URL has been generated for ${selectedMonth}.`, "success")
     } catch (err) {
       console.error("Error refreshing portal link:", err)
-      Alert.alert(
-        "Error", 
-        "Failed to regenerate payment portal link. Please check if database schema updates have been applied in your SQL editor."
-      )
+      showToast("Error", "Failed to regenerate payment portal link. Make sure database migrations are up to date.", "error")
     } finally {
       setIsRefreshingLink(false)
     }
@@ -315,10 +378,75 @@ export default function PaymentsScreen() {
 
   const currentReminderMessage = reminderType === "friendly" ? friendlyMessage : firmMessage
 
-  const handleCopyReminder = () => {
+  const handleCopyAndShareReminder = async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     Clipboard.setString(currentReminderMessage)
-    Alert.alert("Copied", "Payment reminder notice copied to clipboard. You can now paste and send it via WhatsApp, SMS, or Email.")
+    try {
+      await Share.share({
+        message: currentReminderMessage
+      })
+      showToast("Notice Copied", "Reminder notice copied to clipboard & share sheet opened.", "success")
+    } catch (err) {
+      console.error("Share error:", err)
+    }
+  }
+
+  const getToastIcon = (type: "success" | "error" | "info" | "warning", isDark: boolean) => {
+    const color = isDark 
+      ? (type === "success" ? "#4ade80" : type === "error" ? "#f87171" : type === "warning" ? "#fbbf24" : "#60a5fa")
+      : (type === "success" ? "#16a34a" : type === "error" ? "#dc2626" : type === "warning" ? "#d97706" : "#2563eb")
+    
+    switch (type) {
+      case "success": return <Check size={16} color={color} strokeWidth={3} />
+      case "error": return <X size={16} color={color} strokeWidth={3} />
+      case "warning": return <AlertTriangle size={16} color={color} strokeWidth={3} />
+      default: return <Info size={16} color={color} strokeWidth={3} />
+    }
+  }
+
+  const getToastBorderColor = (type: "success" | "error" | "info" | "warning", isDark: boolean) => {
+    if (isDark) {
+      switch (type) {
+        case "success": return "rgba(74, 222, 128, 0.25)"
+        case "error": return "rgba(248, 113, 113, 0.25)"
+        case "warning": return "rgba(251, 191, 36, 0.25)"
+        default: return "rgba(96, 165, 250, 0.25)"
+      }
+    } else {
+      switch (type) {
+        case "success": return "rgba(22, 163, 74, 0.25)"
+        case "error": return "rgba(220, 38, 38, 0.25)"
+        case "warning": return "rgba(217, 119, 6, 0.25)"
+        default: return "rgba(37, 99, 235, 0.25)"
+      }
+    }
+  }
+
+  const renderToast = () => {
+    if (!toast.visible) return null
+    return (
+      <Animated.View
+        style={[
+          styles.toastContainer,
+          isDark ? styles.toastDark : styles.toastLight,
+          {
+            transform: [{ translateX: toastTranslateX }],
+            opacity: toastOpacity,
+            borderColor: getToastBorderColor(toast.type, isDark)
+          }
+        ]}
+      >
+        <View style={styles.toastIconContainer}>
+          {getToastIcon(toast.type, isDark)}
+        </View>
+        <View className="flex-1 ml-2">
+          <Text className="text-[11px] font-black text-foreground dark:text-foreground-dark">{toast.title}</Text>
+          <Text className="text-[9px] text-muted dark:text-muted-dark font-medium mt-0.5" numberOfLines={2}>
+            {toast.message}
+          </Text>
+        </View>
+      </Animated.View>
+    )
   }
 
   useEffect(() => {
@@ -432,7 +560,7 @@ export default function PaymentsScreen() {
 
       } catch (err) {
         console.error("Failed manual verification updates:", err)
-        Alert.alert("Server Error", "Could not synchronize payment status.")
+        showToast("Server Error", "Could not synchronize payment status.", "error")
         void fetchPayments(true)
       } finally {
         setMarkingPaidId(null)
@@ -477,7 +605,7 @@ export default function PaymentsScreen() {
       void fetchPayments(true)
     } catch (err) {
       console.error("Approve payment error:", err)
-      Alert.alert("Database Error", "Failed to approve payment record.")
+      showToast("Database Error", "Failed to approve payment record.", "error")
       void fetchPayments(true)
     }
   }
@@ -518,7 +646,7 @@ export default function PaymentsScreen() {
       void fetchPayments(true)
     } catch (err) {
       console.error("Reject payment error:", err)
-      Alert.alert("Database Error", "Failed to reject payment record.")
+      showToast("Database Error", "Failed to reject payment record.", "error")
       void fetchPayments(true)
     }
   }
@@ -539,7 +667,7 @@ export default function PaymentsScreen() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     const url = `https://staytraq.vercel.app/pay/${token}` // Standard web tenant portal url
     Clipboard.setString(url)
-    Alert.alert("Link Copied", "A dynamic tenant billing portal URL is copied to clipboard.")
+    showToast("Link Copied", "Portal link copied to clipboard.", "success")
   }
 
   // Custom picker selection pre-filling occupants details
@@ -655,34 +783,32 @@ export default function PaymentsScreen() {
     }
   }
 
-  const handleDeletePayment = async (paymentId: number) => {
-    Alert.alert(
-      "Confirm Deletion",
-      "Are you sure you want to permanently delete this billing ledger record?",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
-              const { error } = await supabase
-                .from("payments")
-                .delete()
-                .eq("id", paymentId)
+  const handleDeletePayment = (paymentId: number) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    setDeletingPaymentId(paymentId)
+    setDeleteConfirmVisible(true)
+  }
 
-              if (error) throw error
-              setDetailModalVisible(false)
-              void fetchPayments(true)
-            } catch (err) {
-              console.error("Error deleting payment record:", err)
-              Alert.alert("Database Error", "Failed to delete the selected billing row.")
-            }
-          }
-        }
-      ]
-    )
+  const confirmDeletePayment = async () => {
+    if (!deletingPaymentId) return
+    try {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
+      const { error } = await supabase
+        .from("payments")
+        .delete()
+        .eq("id", deletingPaymentId)
+
+      if (error) throw error
+      setDetailModalVisible(false)
+      setDeleteConfirmVisible(false)
+      showToast("Deleted Successfully", "The billing record has been permanently deleted.", "success")
+      void fetchPayments(true)
+    } catch (err) {
+      console.error("Error deleting payment record:", err)
+      showToast("Database Error", "Failed to delete the selected billing row.", "error")
+    } finally {
+      setDeletingPaymentId(null)
+    }
   }
 
   // Filter & Sort Logic matching usePaymentFilters hook
@@ -1520,6 +1646,7 @@ export default function PaymentsScreen() {
               </View>
             )}
           </View>
+          {detailModalVisible && renderToast()}
         </View>
       </Modal>
 
@@ -1784,6 +1911,7 @@ export default function PaymentsScreen() {
               </TouchableOpacity>
             </View>
           </View>
+          {formModalVisible && renderToast()}
         </View>
       </Modal>
 
@@ -1839,6 +1967,26 @@ export default function PaymentsScreen() {
                 </TouchableOpacity>
               </View>
 
+              {/* Highlighted Portal Link */}
+              <View className="gap-2">
+                <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Portal Link (Click to Copy)</Text>
+                <TouchableOpacity
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                    Clipboard.setString(portalUrl)
+                    showToast("Link Copied", "Portal link copied to clipboard.", "success")
+                  }}
+                  className="border border-primary/20 dark:border-primary-dark/20 rounded-2xl p-4 bg-primary/5 flex-row items-center justify-between active:scale-[0.98]"
+                >
+                  <View className="flex-1 mr-2">
+                    <Text numberOfLines={1} className="text-sm font-semibold text-primary dark:text-primary-dark font-mono">
+                      {portalUrl}
+                    </Text>
+                  </View>
+                  <Copy size={16} className="text-primary dark:text-primary-dark" />
+                </TouchableOpacity>
+              </View>
+
               {/* Message Box */}
               <View className="gap-2">
                 <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Notice Message Preview</Text>
@@ -1853,11 +2001,11 @@ export default function PaymentsScreen() {
               {/* Action Buttons */}
               <View className="gap-3 pt-2">
                 <TouchableOpacity
-                  onPress={handleCopyReminder}
+                  onPress={handleCopyAndShareReminder}
                   className="w-full bg-primary rounded-xl h-12 flex-row items-center justify-center active:scale-95 shadow-md shadow-primary/20"
                 >
                   <Copy size={16} color="#ffffff" className="mr-2" />
-                  <Text className="text-white font-bold text-sm">Copy Message & Link</Text>
+                  <Text className="text-white font-bold text-sm">Copy & Share</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1877,8 +2025,86 @@ export default function PaymentsScreen() {
               </View>
             </View>
           </View>
+          {reminderModalVisible && renderToast()}
         </View>
       </Modal>
+
+      {/* Custom Delete Confirmation Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={deleteConfirmVisible}
+        onRequestClose={() => setDeleteConfirmVisible(false)}
+      >
+        <View className="flex-1 bg-black/60 justify-center items-center p-6">
+          <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-6 w-full max-w-sm shadow-2xl">
+            <View className="h-12 w-12 bg-red-500/10 rounded-2xl flex items-center justify-center mb-4 self-center">
+              <AlertTriangle size={24} color="#dc2626" />
+            </View>
+            <Text className="text-lg font-black text-foreground dark:text-foreground-dark text-center mb-2">
+              Confirm Deletion
+            </Text>
+            <Text className="text-xs text-muted dark:text-muted-dark text-center mb-6 leading-5">
+              Are you sure you want to permanently delete this billing ledger record? This action cannot be undone.
+            </Text>
+            
+            <View className="flex-row gap-3">
+              <TouchableOpacity
+                onPress={() => setDeleteConfirmVisible(false)}
+                className="flex-1 border border-border rounded-xl h-11 items-center justify-center active:scale-95"
+              >
+                <Text className="text-muted font-bold text-sm">Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                onPress={confirmDeletePayment}
+                className="flex-1 bg-red-500 rounded-xl h-11 items-center justify-center active:scale-95 shadow-md shadow-red-500/20"
+              >
+                <Text className="text-white font-bold text-sm">Delete</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          {deleteConfirmVisible && renderToast()}
+        </View>
+      </Modal>
+
+      {/* Toast Notification Overlay */}
+      {!(reminderModalVisible || detailModalVisible || formModalVisible || deleteConfirmVisible) && renderToast()}
     </SafeAreaView>
   )
 }
+
+const styles = StyleSheet.create({
+  toastContainer: {
+    position: "absolute",
+    top: Platform.OS === "ios" ? 60 : 30,
+    right: 16,
+    width: 280,
+    padding: 12,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    flexDirection: "row",
+    alignItems: "center",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 6,
+    zIndex: 99999,
+  },
+  toastLight: {
+    backgroundColor: "#ffffff",
+    shadowColor: "#000000",
+  },
+  toastDark: {
+    backgroundColor: "#171717",
+    shadowColor: "#000000",
+  },
+  toastIconContainer: {
+    height: 28,
+    width: 28,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(128, 128, 128, 0.08)",
+  }
+})
