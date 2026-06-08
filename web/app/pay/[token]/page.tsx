@@ -30,6 +30,7 @@ interface PaymentData {
     month: number
     year: number
     verification_notes?: string | null
+    payment_code?: string
   } | null
   settings: {
     upi_id: string
@@ -291,12 +292,12 @@ export default function TenantPaymentPage() {
   const generateUpiString = () => {
     if (!data?.settings || !data?.payment || !data?.tenant) return ''
     const { upi_id, upi_name } = data.settings
-    const { amount, month, year } = data.payment
-    const { name, room_number, payment_code } = data.tenant
+    const { amount } = data.payment
+    const payCode = data.payment.payment_code || 'PAY-XXXXXX'
     
     // Unique txn reference and note to identify payment
-    const txnRef = `${payment_code}-${month}-${year}`
-    const note = `Rent Room ${room_number} - ${name} (${payment_code})`
+    const txnRef = payCode
+    const note = payCode
 
     return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&am=${amount}&tr=${encodeURIComponent(txnRef)}&tn=${encodeURIComponent(note)}&cu=INR`
   }
@@ -481,7 +482,7 @@ export default function TenantPaymentPage() {
                   <div className="pt-4 flex items-end justify-between">
                     <span className="text-4xl font-bold tracking-tight text-white">₹{data.payment.amount}</span>
                     <Badge variant="outline" className="text-primary border-primary/20 bg-primary/5">
-                      Code: {data.tenant.payment_code}
+                      Code: {data.payment.payment_code || 'PAY-XXXXXX'}
                     </Badge>
                   </div>
                 </CardHeader>

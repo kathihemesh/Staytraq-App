@@ -71,6 +71,7 @@ type Payment = {
   verified_by_owner: boolean | null
   verification_notes: string | null
   payment_method: string | null
+  payment_code: string | null
   tenants_table?: {
     name: string | null
     rooms_table?: {
@@ -1355,7 +1356,7 @@ export default function PaymentsScreen() {
         onRequestClose={() => setDetailModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 justify-end">
-          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[88%] border-t border-border dark:border-border-dark p-6">
+          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[92%] border-t border-border dark:border-border-dark p-6">
             {selectedPayment && (
               <View className="gap-5">
                 {/* Header */}
@@ -1381,13 +1382,6 @@ export default function PaymentsScreen() {
                   </View>
                   
                   <View className="flex-row gap-2">
-                    <TouchableOpacity 
-                      onPress={() => openEditModal(selectedPayment)}
-                      className="h-8 w-8 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
-                    >
-                      <Edit2 size={14} color="#9ca3af" />
-                    </TouchableOpacity>
-                    
                     <TouchableOpacity
                       onPress={() => setDetailModalVisible(false)}
                       className="h-8 w-8 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
@@ -1401,7 +1395,7 @@ export default function PaymentsScreen() {
                 <ScrollView 
                   showsVerticalScrollIndicator={false} 
                   contentContainerStyle={{ gap: 16 }} 
-                  className="max-h-[65%]"
+                  className="flex-shrink flex-grow-0 max-h-[75%]"
                 >
                   {/* Timeline Tracker */}
                   <View className="bg-muted/10 border border-border dark:border-border-dark p-4 rounded-3xl">
@@ -1425,9 +1419,9 @@ export default function PaymentsScreen() {
                     <View className="flex-row items-start">
                       <View className="items-center mr-3">
                         <View className={`h-5 w-5 rounded-full items-center justify-center z-10 ${
-                          selectedPayment.status === "paid" ? "bg-success" : "bg-muted/20"
+                          (selectedPayment.status === "submitted" || selectedPayment.status === "paid") ? "bg-success" : "bg-muted/20"
                         }`}>
-                          {selectedPayment.status === "paid" ? (
+                          {(selectedPayment.status === "submitted" || selectedPayment.status === "paid") ? (
                             <Check size={10} color="#ffffff" strokeWidth={3} />
                           ) : (
                             <Clock size={10} color="#9ca3af" />
@@ -1436,11 +1430,11 @@ export default function PaymentsScreen() {
                         <View className={`h-8 w-[2px] ${selectedPayment.verified_by_owner ? "bg-success" : "bg-muted/30"}`} />
                       </View>
                       <View>
-                        <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Payment Settled</Text>
+                        <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Payment Submitted</Text>
                         <Text className="text-[10px] text-muted font-medium mt-0.5">
-                          {selectedPayment.paid_at 
+                          {selectedPayment.status === "paid" && selectedPayment.paid_at 
                             ? `Received ${new Date(selectedPayment.paid_at).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` 
-                            : "Awaiting settlement"}
+                            : "Payment under review"}
                         </Text>
                       </View>
                     </View>
@@ -1516,12 +1510,36 @@ export default function PaymentsScreen() {
                         </View>
                       )}
 
+                      {/* Display UTR copy block */}
                       {selectedPayment.utr_number && (
-                        <View className="flex-row justify-between items-center mt-1 border-t border-purple-500/10 pt-3">
-                          <Text className="text-[11px] font-bold text-muted">UTR / Transaction Code</Text>
-                          <Text className="font-mono text-xs font-black text-purple-600 dark:text-purple-400">{selectedPayment.utr_number}</Text>
+                        <View className="mt-1 border-t border-purple-500/10 pt-3 gap-1">
+                          <View className="flex-row justify-between items-center">
+                            <Text className="text-[11px] font-bold text-muted">UTR / Transaction Code</Text>
+                            <TouchableOpacity 
+                              onPress={() => {
+                                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                                Clipboard.setString(selectedPayment.utr_number || "")
+                                showToast("UTR Copied", "Transaction reference has been copied.", "success")
+                              }}
+                              className="bg-purple-500/10 px-2.5 py-1 rounded-lg flex-row items-center gap-1.5 active:scale-95"
+                            >
+                              <Text className="font-mono text-xs font-black text-purple-600 dark:text-purple-400">
+                                {selectedPayment.utr_number}
+                              </Text>
+                              <Copy size={10} color={isDark ? "#a78bfa" : "#7c3aed"} />
+                            </TouchableOpacity>
+                          </View>
+                          <Text className="text-[8px] text-muted text-right italic font-medium">Tap UTR code to copy</Text>
                         </View>
                       )}
+
+                      {/* Display payment verification code */}
+                      <View className="flex-row justify-between items-center mt-1 border-t border-purple-500/10 pt-3">
+                        <Text className="text-[11px] font-bold text-muted">Verification Code (Txn Ref)</Text>
+                        <Text className="font-mono text-xs font-black text-purple-600 dark:text-purple-400">
+                          {selectedPayment.payment_code || "—"}
+                        </Text>
+                      </View>
                     </View>
                   )}
 
@@ -1602,15 +1620,6 @@ export default function PaymentsScreen() {
                     <Trash2 size={18} color="#ef4444" />
                   </TouchableOpacity>
 
-                  {/* Copy Portal Link */}
-                  {selectedPayment.payment_token && (
-                    <TouchableOpacity
-                      onPress={() => handleCopyPaymentLink(selectedPayment.payment_token)}
-                      className="h-12 w-12 border border-primary/20 bg-primary/5 rounded-xl items-center justify-center active:scale-95"
-                    >
-                      <Copy size={18} color={isDark ? "#0091ff" : "#0071df"} />
-                    </TouchableOpacity>
-                  )}
 
                   {/* Submitted State Approval Verification Controls */}
                   {selectedPayment.status === "submitted" && !rejectingMode ? (

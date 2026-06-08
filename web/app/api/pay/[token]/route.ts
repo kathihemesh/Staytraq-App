@@ -128,7 +128,7 @@ export async function POST(
     // 3. Fetch the payment record matching this tenant and this specific month & year
     const { data: payments, error: payError } = await supabase
       .from('payments')
-      .select('id, total_amount, status, due_date, month, year, verification_notes')
+      .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
       .eq('tenant_id', matchedTenant.id)
       .eq('month', linkRecord.month)
       .eq('year', linkRecord.year)
@@ -166,7 +166,8 @@ export async function POST(
         due_date: payment.due_date,
         month: payment.month,
         year: payment.year,
-        verification_notes: payment.verification_notes || null
+        verification_notes: payment.verification_notes || null,
+        payment_code: payment.payment_code
       }
     })
 
