@@ -771,6 +771,7 @@ export default function TenantPaymentPage() {
           <p className="text-xs text-neutral-600 flex items-center justify-center gap-1">
             Secure payment verification by <span className="font-semibold text-neutral-500">Staytraq</span>
           </p>
+        </div>
       </div>
 
       {/* Full Screenshot Modal */}
