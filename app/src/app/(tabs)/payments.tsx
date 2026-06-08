@@ -41,7 +41,8 @@ import {
   Info,
   Edit2,
   Trash2,
-  MessageSquare
+  MessageSquare,
+  Eye
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
@@ -68,7 +69,7 @@ type Payment = {
   utr_number: string | null
   submitted_at: string | null
   verified_at: string | null
-  verified_by_owner: boolean | null
+  verified_by_owner?: boolean | null
   verification_notes: string | null
   payment_method: string | null
   payment_code: string | null
@@ -202,6 +203,8 @@ export default function PaymentsScreen() {
   const [monthPickerVisible, setMonthPickerVisible] = useState(false)
   const [imageFullScreen, setImageFullScreen] = useState(false)
   const [signedScreenshotUrl, setSignedScreenshotUrl] = useState<string | null>(null)
+  const [imageAspectRatio, setImageAspectRatio] = useState<number | null>(null)
+  const [detailsCollapsed, setDetailsCollapsed] = useState(false)
   const [loadingImage, setLoadingImage] = useState(false)
   const [rejectingMode, setRejectingMode] = useState(false)
   const [rejectNotes, setRejectNotes] = useState("")
@@ -490,9 +493,24 @@ export default function PaymentsScreen() {
 
       if (error) throw error
       setSignedScreenshotUrl(data.signedUrl)
+
+      // Get image dimensions to determine aspect ratio
+      Image.getSize(
+        data.signedUrl,
+        (width, height) => {
+          if (width && height) {
+            setImageAspectRatio(width / height)
+          }
+        },
+        (err) => {
+          console.error("Failed to get screenshot size:", err)
+          setImageAspectRatio(null)
+        }
+      )
     } catch (err) {
       console.error("Error generating signed screenshot URL:", err)
       setSignedScreenshotUrl(null)
+      setImageAspectRatio(null)
     } finally {
       setLoadingImage(false)
     }
@@ -503,6 +521,7 @@ export default function PaymentsScreen() {
       void fetchScreenshotUrl(selectedPayment.screenshot_path)
     } else {
       setSignedScreenshotUrl(null)
+      setImageAspectRatio(null)
       setRejectingMode(false)
       setRejectNotes("")
     }
@@ -512,6 +531,9 @@ export default function PaymentsScreen() {
   const handleToggleFullscreenImage = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     setImageFullScreen(!imageFullScreen)
+    if (imageFullScreen) {
+      setDetailsCollapsed(false)
+    }
   }
 
   // Complete Mark as Paid flow with immediate haptic response
@@ -542,8 +564,7 @@ export default function PaymentsScreen() {
           .update({
             status: "paid",
             paid_at: now,
-            verified_at: now,
-            verified_by_owner: true
+            verified_at: now
           })
           .eq("id", paymentId)
 
@@ -577,7 +598,7 @@ export default function PaymentsScreen() {
 
     // Optimistic Update
     setPayments((prev) =>
-      prev.map((p) => (p.id === payment.id ? { ...p, status: "paid" as const, paid_at: now, verified_at: now, verified_by_owner: true } : p))
+      prev.map((p) => (p.id === payment.id ? { ...p, status: "paid" as const, paid_at: now, verified_at: now } : p))
     )
 
     try {
@@ -586,8 +607,7 @@ export default function PaymentsScreen() {
         .update({
           status: "paid",
           paid_at: now,
-          verified_at: now,
-          verified_by_owner: true
+          verified_at: now
         })
         .eq("id", payment.id)
 
@@ -973,7 +993,10 @@ export default function PaymentsScreen() {
 
         {/* Search & Filter Skeleton */}
         <View className="px-6 mb-3 gap-3">
-          <View className="h-11 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-2xl" />
+          <View className="flex-row items-center gap-2">
+            <View className="h-11 flex-1 bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-2xl" />
+            <View className="h-11 w-28 bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-2xl" />
+          </View>
           <View className="flex-row justify-between items-center gap-2">
             <View className="h-8 w-40 bg-muted/15 dark:bg-muted-dark/15 rounded-full" />
             <View className="h-8 w-24 bg-muted/20 dark:bg-muted-dark/20 rounded-full" />
@@ -1015,19 +1038,9 @@ export default function PaymentsScreen() {
       {/* Dynamic Header */}
       <View className="px-6 pt-3 pb-1.5 flex-row justify-between items-center">
         <View>
-          <View className="flex-row items-center gap-2">
-            <Text className="text-2xl font-black text-foreground dark:text-foreground-dark tracking-tight">
-              Payments
-            </Text>
-            <TouchableOpacity 
-              onPress={() => setMonthPickerVisible(true)} 
-              className="bg-primary/10 border border-primary/20 px-2 py-0.5 rounded-md"
-            >
-              <Text className="text-[10px] font-black text-primary uppercase">
-                {selectedMonth}
-              </Text>
-            </TouchableOpacity>
-          </View>
+          <Text className="text-2xl font-black text-foreground dark:text-foreground-dark tracking-tight">
+            Payments
+          </Text>
           <Text className="text-[11px] text-muted dark:text-muted-dark font-medium mt-0.5">
             Rental billing & verification ledger
           </Text>
@@ -1125,23 +1138,37 @@ export default function PaymentsScreen() {
 
       {/* Filters & Search controls */}
       <View className="px-6 mb-2 gap-2">
-        {/* Search */}
-        <View className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-1.5 shadow-sm">
-          <View className="mr-3">
-            <Search size={16} color="#9ca3af" />
+        {/* Search & Month Filter Row */}
+        <View className="flex-row items-center gap-2">
+          {/* Search */}
+          <View className="flex-1 flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-1.5 shadow-sm">
+            <View className="mr-3">
+              <Search size={16} color="#9ca3af" />
+            </View>
+            <TextInput
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              placeholder="Search tenants or rooms..."
+              placeholderTextColor="#9ca3af"
+              className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery("")}>
+                <X size={16} color="#9ca3af" />
+              </TouchableOpacity>
+            )}
           </View>
-          <TextInput
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            placeholder="Search tenants or rooms..."
-            placeholderTextColor="#9ca3af"
-            className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery("")}>
-              <X size={16} color="#9ca3af" />
-            </TouchableOpacity>
-          )}
+
+          {/* Month selector button next to search bar */}
+          <TouchableOpacity 
+            onPress={() => setMonthPickerVisible(true)} 
+            className="bg-primary/10 border border-primary/20 px-3 py-1.5 rounded-2xl flex-row items-center gap-1.5 justify-center"
+          >
+            <Calendar size={13} color={isDark ? "#0091ff" : "#0071df"} />
+            <Text className="text-[10px] font-black text-primary uppercase">
+              {selectedMonth}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Row 2: Status & Sort */}
@@ -1355,7 +1382,14 @@ export default function PaymentsScreen() {
         visible={detailModalVisible}
         onRequestClose={() => setDetailModalVisible(false)}
       >
-        <View className="flex-1 bg-black/60 justify-end">
+        <View className="flex-1 justify-end">
+          {/* Backdrop Overlay */}
+          <TouchableOpacity 
+            activeOpacity={1}
+            onPress={() => setDetailModalVisible(false)}
+            className="absolute inset-0 bg-black/60"
+          />
+          
           <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[92%] border-t border-border dark:border-border-dark p-6">
             {selectedPayment && (
               <View className="gap-5">
@@ -1384,9 +1418,9 @@ export default function PaymentsScreen() {
                   <View className="flex-row gap-2">
                     <TouchableOpacity
                       onPress={() => setDetailModalVisible(false)}
-                      className="h-8 w-8 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
+                      className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
                     >
-                      <X size={14} color="#9ca3af" />
+                      <X size={20} color="#9ca3af" />
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -1427,7 +1461,7 @@ export default function PaymentsScreen() {
                             <Clock size={10} color="#9ca3af" />
                           )}
                         </View>
-                        <View className={`h-8 w-[2px] ${selectedPayment.verified_by_owner ? "bg-success" : "bg-muted/30"}`} />
+                        <View className={`h-8 w-[2px] ${selectedPayment.verified_at ? "bg-success" : "bg-muted/30"}`} />
                       </View>
                       <View>
                         <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Payment Submitted</Text>
@@ -1438,20 +1472,20 @@ export default function PaymentsScreen() {
                         </Text>
                       </View>
                     </View>
-
+ 
                     {/* Step 3 */}
                     <View className="flex-row items-start">
                       <View className="items-center mr-3">
                         <View className={`h-5 w-5 rounded-full items-center justify-center z-10 ${
-                          selectedPayment.verified_by_owner ? "bg-success" : "bg-muted/20"
+                          selectedPayment.verified_at ? "bg-success" : "bg-muted/20"
                         }`}>
-                          <ShieldCheck size={10} color={selectedPayment.verified_by_owner ? "#ffffff" : "#9ca3af"} />
+                          <ShieldCheck size={10} color={selectedPayment.verified_at ? "#ffffff" : "#9ca3af"} />
                         </View>
                       </View>
                       <View>
                         <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Audit & Verified</Text>
                         <Text className="text-[10px] text-muted font-medium mt-0.5">
-                          {selectedPayment.verified_by_owner ? "Ledger record verified" : "Awaiting verification"}
+                          {selectedPayment.verified_at ? "Ledger record verified" : "Awaiting verification"}
                         </Text>
                       </View>
                     </View>
@@ -1672,18 +1706,70 @@ export default function PaymentsScreen() {
             onPress={handleToggleFullscreenImage}
             className="flex-1 bg-black/95 items-center justify-center p-4"
           >
-            <View className="relative w-full h-[80%] items-center justify-center">
+            <TouchableOpacity 
+              activeOpacity={1}
+              onPress={() => {}}
+              style={[
+                { width: "100%", maxWidth: "100%", maxHeight: "80%" },
+                imageAspectRatio ? { aspectRatio: imageAspectRatio } : { height: "80%" }
+              ]}
+              className="relative items-center justify-center"
+            >
               <Image 
                 source={{ uri: signedScreenshotUrl }} 
-                className="w-full h-full object-contain rounded-xl"
+                className="w-full h-full rounded-xl"
+                resizeMode="contain"
               />
               <TouchableOpacity 
                 onPress={handleToggleFullscreenImage}
                 className="absolute top-4 right-4 h-10 w-10 bg-black/60 rounded-full items-center justify-center border border-white/20"
               >
-                <X size={18} color="#ffffff" />
+                <X size={20} color="#ffffff" />
               </TouchableOpacity>
-            </View>
+
+              {/* Bottom overlay with transaction details */}
+              {detailsCollapsed ? (
+                <TouchableOpacity
+                  activeOpacity={0.75}
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    setDetailsCollapsed(false)
+                  }}
+                  className="absolute bottom-4 right-4 h-12 w-12 bg-black/80 rounded-full items-center justify-center border border-white/20 shadow-2xl"
+                >
+                  <Eye size={20} color="#ffffff" />
+                </TouchableOpacity>
+              ) : (
+                <View className="absolute bottom-4 left-4 right-4 gap-1">
+                  <TouchableOpacity
+                    activeOpacity={0.9}
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      setDetailsCollapsed(true)
+                    }}
+                    className="bg-black/85 border border-white/10 rounded-2xl p-4 gap-2.5 shadow-2xl"
+                  >
+                    {selectedPayment?.utr_number && (
+                      <View className="flex-row justify-between items-center">
+                        <Text className="text-[10px] font-extrabold text-white/50 uppercase tracking-wider">UTR Number</Text>
+                        <Text className="font-mono text-xs font-black text-purple-400">
+                          {selectedPayment.utr_number}
+                        </Text>
+                      </View>
+                    )}
+                    <View className="flex-row justify-between items-center border-t border-white/5 pt-2">
+                      <Text className="text-[10px] font-extrabold text-white/50 uppercase tracking-wider">Verification Code</Text>
+                      <Text className="font-mono text-xs font-black text-purple-400">
+                        {selectedPayment?.payment_code || "—"}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                  <Text className="text-[8px] text-white/40 text-right italic font-medium pr-2">
+                    Tap details to hide
+                  </Text>
+                </View>
+              )}
+            </TouchableOpacity>
           </TouchableOpacity>
         </Modal>
       )}
@@ -1707,9 +1793,9 @@ export default function PaymentsScreen() {
               </View>
               <TouchableOpacity
                 onPress={() => setFormModalVisible(false)}
-                className="h-8 w-8 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
+                className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
               >
-                <X size={16} color="#9ca3af" />
+                <X size={20} color="#9ca3af" />
               </TouchableOpacity>
             </View>
 

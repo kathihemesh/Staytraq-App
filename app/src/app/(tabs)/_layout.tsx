@@ -42,6 +42,7 @@ export default function TabLayout() {
         name="reminders"
         options={{
           title: "Reminders",
+          href: null,
         }}
       />
       <Tabs.Screen

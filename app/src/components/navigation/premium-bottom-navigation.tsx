@@ -15,6 +15,8 @@ import {
   Bell,
   BellRing,
   Building2,
+  ChevronLeft,
+  ChevronRight,
   IndianRupee,
   LayoutDashboard,
   Settings,
@@ -44,12 +46,19 @@ type NavVisual = {
   ActiveIcon: typeof LayoutDashboard
 }
 
+type DisplayRoute = {
+  key: string
+  routeIndex: number
+}
+
 /* ─── Constants ──────────────────────────────────────────────── */
 
 const VISIBLE_SLOTS = 5
 const COLLAPSED_HEIGHT = 68
 const EXPANDED_HEIGHT = 196
 const EXPANDED_ITEM_HEIGHT = 84
+const SECTION_BUTTON_WIDTH = 18
+const SECTION_ICON_GUTTER = 8
 
 /* ─── Accent colours per route ───────────────────────────────── */
 
@@ -208,16 +217,38 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
   const isDark = colorScheme === "dark"
   const [width, setWidth] = useState(Dimensions.get("window").width)
   const [expanded, setExpanded] = useState(false)
+  const [sectionIndex, setSectionIndex] = useState(0)
   const expandProgress = useRef(new Animated.Value(0)).current
-  const selectedIndexRef = useRef(state.index)
-  selectedIndexRef.current = state.index
-  const selectedIndex = state.index
+  const routes = useMemo(
+    () => state.routes.filter(route => {
+      const options = (descriptors[route.key]?.options || {}) as any
+      return options.href !== null && route.name !== "reminders"
+    }),
+    [state.routes, descriptors]
+  )
 
-  const routes = state.routes
+  const selectedRouteName = state.routes[state.index]?.name
+  const selectedIndex = useMemo(
+    () => Math.max(0, routes.findIndex(r => r.name === selectedRouteName)),
+    [routes, selectedRouteName]
+  )
+
+  const selectedIndexRef = useRef(selectedIndex)
+  selectedIndexRef.current = selectedIndex
+
   const collapsedWidth = Math.min(width - 48, 340)
   const collapsedShellWidth = collapsedWidth + 12
-  const itemWidth = collapsedWidth / VISIBLE_SLOTS
-  const expandedTargetHeight = Math.min(360, Math.max(EXPANDED_HEIGHT, Math.ceil(routes.length / 3) * EXPANDED_ITEM_HEIGHT + 38))
+  const displayRoutes = useMemo<DisplayRoute[]>(
+    () => routes.map((route, routeIndex) => ({ key: route.key, routeIndex })),
+    [routes],
+  )
+  const sectionCount = Math.max(1, Math.ceil(displayRoutes.length / VISIBLE_SLOTS))
+  const activeSectionIndex = Math.min(sectionIndex, sectionCount - 1)
+  const canGoPreviousSection = activeSectionIndex > 0
+  const canGoNextSection = activeSectionIndex < sectionCount - 1
+  const collapsedItemsWidth = sectionCount > 1 ? collapsedWidth - (SECTION_BUTTON_WIDTH + SECTION_ICON_GUTTER) * 2 : collapsedWidth
+  const itemWidth = collapsedItemsWidth / VISIBLE_SLOTS
+  const expandedTargetHeight = Math.min(360, Math.max(EXPANDED_HEIGHT, Math.ceil(displayRoutes.length / 3) * EXPANDED_ITEM_HEIGHT + 38))
 
   /* ─── Derived visuals ──────────────────────────────────────── */
 
@@ -229,12 +260,13 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
   /* ─── 5 visible route indices, centred on selectedIndex ────── */
 
   const currentSectionItems = useMemo(() => {
-    const itemsPerSection = 5
-    const sectionIndex = Math.floor(selectedIndex / itemsPerSection)
-    const start = sectionIndex * itemsPerSection
-    const end = Math.min(start + itemsPerSection, routes.length)
-    return Array.from({ length: end - start }, (_, i) => start + i)
-  }, [selectedIndex, routes.length])
+    const start = activeSectionIndex * VISIBLE_SLOTS
+    return displayRoutes.slice(start, start + VISIBLE_SLOTS)
+  }, [activeSectionIndex, displayRoutes])
+
+  useEffect(() => {
+    setSectionIndex((current) => Math.min(current, sectionCount - 1))
+  }, [sectionCount])
 
   /* ─── Expand / collapse spring ─────────────────────────────── */
 
@@ -286,6 +318,17 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
       setExpanded(false)
     },
     [navigation, routes],
+  )
+
+  const goToSection = useCallback(
+    (direction: "previous" | "next") => {
+      setSectionIndex((current) => {
+        const next = direction === "next" ? Math.min(current + 1, sectionCount - 1) : Math.max(current - 1, 0)
+        if (next !== current) triggerHaptic("toggle")
+        return next
+      })
+    },
+    [sectionCount],
   )
 
   /* ─── Combined pan responder (horizontal swipe + vertical expand) ── */
@@ -368,51 +411,98 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
           />
         </Pressable>
 
-        {/* ── Navigation shell ───────────────────────────────── */}
-        <Animated.View
-          {...panResponder.panHandlers}
-          style={[
-            styles.shell,
-            {
-              width: expanded ? "100%" : collapsedShellWidth,
-              height: expandedHeight,
-              backgroundColor: shellBackground,
-              borderColor: shellBorder,
-              shadowColor: isDark ? "#020617" : "#64748b",
-              shadowOpacity: isDark ? 0.64 : 0.18,
-            },
-          ]}
-        >
+        <View style={[styles.shellFrame, { width: expanded ? "100%" : collapsedShellWidth }]}>
+          {/* ── Navigation shell ───────────────────────────────── */}
+          <Animated.View
+            {...panResponder.panHandlers}
+            style={[
+              styles.shell,
+              {
+                width: expanded ? "100%" : collapsedShellWidth,
+                height: expandedHeight,
+                backgroundColor: shellBackground,
+                borderColor: shellBorder,
+                shadowColor: isDark ? "#020617" : "#64748b",
+                shadowOpacity: isDark ? 0.64 : 0.18,
+              },
+            ]}
+          >
           {/* ── Collapsed: fixed 5-slot row (NO scroll) ──────── */}
           <Animated.View
             pointerEvents={expanded ? "none" : "auto"}
             style={[styles.collapsedLayer, { opacity: collapsedOpacity }]}
           >
             <View style={[styles.collapsedRow, { width: collapsedWidth }]}>
-              {currentSectionItems.map((routeIndex) => {
-                const active = selectedIndex === routeIndex
-                const visual = visuals[routeIndex]
-
-                return (
+              {sectionCount > 1 ? (
+                canGoPreviousSection ? (
                   <Pressable
-                    key={routeIndex}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: active }}
-                    accessibilityLabel={visual.label}
-                    onPress={() => navigateToRoute(routeIndex)}
-                    onLongPress={() => setExpandedWithFeedback(true)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Previous navigation section"
+                    onPress={() => goToSection("previous")}
                     style={({ pressed }) => [
-                      styles.item,
-                      { width: itemWidth },
+                      styles.inlineSectionButton,
                       {
-                        transform: [{ scale: pressed ? 0.92 : active ? 1.12 : 0.88 }],
+                        transform: [{ scale: pressed ? 0.9 : 1 }],
                       },
                     ]}
                   >
-                    <NavGlyph visual={visual} active={active} previewed={active} collapsed isDark={isDark} />
+                    <ChevronLeft size={18} color={isDark ? "#e5e7eb" : "#475569"} strokeWidth={3} />
                   </Pressable>
+                ) : (
+                  <View style={styles.inlineSectionButton} />
                 )
-              })}
+              ) : null}
+
+              {sectionCount > 1 ? <View style={styles.inlineSectionGutter} /> : null}
+
+              <View style={[styles.collapsedItemsRow, { width: collapsedItemsWidth }]}>
+                {currentSectionItems.map((displayRoute) => {
+                  const active = selectedIndex === displayRoute.routeIndex
+                  const visual = visuals[displayRoute.routeIndex]
+
+                  return (
+                    <Pressable
+                      key={displayRoute.key}
+                      accessibilityRole="tab"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={visual.label}
+                      onPress={() => navigateToRoute(displayRoute.routeIndex)}
+                      onLongPress={() => setExpandedWithFeedback(true)}
+                      style={({ pressed }) => [
+                        styles.item,
+                        { width: itemWidth },
+                        {
+                          transform: [{ scale: pressed ? 0.92 : active ? 1.12 : 0.88 }],
+                        },
+                      ]}
+                    >
+                      <NavGlyph visual={visual} active={active} previewed={active} collapsed isDark={isDark} />
+                    </Pressable>
+                  )
+                })}
+              </View>
+
+              {sectionCount > 1 ? <View style={styles.inlineSectionGutter} /> : null}
+
+              {sectionCount > 1 ? (
+                canGoNextSection ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel="Next navigation section"
+                    onPress={() => goToSection("next")}
+                    style={({ pressed }) => [
+                      styles.inlineSectionButton,
+                      {
+                        transform: [{ scale: pressed ? 0.9 : 1 }],
+                      },
+                    ]}
+                  >
+                    <ChevronRight size={18} color={isDark ? "#e5e7eb" : "#475569"} strokeWidth={3} />
+                  </Pressable>
+                ) : (
+                  <View style={styles.inlineSectionButton} />
+                )
+              ) : null}
             </View>
           </Animated.View>
 
@@ -427,17 +517,17 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
             ]}
           >
             <View style={styles.expandedGrid}>
-              {routes.map((route, index) => {
-                const active = selectedIndex === index
-                const visual = visuals[index]
+              {displayRoutes.map((displayRoute) => {
+                const active = selectedIndex === displayRoute.routeIndex
+                const visual = visuals[displayRoute.routeIndex]
 
                 return (
                   <Pressable
-                    key={route.key}
+                    key={displayRoute.key}
                     accessibilityRole="tab"
                     accessibilityState={{ selected: active }}
                     accessibilityLabel={visual.label}
-                    onPress={() => navigateToRoute(index)}
+                    onPress={() => navigateToRoute(displayRoute.routeIndex)}
                     style={({ pressed }) => [
                       styles.expandedItem,
                       {
@@ -459,7 +549,8 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
               })}
             </View>
           </Animated.View>
-        </Animated.View>
+          </Animated.View>
+        </View>
       </Animated.View>
     </View>
   )
@@ -495,8 +586,13 @@ const styles = StyleSheet.create({
     height: 4,
     borderRadius: 999,
   },
+  shellFrame: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
   shell: {
     maxWidth: 420,
+    zIndex: 2,
     borderWidth: 1,
     borderRadius: 32,
     overflow: "hidden",
@@ -504,12 +600,27 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 16 },
     elevation: 18,
   },
+  inlineSectionButton: {
+    width: SECTION_BUTTON_WIDTH,
+    height: 58,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  inlineSectionGutter: {
+    width: SECTION_ICON_GUTTER,
+    height: 58,
+  },
   collapsedLayer: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
   },
   collapsedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  collapsedItemsRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

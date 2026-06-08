@@ -567,7 +567,14 @@ export default function TenantsScreen() {
         visible={detailModalVisible}
         onRequestClose={() => setDetailModalVisible(false)}
       >
-        <View className="flex-1 bg-black/60 justify-end">
+        <View className="flex-1 justify-end">
+          {/* Backdrop Overlay */}
+          <TouchableOpacity 
+            activeOpacity={1}
+            onPress={() => setDetailModalVisible(false)}
+            className="absolute inset-0 bg-black/60"
+          />
+
           <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[92%] border-t border-border dark:border-border-dark">
             {selectedTenant && (
               <View className="p-6 flex-col max-h-full">
@@ -595,9 +602,9 @@ export default function TenantsScreen() {
                   </View>
                   <TouchableOpacity
                     onPress={() => setDetailModalVisible(false)}
-                    className="h-8 w-8 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
+                    className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
                   >
-                    <X size={16} color="#9ca3af" />
+                    <X size={20} color="#9ca3af" />
                   </TouchableOpacity>
                 </View>
 
@@ -742,9 +749,9 @@ export default function TenantsScreen() {
               </View>
               <TouchableOpacity
                 onPress={() => setFormModalVisible(false)}
-                className="h-8 w-8 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
+                className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
               >
-                <X size={16} color="#9ca3af" />
+                <X size={20} color="#9ca3af" />
               </TouchableOpacity>
             </View>
 
