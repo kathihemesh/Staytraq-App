@@ -460,17 +460,26 @@ export default function TenantPaymentPage() {
                 <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-xl">
                   <CardHeader>
                     <CardTitle className="text-lg">Pay via UPI</CardTitle>
-                    <CardDescription>Scan with any UPI app (GPay, PhonePe, Paytm)</CardDescription>
+                    <CardDescription>Tap the QR code to pay using any UPI app, or scan it</CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-col items-center">
-                    <div className="bg-white p-4 rounded-xl shadow-inner mb-6">
+                    <a 
+                      href={generateUpiString()}
+                      className="bg-white p-4 rounded-xl shadow-inner mb-4 cursor-pointer block hover:scale-105 active:scale-95 transition-all duration-200 border-2 border-transparent hover:border-primary/50 relative group"
+                      title="Tap to pay via UPI app"
+                    >
                       <QRCodeSVG 
                         value={generateUpiString()} 
                         size={200}
                         level="M"
                         includeMargin={false}
                       />
-                    </div>
+                    </a>
+
+                    <span className="text-xs text-primary mb-6 animate-pulse flex items-center gap-1.5 font-medium">
+                      <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block animate-ping"></span>
+                      Tap or scan the QR code to pay
+                    </span>
                     
                     <div className="w-full text-center space-y-1 mb-6">
                       <p className="text-sm text-neutral-400">Paying to</p>
