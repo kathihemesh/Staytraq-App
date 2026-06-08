@@ -62,6 +62,7 @@ export default function TenantPaymentPage() {
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isScanning, setIsScanning] = useState(false)
+  const [showScreenshotModal, setShowScreenshotModal] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 1. Initial Load: Check if portal token is valid
@@ -154,12 +155,45 @@ export default function TenantPaymentPage() {
       
       const text = ret.data.text
       
-      // Match 12-digit number (standard UTR format in India)
-      const matches = text.match(/\b\d{12}\b/g)
-      if (matches && matches.length > 0) {
-        const detectedUtr = matches[0]
-        setUtrNumber(detectedUtr)
-        toast.success(`UTR auto-filled: ${detectedUtr}`, { id: scanToastId })
+      // Match all 12-digit numbers
+      const matches = text.match(/\b\d{12}\b/g) || []
+      
+      let bestCandidate = ''
+      let highestScore = -1
+
+      for (const num of matches) {
+        // Ignore obvious Indian mobile numbers prefixed with 91 (e.g. 917989610495)
+        if (/^91[6-9]\d{9}$/.test(num)) {
+          continue;
+        }
+
+        let score = 0
+
+        // UPI UTRs in India usually start with 3 (2023), 4 (2024), 5 (2025), 6 (2026), 7 (2027), etc.
+        if (/^[3-7]/.test(num)) {
+          score += 10
+        }
+
+        // Look for contextual keywords near the number
+        const lowerText = text.toLowerCase()
+        const numIndex = lowerText.indexOf(num)
+        if (numIndex !== -1) {
+          const windowStart = Math.max(0, numIndex - 60)
+          const textBefore = lowerText.substring(windowStart, numIndex)
+          if (/utr|ref|upi|txn|transaction|reference|no|id/.test(textBefore)) {
+            score += 20
+          }
+        }
+
+        if (score > highestScore) {
+          highestScore = score
+          bestCandidate = num
+        }
+      }
+
+      if (bestCandidate) {
+        setUtrNumber(bestCandidate)
+        toast.success(`UTR auto-filled: ${bestCandidate}`, { id: scanToastId })
       } else {
         toast.info('Could not auto-detect UTR. Please enter it manually.', { id: scanToastId, duration: 4000 })
       }
@@ -567,7 +601,11 @@ export default function TenantPaymentPage() {
                         </div>
                       ) : (
                         <div className="relative border border-neutral-800 rounded-xl p-4 bg-neutral-950/50 flex items-center gap-4">
-                          <div className="h-12 w-12 rounded bg-neutral-900 flex items-center justify-center overflow-hidden shrink-0 border border-neutral-800">
+                          <div 
+                            className={`h-12 w-12 rounded bg-neutral-900 flex items-center justify-center overflow-hidden shrink-0 border border-neutral-800 ${screenshotPreview ? 'cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all' : ''}`}
+                            onClick={() => screenshotPreview && setShowScreenshotModal(true)}
+                            title={screenshotPreview ? "Click to view full image" : ""}
+                          >
                             {screenshotPreview ? (
                               <img src={screenshotPreview} alt="Preview" className="h-full w-full object-cover" />
                             ) : (
@@ -733,8 +771,51 @@ export default function TenantPaymentPage() {
           <p className="text-xs text-neutral-600 flex items-center justify-center gap-1">
             Secure payment verification by <span className="font-semibold text-neutral-500">Staytraq</span>
           </p>
-        </div>
       </div>
+
+      {/* Full Screenshot Modal */}
+      <AnimatePresence>
+        {showScreenshotModal && screenshotPreview && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+            onClick={() => setShowScreenshotModal(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="bg-neutral-900 border border-neutral-800 rounded-2xl max-w-lg w-full max-h-[85vh] overflow-hidden relative flex flex-col shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header / Close button */}
+              <div className="flex justify-between items-center p-4 border-b border-neutral-800 shrink-0">
+                <h3 className="font-semibold text-white text-sm truncate">Payment Screenshot</h3>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-full"
+                  onClick={() => setShowScreenshotModal(false)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+              
+              {/* Image container */}
+              <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-neutral-950">
+                <img
+                  src={screenshotPreview}
+                  alt="Payment Screenshot Full"
+                  className="max-w-full max-h-[60vh] object-contain rounded-lg shadow-md"
+                />
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
