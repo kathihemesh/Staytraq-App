@@ -61,6 +61,7 @@ export default function TenantPaymentPage() {
   const [screenshotFile, setScreenshotFile] = useState<File | null>(null)
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isScanning, setIsScanning] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // 1. Initial Load: Check if portal token is valid
@@ -142,6 +143,34 @@ export default function TenantPaymentPage() {
     }
   }
 
+  const scanScreenshotForUtr = async (file: File) => {
+    setIsScanning(true)
+    const scanToastId = toast.loading('Scanning screenshot for UTR...')
+    try {
+      const { createWorker } = await import('tesseract.js')
+      const worker = await createWorker('eng')
+      const ret = await worker.recognize(file)
+      await worker.terminate()
+      
+      const text = ret.data.text
+      
+      // Match 12-digit number (standard UTR format in India)
+      const matches = text.match(/\b\d{12}\b/g)
+      if (matches && matches.length > 0) {
+        const detectedUtr = matches[0]
+        setUtrNumber(detectedUtr)
+        toast.success(`UTR auto-filled: ${detectedUtr}`, { id: scanToastId })
+      } else {
+        toast.info('Could not auto-detect UTR. Please enter it manually.', { id: scanToastId, duration: 4000 })
+      }
+    } catch (err) {
+      console.error('OCR Error:', err)
+      toast.error('Failed to parse image for UTR. Please enter manually.', { id: scanToastId })
+    } finally {
+      setIsScanning(false)
+    }
+  }
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -161,6 +190,7 @@ export default function TenantPaymentPage() {
     if (file.type.startsWith('image/')) {
       const url = URL.createObjectURL(file)
       setScreenshotPreview(url)
+      scanScreenshotForUtr(file)
     } else {
       setScreenshotPreview(null)
     }
@@ -509,23 +539,6 @@ export default function TenantPaymentPage() {
                     <CardDescription>Upload screenshot and UTR after paying</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-5">
-                    {/* UTR Input */}
-                    {(data.settings?.utr_required || !data.settings?.utr_required) && (
-                      <div className="space-y-2">
-                        <Label htmlFor="utr" className="text-neutral-300">
-                          UTR / Reference Number {data.settings?.utr_required && <span className="text-red-500">*</span>}
-                        </Label>
-                        <Input
-                          id="utr"
-                          value={utrNumber}
-                          onChange={(e) => setUtrNumber(e.target.value)}
-                          placeholder="e.g. 312345678901"
-                          className="bg-neutral-950 border-neutral-800 text-white placeholder:text-neutral-600 focus-visible:ring-primary"
-                          required={data.settings?.utr_required}
-                        />
-                      </div>
-                    )}
-
                     {/* Screenshot Upload */}
                     <div className="space-y-2">
                       <Label className="text-neutral-300">
@@ -577,12 +590,37 @@ export default function TenantPaymentPage() {
                         </div>
                       )}
                     </div>
+
+                    {/* UTR Input */}
+                    {(data.settings?.utr_required || !data.settings?.utr_required) && (
+                      <div className="space-y-2">
+                        <Label htmlFor="utr" className="text-neutral-300">
+                          UTR / Reference Number {data.settings?.utr_required && <span className="text-red-500">*</span>}
+                        </Label>
+                        <div className="relative">
+                          <Input
+                            id="utr"
+                            value={utrNumber}
+                            onChange={(e) => setUtrNumber(e.target.value)}
+                            placeholder={isScanning ? "Scanning screenshot..." : "e.g. 312345678901"}
+                            className="bg-neutral-950 border-neutral-800 text-white placeholder:text-neutral-600 focus-visible:ring-primary pr-10"
+                            required={data.settings?.utr_required}
+                            disabled={isScanning}
+                          />
+                          {isScanning && (
+                            <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                   <CardFooter className="bg-neutral-900/40 border-t border-neutral-800 pt-6 flex flex-col gap-4">
                     <Button 
                       type="submit" 
                       className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium shadow-lg shadow-primary/20"
-                      disabled={isSubmitting || (data.settings?.screenshot_required && !screenshotFile) || (data.settings?.utr_required && !utrNumber)}
+                      disabled={isSubmitting || isScanning || (data.settings?.screenshot_required && !screenshotFile) || (data.settings?.utr_required && !utrNumber)}
                     >
                       {isSubmitting ? (
                         <>
