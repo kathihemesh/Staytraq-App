@@ -93,7 +93,7 @@ export default function ComplaintsScreen() {
   const [isSavingDetails, setIsSavingDetails] = useState(false)
 
   // Filters
-  const [statusFilter, setStatusFilter] = useState<string>("all")
+  const [statusFilter, setStatusFilter] = useState<string>("Under Working")
   const [searchQuery, setSearchQuery] = useState("")
 
   const responseInput = useKeyboardAwareInput()
@@ -321,6 +321,21 @@ export default function ComplaintsScreen() {
     }
   }, [complaints])
 
+  const getChipCount = useCallback((chip: string) => {
+    switch (chip) {
+      case "all":
+        return stats.total
+      case "Under Working":
+        return stats.underWorking
+      case "Resolved":
+        return stats.resolved
+      case "Ignored":
+        return stats.ignored
+      default:
+        return 0
+    }
+  }, [stats])
+
   // Filter complaints
   const filteredComplaints = useMemo(() => {
     return complaints.filter((c) => {
@@ -423,7 +438,7 @@ export default function ComplaintsScreen() {
       <SafeAreaView key="complaints-loading" edges={["top"]} style={{ flex: 1 }} className="bg-slate-50 dark:bg-slate-950">
         <View style={{ flex: 1 }}>
           {/* Top Header Card */}
-          <View className="px-6 pt-4 pb-6 bg-slate-900 border-b border-slate-800 relative overflow-hidden">
+          <View className="px-6 pt-4 pb-5 bg-slate-900 border-b border-slate-800 relative overflow-hidden">
             <LinearGradient
               colors={["rgba(239, 68, 68, 0.15)", "transparent"]}
               style={StyleSheet.absoluteFillObject}
@@ -435,17 +450,6 @@ export default function ComplaintsScreen() {
               </View>
               <View className="h-10 w-10 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center">
                 <Inbox size={20} color="#ef4444" />
-              </View>
-            </View>
-            <View className="flex-row justify-between items-center mt-6 z-10 gap-2">
-              <View className="flex-1 bg-slate-800/40 border border-slate-700/30 rounded-2xl py-3.5 items-center">
-                <View className="h-5 w-8 bg-slate-700/40 rounded" />
-              </View>
-              <View className="flex-1 bg-slate-800/40 border border-slate-700/30 rounded-2xl py-3.5 items-center">
-                <View className="h-5 w-8 bg-slate-700/40 rounded" />
-              </View>
-              <View className="flex-1 bg-slate-800/40 border border-slate-700/30 rounded-2xl py-3.5 items-center">
-                <View className="h-5 w-8 bg-slate-700/40 rounded" />
               </View>
             </View>
           </View>
@@ -462,7 +466,7 @@ export default function ComplaintsScreen() {
     <SafeAreaView key="complaints-loaded" edges={["top"]} style={{ flex: 1 }} className="bg-slate-50 dark:bg-slate-950">
       <View style={{ flex: 1 }}>
         {/* Top Header Card */}
-        <View className="px-6 pt-4 pb-6 bg-slate-900 border-b border-slate-800 relative overflow-hidden">
+        <View className="px-6 pt-4 pb-5 bg-slate-900 border-b border-slate-800 relative overflow-hidden">
           <LinearGradient
             colors={["rgba(239, 68, 68, 0.15)", "transparent"]}
             style={StyleSheet.absoluteFillObject}
@@ -476,27 +480,12 @@ export default function ComplaintsScreen() {
               <Inbox size={20} color="#ef4444" />
             </View>
           </View>
-
-          {/* Quick Stats Grid */}
-          <View className="flex-row justify-between items-center mt-6 z-10 gap-2">
-            <View className="flex-1 bg-slate-800/40 border border-slate-700/30 rounded-2xl py-3 px-1 items-center">
-              <Text className="text-lg font-black text-white">{stats.underWorking}</Text>
-              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Pending</Text>
-            </View>
-            <View className="flex-1 bg-slate-800/40 border border-slate-700/30 rounded-2xl py-3 px-1 items-center">
-              <Text className="text-lg font-black text-white">{stats.resolved}</Text>
-              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Resolved</Text>
-            </View>
-            <View className="flex-1 bg-slate-800/40 border border-slate-700/30 rounded-2xl py-3 px-1 items-center">
-              <Text className="text-lg font-black text-white">{stats.ignored}</Text>
-              <Text className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">Ignored</Text>
-            </View>
-          </View>
         </View>
 
         {/* Scrollable Dashboard Area */}
         <ScrollView 
           className="flex-1 px-4 pt-4"
+          contentContainerStyle={{ paddingBottom: 130 }}
           refreshControl={
             <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor="#ef4444" />
           }
@@ -562,16 +551,9 @@ export default function ComplaintsScreen() {
           </View>
 
           {/* Filters & Complaint Header */}
-          <View className="flex-row justify-between items-center mb-3">
-            <View className="flex-row items-center gap-2">
-              <SlidersHorizontal size={14} color={isDark ? "#94a3b8" : "#475569"} />
-              <Text className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider">Complaints Listing</Text>
-            </View>
-            <View className="flex-row items-center bg-slate-200/60 dark:bg-slate-800 px-3 py-1 rounded-full">
-              <Text className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                {filteredComplaints.length} Match{filteredComplaints.length !== 1 ? "es" : ""}
-              </Text>
-            </View>
+          <View className="flex-row items-center gap-2 mb-3">
+            <SlidersHorizontal size={14} color={isDark ? "#94a3b8" : "#475569"} />
+            <Text className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase tracking-wider">Complaints Listing</Text>
           </View>
 
           {/* Search Box */}
@@ -614,7 +596,7 @@ export default function ComplaintsScreen() {
                       ? { backgroundColor: "#ef4444", borderColor: "#ef4444" }
                       : { backgroundColor: isDark ? "#0f172a" : "#ffffff", borderColor: isDark ? "#1e293b" : "#e2e8f0" }
                   ]}
-                  className="px-4 py-2 rounded-full border mr-2 flex-row items-center"
+                  className="px-3.5 py-1.5 rounded-full border mr-2 flex-row items-center gap-1.5"
                 >
                   <Text 
                     className="text-xs font-black"
@@ -622,8 +604,27 @@ export default function ComplaintsScreen() {
                       color: active ? "#ffffff" : (isDark ? "#94a3b8" : "#475569")
                     }}
                   >
-                    {chip === "all" ? "All Complaints" : chip}
+                    {chip === "all" ? "All" : (chip === "Under Working" ? "Working" : chip)}
                   </Text>
+                  {loading ? (
+                    <View className="h-4 w-6 bg-slate-200/50 dark:bg-slate-800/35 rounded-full items-center justify-center" />
+                  ) : (
+                    <View 
+                      className="rounded-full px-1.5 py-0.5 items-center justify-center min-w-[18px]"
+                      style={{
+                        backgroundColor: active ? "rgba(255, 255, 255, 0.2)" : (isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.06)")
+                      }}
+                    >
+                      <Text 
+                        className="text-[9px] font-black"
+                        style={{
+                          color: active ? "#ffffff" : (isDark ? "#cbd5e1" : "#475569")
+                        }}
+                      >
+                        {getChipCount(chip)}
+                      </Text>
+                    </View>
+                  )}
                 </Pressable>
               )
             })}

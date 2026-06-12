@@ -32,6 +32,7 @@ export default function TenantComplaintPage() {
   // Form state
   const [complaintMessage, setComplaintMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [pastComplaints, setPastComplaints] = useState<any[]>([])
 
   // 1. Initial Load: Check if complaint portal token is valid
   useEffect(() => {
@@ -81,6 +82,8 @@ export default function TenantComplaintPage() {
         throw new Error(errJson.error || 'Failed to verify identity')
       }
 
+      const json = await res.json()
+      setPastComplaints(json.complaints || [])
       toast.success('Identity verified! You may now submit a complaint.')
       setState('write_complaint')
     } catch (error: any) {
@@ -195,6 +198,17 @@ export default function TenantComplaintPage() {
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Privacy Notice Card */}
+                    <div className="bg-red-950/20 border border-red-900/30 rounded-xl p-4 flex gap-3 mb-2">
+                      <ShieldCheck className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                      <div>
+                        <h4 className="text-xs font-bold text-red-400 mb-1">Your privacy is protected.</h4>
+                        <p className="text-[11px] text-neutral-400 leading-relaxed">
+                          None of your personal information (name, phone number) will be shown to the PG owner. Complaints are submitted anonymously.
+                        </p>
+                      </div>
+                    </div>
+
                     <div className="space-y-2">
                       <Label htmlFor="mobile" className="text-neutral-300">Registered Mobile Number</Label>
                       <div className="relative">
@@ -241,6 +255,7 @@ export default function TenantComplaintPage() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
             >
               <form onSubmit={handleSubmitComplaint}>
                 <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-2xl relative overflow-hidden">
@@ -311,6 +326,50 @@ export default function TenantComplaintPage() {
                   </CardFooter>
                 </Card>
               </form>
+
+              {/* Previous Complaints List */}
+              {pastComplaints.length > 0 && (
+                <div className="bg-neutral-900/50 border border-neutral-800 rounded-2xl p-5 backdrop-blur-sm space-y-4">
+                  <div className="flex items-center gap-2 border-b border-neutral-850 pb-2.5">
+                    <ShieldCheck className="h-4 w-4 text-neutral-400 font-black" />
+                    <h3 className="text-xs font-bold text-neutral-200 uppercase tracking-wider">Your Previous Complaints</h3>
+                  </div>
+                  <div className="space-y-3 max-h-[260px] overflow-y-auto pr-1">
+                    {pastComplaints.map((c) => (
+                      <div key={c.id} className="bg-neutral-950 border border-neutral-900 rounded-xl p-3.5 space-y-2">
+                        <div className="flex justify-between items-start">
+                          <span className="text-[10px] text-neutral-500 font-semibold">
+                            {new Date(c.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                            c.status === 'Resolved' 
+                              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                              : c.status === 'Ignored'
+                              ? 'bg-neutral-800 border-neutral-700 text-neutral-400'
+                              : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                          }`}>
+                            {c.status}
+                          </span>
+                        </div>
+                        <p className="text-xs text-neutral-300 leading-relaxed font-medium">
+                          {c.complaint_message}
+                        </p>
+                        {c.owner_response && (
+                          <div className="bg-neutral-900/60 border border-neutral-800/40 rounded-lg p-2.5 mt-2 flex gap-2">
+                            <MessageSquare className="h-3.5 w-3.5 text-neutral-500 shrink-0 mt-0.5" />
+                            <div>
+                              <span className="text-[9px] text-neutral-500 font-extrabold uppercase tracking-wide">Reply from Owner</span>
+                              <p className="text-[11px] text-neutral-300 font-medium leading-relaxed mt-0.5">
+                                {c.owner_response}
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 

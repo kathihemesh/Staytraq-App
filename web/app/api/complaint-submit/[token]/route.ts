@@ -100,11 +100,20 @@ export async function POST(
       return NextResponse.json({ error: 'No tenant found matching this mobile number. Please check or contact the property owner.' }, { status: 404 })
     }
 
+    // 3. Fetch past complaints submitted by this tenant
+    const { data: pastComplaints, error: complaintsError } = await supabase
+      .from('complaints')
+      .select('id, complaint_message, status, owner_response, created_at')
+      .eq('owner_id', ownerRecord.id)
+      .eq('tenant_phone', cleanInput.slice(-10))
+      .order('created_at', { ascending: false })
+
     return NextResponse.json({
       success: true,
       tenant: {
         name: matchedTenant.name || 'Tenant'
-      }
+      },
+      complaints: pastComplaints || []
     })
 
   } catch (error) {
