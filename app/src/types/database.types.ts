@@ -7,66 +7,211 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
     PostgrestVersion: "14.4"
   }
   public: {
     Tables: {
-      payments: {
+      complaints: {
         Row: {
-          amount: number | null
-          billing_month: string | null
+          complaint_message: string
           created_at: string
           id: number
           owner_id: string
-          payment_date: string | null
-          status: Database["public"]["Enums"]["payment_status"]
-          tenant_id: number | null
-          updated_at: string | null
-          utr_number: string | null
-          verified_by_owner: boolean | null
+          owner_response: string | null
+          status: string
+          tenant_phone: string
+          updated_at: string
         }
         Insert: {
-          amount?: number | null
-          billing_month?: string | null
+          complaint_message: string
           created_at?: string
           id?: number
           owner_id: string
-          payment_date?: string | null
-          status?: Database["public"]["Enums"]["payment_status"]
-          tenant_id?: number | null
-          updated_at?: string | null
-          utr_number?: string | null
-          verified_by_owner?: boolean | null
+          owner_response?: string | null
+          status?: string
+          tenant_phone: string
+          updated_at?: string
         }
         Update: {
-          amount?: number | null
-          billing_month?: string | null
+          complaint_message?: string
           created_at?: string
           id?: number
           owner_id?: string
-          payment_date?: string | null
-          status?: Database["public"]["Enums"]["payment_status"]
-          tenant_id?: number | null
-          updated_at?: string | null
-          utr_number?: string | null
-          verified_by_owner?: boolean | null
+          owner_response?: string | null
+          status?: string
+          tenant_phone?: string
+          updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "payments_owner_id_fkey"
+            foreignKeyName: "complaints_owner_id_fkey"
             columns: ["owner_id"]
             isOneToOne: false
             referencedRelation: "pg_owners"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      monthly_payment_links: {
+        Row: {
+          created_at: string
+          id: number
+          month: number
+          owner_id: string
+          portal_token: string
+          year: number
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          month: number
+          owner_id: string
+          portal_token?: string
+          year: number
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          month?: number
+          owner_id?: string
+          portal_token?: string
+          year?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "monthly_payment_links_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "pg_owners"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payment_audit_log: {
+        Row: {
+          action: string
+          created_at: string | null
+          id: number
+          metadata: Json | null
+          new_status: string | null
+          notes: string | null
+          old_status: string | null
+          owner_id: string | null
+          payment_id: number
+        }
+        Insert: {
+          action: string
+          created_at?: string | null
+          id?: never
+          metadata?: Json | null
+          new_status?: string | null
+          notes?: string | null
+          old_status?: string | null
+          owner_id?: string | null
+          payment_id: number
+        }
+        Update: {
+          action?: string
+          created_at?: string | null
+          id?: never
+          metadata?: Json | null
+          new_status?: string | null
+          notes?: string | null
+          old_status?: string | null
+          owner_id?: string | null
+          payment_id?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_audit_log_payment_id_fkey"
+            columns: ["payment_id"]
+            isOneToOne: false
+            referencedRelation: "payments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      payments: {
+        Row: {
+          created_at: string | null
+          due_date: string
+          extra_charges: number | null
+          id: number
+          month: number
+          owner_id: string
+          paid_at: string | null
+          payment_code: string
+          payment_method: string | null
+          payment_token: string
+          reminder_sent: boolean | null
+          rent_amount: number
+          screenshot_path: string | null
+          status: string | null
+          submitted_at: string | null
+          tenant_id: number
+          total_amount: number
+          utr_number: string | null
+          verification_notes: string | null
+          verified_at: string | null
+          year: number
+        }
+        Insert: {
+          created_at?: string | null
+          due_date: string
+          extra_charges?: number | null
+          id?: never
+          month: number
+          owner_id: string
+          paid_at?: string | null
+          payment_code?: string
+          payment_method?: string | null
+          payment_token?: string
+          reminder_sent?: boolean | null
+          rent_amount: number
+          screenshot_path?: string | null
+          status?: string | null
+          submitted_at?: string | null
+          tenant_id: number
+          total_amount: number
+          utr_number?: string | null
+          verification_notes?: string | null
+          verified_at?: string | null
+          year: number
+        }
+        Update: {
+          created_at?: string | null
+          due_date?: string
+          extra_charges?: number | null
+          id?: never
+          month?: number
+          owner_id?: string
+          paid_at?: string | null
+          payment_code?: string
+          payment_method?: string | null
+          payment_token?: string
+          reminder_sent?: boolean | null
+          rent_amount?: number
+          screenshot_path?: string | null
+          status?: string | null
+          submitted_at?: string | null
+          tenant_id?: number
+          total_amount?: number
+          utr_number?: string | null
+          verification_notes?: string | null
+          verified_at?: string | null
+          year?: number
+        }
+        Relationships: [
           {
             foreignKeyName: "payments_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants_table"
             referencedColumns: ["id"]
-          }
+          },
         ]
       }
       pg_details: {
@@ -107,11 +252,12 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "pg_owners"
             referencedColumns: ["id"]
-          }
+          },
         ]
       }
       pg_owners: {
         Row: {
+          complaint_token: string
           created_at: string
           email: string | null
           id: string
@@ -121,6 +267,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          complaint_token?: string
           created_at?: string
           email?: string | null
           id: string
@@ -130,6 +277,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          complaint_token?: string
           created_at?: string
           email?: string | null
           id?: string
@@ -144,6 +292,7 @@ export type Database = {
         Row: {
           id: number
           message: string | null
+          owner_id: string | null
           sent_at: string | null
           sent_via: Database["public"]["Enums"]["sms_sent_via"] | null
           status: Database["public"]["Enums"]["sms_status"] | null
@@ -153,6 +302,7 @@ export type Database = {
         Insert: {
           id?: number
           message?: string | null
+          owner_id?: string | null
           sent_at?: string | null
           sent_via?: Database["public"]["Enums"]["sms_sent_via"] | null
           status?: Database["public"]["Enums"]["sms_status"] | null
@@ -162,6 +312,7 @@ export type Database = {
         Update: {
           id?: number
           message?: string | null
+          owner_id?: string | null
           sent_at?: string | null
           sent_via?: Database["public"]["Enums"]["sms_sent_via"] | null
           status?: Database["public"]["Enums"]["sms_status"] | null
@@ -175,7 +326,7 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "tenants_table"
             referencedColumns: ["id"]
-          }
+          },
         ]
       }
       rooms_table: {
@@ -231,42 +382,7 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "pg_details"
             referencedColumns: ["id"]
-          }
-        ]
-      }
-      monthly_payment_links: {
-        Row: {
-          id: number
-          owner_id: string
-          month: number
-          year: number
-          portal_token: string
-          created_at: string
-        }
-        Insert: {
-          id?: number
-          owner_id: string
-          month: number
-          year: number
-          portal_token?: string
-          created_at?: string
-        }
-        Update: {
-          id?: number
-          owner_id?: string
-          month?: number
-          year?: number
-          portal_token?: string
-          created_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "monthly_payment_links_owner_id_fkey"
-            columns: ["owner_id"]
-            isOneToOne: false
-            referencedRelation: "pg_owners"
-            referencedColumns: ["id"]
-          }
+          },
         ]
       }
       settings: {
@@ -276,8 +392,13 @@ export type Database = {
           id: number
           late_fee_per_day: number | null
           owner_id: string
+          payment_instructions: string | null
           rent_due_day: number | null
+          screenshot_required: boolean | null
           updated_at: string | null
+          upi_id: string | null
+          upi_name: string | null
+          utr_required: boolean | null
         }
         Insert: {
           created_at?: string
@@ -285,8 +406,13 @@ export type Database = {
           id?: number
           late_fee_per_day?: number | null
           owner_id: string
+          payment_instructions?: string | null
           rent_due_day?: number | null
+          screenshot_required?: boolean | null
           updated_at?: string | null
+          upi_id?: string | null
+          upi_name?: string | null
+          utr_required?: boolean | null
         }
         Update: {
           created_at?: string
@@ -294,17 +420,22 @@ export type Database = {
           id?: number
           late_fee_per_day?: number | null
           owner_id?: string
+          payment_instructions?: string | null
           rent_due_day?: number | null
+          screenshot_required?: boolean | null
           updated_at?: string | null
+          upi_id?: string | null
+          upi_name?: string | null
+          utr_required?: boolean | null
         }
         Relationships: [
           {
             foreignKeyName: "settings_owner_id_fkey"
             columns: ["owner_id"]
-            isOneToOne: false
+            isOneToOne: true
             referencedRelation: "pg_owners"
             referencedColumns: ["id"]
-          }
+          },
         ]
       }
       tenants_table: {
@@ -322,12 +453,12 @@ export type Database = {
           name: string | null
           notes: string | null
           owner_id: string
+          payment_code: string
           pg_id: number | null
           rent_due_day: number | null
           room_id: number | null
           status: Database["public"]["Enums"]["tenant_status"]
           updated_at: string | null
-          payment_code: string
         }
         Insert: {
           created_at?: string
@@ -343,12 +474,12 @@ export type Database = {
           name?: string | null
           notes?: string | null
           owner_id: string
+          payment_code?: string
           pg_id?: number | null
           rent_due_day?: number | null
           room_id?: number | null
           status?: Database["public"]["Enums"]["tenant_status"]
           updated_at?: string | null
-          payment_code?: string
         }
         Update: {
           created_at?: string
@@ -364,12 +495,12 @@ export type Database = {
           name?: string | null
           notes?: string | null
           owner_id?: string
+          payment_code?: string
           pg_id?: number | null
           rent_due_day?: number | null
           room_id?: number | null
           status?: Database["public"]["Enums"]["tenant_status"]
           updated_at?: string | null
-          payment_code?: string
         }
         Relationships: [
           {
@@ -392,7 +523,7 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "rooms_table"
             referencedColumns: ["id"]
-          }
+          },
         ]
       }
     }
@@ -423,3 +554,133 @@ export type Database = {
     }
   }
 }
+
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export type CompositeTypes<
+  PublicCompositeTypeNameOrOptions extends
+    | keyof DefaultSchema["CompositeTypes"]
+    | { schema: keyof DatabaseWithoutInternals },
+  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
+    : never = never,
+> = PublicCompositeTypeNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"][CompositeTypeName]
+  : PublicCompositeTypeNameOrOptions extends keyof DefaultSchema["CompositeTypes"]
+    ? DefaultSchema["CompositeTypes"][PublicCompositeTypeNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {
+      payment_status: ["paid", "pending", "late"],
+      room_status: ["full", "partially occupied", "vacant", "maintenance"],
+      room_type: ["ac", "non-ac"],
+      sms_sent_via: ["whatsapp", "sms"],
+      sms_status: ["sent", "failed"],
+      tenant_status: ["active", "pending_move_in", "notice_period", "move_out"],
+    },
+  },
+} as const

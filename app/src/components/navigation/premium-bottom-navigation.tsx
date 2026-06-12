@@ -18,6 +18,7 @@ import {
   ChevronLeft,
   ChevronRight,
   IndianRupee,
+  Inbox,
   LayoutDashboard,
   Settings,
   Users,
@@ -67,6 +68,7 @@ const accents: Record<string, NavAccent> = {
   rooms: { base: "#0ea5e9", soft: "#bae6fd", glow: "rgba(14, 165, 233, 0.14)" },
   tenants: { base: "#10b981", soft: "#bbf7d0", glow: "rgba(16, 185, 129, 0.14)" },
   payments: { base: "#f59e0b", soft: "#fde68a", glow: "rgba(245, 158, 11, 0.14)" },
+  complaints: { base: "#ef4444", soft: "#fee2e2", glow: "rgba(239, 68, 68, 0.14)" },
   reminders: { base: "#f97316", soft: "#fed7aa", glow: "rgba(249, 115, 22, 0.14)" },
   settings: { base: "#a855f7", soft: "#e9d5ff", glow: "rgba(168, 85, 247, 0.14)" },
 }
@@ -78,6 +80,7 @@ const iconMap: Record<string, Pick<NavVisual, "Icon" | "ActiveIcon">> = {
   rooms: { Icon: Building2, ActiveIcon: Building2 },
   tenants: { Icon: Users, ActiveIcon: UsersRound },
   payments: { Icon: IndianRupee, ActiveIcon: IndianRupee },
+  complaints: { Icon: Inbox, ActiveIcon: Inbox },
   reminders: { Icon: Bell, ActiveIcon: BellRing },
   settings: { Icon: Settings, ActiveIcon: Settings },
 }

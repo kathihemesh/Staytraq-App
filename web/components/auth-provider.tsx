@@ -154,7 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Wait for the initial auth check to complete; otherwise redirects can flap on refresh/focus.
     if (!authReady || isLoading) return
 
-    const isPublicRoute = PUBLIC_ROUTES.includes(pathname) || pathname.startsWith("/pay/")
+    const isPublicRoute = PUBLIC_ROUTES.includes(pathname) || pathname.startsWith("/pay/") || pathname.startsWith("/complaint-submit/")
     const isOnboardingKnown = onboardingStatus !== "unknown"
     const isOnboarded = onboardingStatus === "onboarded"
 

@@ -1,0 +1,11 @@
+  --non-interactive is not supported, use $CI=1 instead
+"shadow*" style props are deprecated. Use "boxShadow".
+"shadow*" style props are deprecated. Use "boxShadow".
+Error: Cannot pipe to a closed or destroyed stream
+    at pipelineImpl (node:internal/streams/pipeline:264:15)
+    at node:stream/promises:31:5
+    at new Promise (<anonymous>)
+    at pipeline (node:stream/promises:20:10)
+    at respond (C:\Staytraq App\app\node_modules\expo-server\src\vendor\http.ts:138:19)
+    at C:\Staytraq App\app\node_modules\expo-server\src\vendor\http.ts:68:13
+"shadow*" style props are deprecated. Use "boxShadow".

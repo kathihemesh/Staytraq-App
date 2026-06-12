@@ -39,6 +39,12 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="complaints"
+        options={{
+          title: "Complaint Box",
+        }}
+      />
+      <Tabs.Screen
         name="reminders"
         options={{
           title: "Reminders",
