@@ -9,6 +9,7 @@ import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
 import { FlashList } from "@shopify/flash-list"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 
 type Tenant = {
   id: number
@@ -68,6 +69,8 @@ export default function TenantsScreen() {
   const [selectedTenant, setSelectedTenant] = useState<Tenant | null>(null)
   const [editingTenant, setEditingTenant] = useState<Tenant | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [confirmModalVisible, setConfirmModalVisible] = useState(false)
+  const [tenantToDelete, setTenantToDelete] = useState<{ id: number; roomId: number | null } | null>(null)
 
   // Form fields
   const [name, setName] = useState("")
@@ -298,6 +301,18 @@ export default function TenantsScreen() {
       setError(err?.message || "An error occurred while saving the tenant")
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
     }
+  }
+
+  const requestDeleteTenant = (tenantId: number, roomId: number | null) => {
+    setTenantToDelete({ id: tenantId, roomId })
+    setConfirmModalVisible(true)
+  }
+
+  const confirmDeleteTenant = async () => {
+    if (!tenantToDelete) return
+    setConfirmModalVisible(false)
+    await handleDeleteTenant(tenantToDelete.id, tenantToDelete.roomId)
+    setTenantToDelete(null)
   }
 
   const handleDeleteTenant = async (tenantId: number, roomId: number | null) => {
@@ -709,7 +724,7 @@ export default function TenantsScreen() {
                 {/* Primary Actions */}
                 <View className="flex-row gap-3 pt-3 border-t border-border/40 dark:border-border-dark/40 pb-4">
                   <TouchableOpacity
-                    onPress={() => handleDeleteTenant(selectedTenant.id, selectedTenant.room_id)}
+                    onPress={() => requestDeleteTenant(selectedTenant.id, selectedTenant.room_id)}
                     className="h-12 w-12 border border-destructive/20 bg-destructive/5 rounded-xl items-center justify-center"
                   >
                     <Trash2 size={20} color="#ef4444" />
@@ -956,6 +971,22 @@ export default function TenantsScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Confirm Delete Tenant Modal */}
+      <ConfirmModal
+        visible={confirmModalVisible}
+        title="Delete Occupant"
+        message="Are you sure you want to delete this occupant from the directory? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        isDestructive={true}
+        onConfirm={confirmDeleteTenant}
+        onCancel={() => {
+          setConfirmModalVisible(false)
+          setTenantToDelete(null)
+        }}
+        icon={<Trash2 size={24} color="#ef4444" />}
+      />
     </SafeAreaView>
   )
 }

@@ -271,6 +271,13 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
     setSectionIndex((current) => Math.min(current, sectionCount - 1))
   }, [sectionCount])
 
+  useEffect(() => {
+    const targetSection = Math.floor(selectedIndex / VISIBLE_SLOTS)
+    if (targetSection !== sectionIndex && targetSection >= 0 && targetSection < sectionCount) {
+      setSectionIndex(targetSection)
+    }
+  }, [selectedIndex, sectionIndex, sectionCount])
+
   /* ─── Expand / collapse spring ─────────────────────────────── */
 
   useEffect(() => {

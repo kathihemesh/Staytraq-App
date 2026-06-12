@@ -37,7 +37,14 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Staytraq to save QR codes to your library.",
+          "savePhotosPermission": "Allow Staytraq to save QR codes to your library."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

@@ -38,12 +38,17 @@ import {
   MessageSquare,
   Eye,
   SlidersHorizontal,
-  Sparkles
+  Sparkles,
+  QrCode,
+  Download
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
 import { LinearGradient } from "expo-linear-gradient"
+import { File, Paths } from "expo-file-system"
+import * as MediaLibrary from "expo-media-library"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 
 type Complaint = {
   id: number
@@ -84,6 +89,7 @@ export default function ComplaintsScreen() {
 
   // QR Code Modal State
   const [qrModalVisible, setQrModalVisible] = useState(false)
+  const [confirmModalVisible, setConfirmModalVisible] = useState(false)
 
   // Detail Modal State
   const [detailModalVisible, setDetailModalVisible] = useState(false)
@@ -240,38 +246,30 @@ export default function ComplaintsScreen() {
   }
 
   const handleRegenerateLink = () => {
-    Alert.alert(
-      "Regenerate Link",
-      "Are you sure you want to regenerate the complaint box link? The old link will stop working immediately.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Regenerate", 
-          style: "destructive",
-          onPress: async () => {
-            if (!user?.id) return
-            setIsRefreshingLink(true)
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-            try {
-              const newToken = Math.random().toString(36).substring(2, 14)
-              const { error } = await supabase
-                .from("pg_owners")
-                .update({ complaint_token: newToken })
-                .eq("id", user.id)
+    setConfirmModalVisible(true)
+  }
 
-              if (error) throw error
-              setComplaintToken(newToken)
-              showToast("Link Regenerated", "A new anonymous submission URL has been generated.", "success")
-            } catch (err) {
-              console.error("Error regenerating complaint link:", err)
-              showToast("Error", "Failed to regenerate submission link.", "error")
-            } finally {
-              setIsRefreshingLink(false)
-            }
-          }
-        }
-      ]
-    )
+  const confirmRegenerate = async () => {
+    setConfirmModalVisible(false)
+    if (!user?.id) return
+    setIsRefreshingLink(true)
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    try {
+      const newToken = Math.random().toString(36).substring(2, 14)
+      const { error } = await supabase
+        .from("pg_owners")
+        .update({ complaint_token: newToken })
+        .eq("id", user.id)
+
+      if (error) throw error
+      setComplaintToken(newToken)
+      showToast("Link Regenerated", "A new anonymous submission URL has been generated.", "success")
+    } catch (err) {
+      console.error("Error regenerating complaint link:", err)
+      showToast("Error", "Failed to regenerate submission link.", "error")
+    } finally {
+      setIsRefreshingLink(false)
+    }
   }
 
   // Save changes from Detail Modal Drawer
@@ -405,6 +403,34 @@ export default function ComplaintsScreen() {
   }
 
   const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(portalUrl)}`
+  const [isDownloading, setIsDownloading] = useState(false)
+
+  const handleDownloadQR = async () => {
+    setIsDownloading(true)
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    try {
+      const { status } = await MediaLibrary.requestPermissionsAsync(true)
+      if (status !== "granted") {
+        Alert.alert("Permission Required", "We need permission to save the QR code to your gallery.")
+        return
+      }
+
+      const filename = `staytraq-complaints-qr-${Date.now()}.png`
+      const file = new File(Paths.document, filename)
+
+      const downloadedFile = await File.downloadFileAsync(qrImageUrl, file)
+
+      const asset = await MediaLibrary.createAssetAsync(downloadedFile.uri)
+      await MediaLibrary.createAlbumAsync("Staytraq QR", asset, false)
+
+      showToast("Downloaded", "QR Code saved to gallery.", "success")
+    } catch (err) {
+      console.error("Download error:", err)
+      showToast("Error", "Failed to download QR code.", "error")
+    } finally {
+      setIsDownloading(false)
+    }
+  }
 
   const renderToast = () => {
     if (!toast.visible) return null
@@ -438,15 +464,15 @@ export default function ComplaintsScreen() {
       <SafeAreaView key="complaints-loading" edges={["top"]} style={{ flex: 1 }} className="bg-slate-50 dark:bg-slate-950">
         <View style={{ flex: 1 }}>
           {/* Top Header Card */}
-          <View className="px-6 pt-4 pb-5 bg-slate-900 border-b border-slate-800 relative overflow-hidden">
+          <View className="px-6 pt-4 pb-5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 relative overflow-hidden">
             <LinearGradient
-              colors={["rgba(239, 68, 68, 0.15)", "transparent"]}
+              colors={isDark ? ["rgba(239, 68, 68, 0.15)", "transparent"] : ["rgba(239, 68, 68, 0.05)", "transparent"]}
               style={StyleSheet.absoluteFillObject}
             />
             <View className="flex-row justify-between items-center z-10">
               <View>
-                <Text className="text-[22px] font-black text-white leading-tight">Complaint Box</Text>
-                <Text className="text-xs text-slate-400 font-medium mt-1">Manage anonymous tenant support</Text>
+                <Text className="text-[22px] font-black text-slate-900 dark:text-white leading-tight">Complaint Box</Text>
+                <Text className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-1">Manage anonymous tenant support</Text>
               </View>
               <View className="h-10 w-10 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center">
                 <Inbox size={20} color="#ef4444" />
@@ -466,15 +492,15 @@ export default function ComplaintsScreen() {
     <SafeAreaView key="complaints-loaded" edges={["top"]} style={{ flex: 1 }} className="bg-slate-50 dark:bg-slate-950">
       <View style={{ flex: 1 }}>
         {/* Top Header Card */}
-        <View className="px-6 pt-4 pb-5 bg-slate-900 border-b border-slate-800 relative overflow-hidden">
+        <View className="px-6 pt-4 pb-5 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 relative overflow-hidden">
           <LinearGradient
-            colors={["rgba(239, 68, 68, 0.15)", "transparent"]}
+            colors={isDark ? ["rgba(239, 68, 68, 0.15)", "transparent"] : ["rgba(239, 68, 68, 0.05)", "transparent"]}
             style={StyleSheet.absoluteFillObject}
           />
           <View className="flex-row justify-between items-center z-10">
             <View>
-              <Text className="text-[22px] font-black text-white leading-tight">Complaint Box</Text>
-              <Text className="text-xs text-slate-400 font-medium mt-1">Manage anonymous tenant support</Text>
+              <Text className="text-[22px] font-black text-slate-900 dark:text-white leading-tight">Complaint Box</Text>
+              <Text className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-1">Manage anonymous tenant support</Text>
             </View>
             <View className="h-10 w-10 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center justify-center">
               <Inbox size={20} color="#ef4444" />
@@ -523,21 +549,25 @@ export default function ComplaintsScreen() {
             {/* Link Management Actions */}
             <View className="flex-row gap-2">
               <Pressable 
-                className="flex-1 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 py-2.5 rounded-xl flex-row items-center justify-center gap-1.5"
+                className="flex-1 bg-red-50 dark:bg-red-500/10 border border-red-100 dark:border-red-500/20 py-2.5 rounded-xl"
                 style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
                 onPress={() => setQrModalVisible(true)}
               >
-                <Eye size={13} color="#ef4444" />
-                <Text className="text-xs font-black text-red-600 dark:text-red-400">Show QR</Text>
+                <View className="flex-row items-center justify-center w-full gap-1.5">
+                  <QrCode size={13} color="#ef4444" />
+                  <Text className="text-xs font-black text-red-600 dark:text-red-400">Show QR</Text>
+                </View>
               </Pressable>
 
               <Pressable 
-                className="flex-1 bg-red-600 py-2.5 rounded-xl flex-row items-center justify-center gap-1.5"
+                className="flex-1 bg-red-600 py-2.5 rounded-xl"
                 style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
                 onPress={handleShareLink}
               >
-                <Share2 size={13} color="#ffffff" />
-                <Text className="text-xs font-black text-white">Share Link</Text>
+                <View className="flex-row items-center justify-center w-full gap-1.5">
+                  <Share2 size={13} color="#ffffff" />
+                  <Text className="text-xs font-black text-white">Share Link</Text>
+                </View>
               </Pressable>
 
               <Pressable 
@@ -583,6 +613,20 @@ export default function ComplaintsScreen() {
           >
             {["all", "Under Working", "Resolved", "Ignored"].map((chip) => {
               const active = statusFilter.toLowerCase() === chip.toLowerCase()
+              const getActiveChipClass = () => {
+                switch (chip) {
+                  case "all":
+                    return "bg-amber-600 border-amber-600"
+                  case "Under Working":
+                    return "bg-blue-600 border-blue-600"
+                  case "Resolved":
+                    return "bg-emerald-600 border-emerald-600"
+                  case "Ignored":
+                    return "bg-red-600 border-red-600"
+                  default:
+                    return "bg-red-600 border-red-600"
+                }
+              }
               return (
                 <Pressable
                   key={chip}
@@ -590,19 +634,17 @@ export default function ComplaintsScreen() {
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                     setStatusFilter(chip)
                   }}
-                  style={({ pressed }) => [
-                    { opacity: pressed ? 0.7 : 1 },
+                  style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
+                  className={`px-3.5 py-1.5 rounded-full border mr-2 flex-row items-center gap-1.5 ${
                     active 
-                      ? { backgroundColor: "#ef4444", borderColor: "#ef4444" }
-                      : { backgroundColor: isDark ? "#0f172a" : "#ffffff", borderColor: isDark ? "#1e293b" : "#e2e8f0" }
-                  ]}
-                  className="px-3.5 py-1.5 rounded-full border mr-2 flex-row items-center gap-1.5"
+                      ? getActiveChipClass() 
+                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+                  }`}
                 >
                   <Text 
-                    className="text-xs font-black"
-                    style={{
-                      color: active ? "#ffffff" : (isDark ? "#94a3b8" : "#475569")
-                    }}
+                    className={`text-xs font-black ${
+                      active ? "text-white" : "text-slate-600 dark:text-slate-400"
+                    }`}
                   >
                     {chip === "all" ? "All" : (chip === "Under Working" ? "Working" : chip)}
                   </Text>
@@ -610,16 +652,14 @@ export default function ComplaintsScreen() {
                     <View className="h-4 w-6 bg-slate-200/50 dark:bg-slate-800/35 rounded-full items-center justify-center" />
                   ) : (
                     <View 
-                      className="rounded-full px-1.5 py-0.5 items-center justify-center min-w-[18px]"
-                      style={{
-                        backgroundColor: active ? "rgba(255, 255, 255, 0.2)" : (isDark ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.06)")
-                      }}
+                      className={`rounded-full px-1.5 py-0.5 items-center justify-center min-w-[18px] ${
+                        active ? "bg-white/20" : "bg-slate-100 dark:bg-white/10"
+                      }`}
                     >
                       <Text 
-                        className="text-[9px] font-black"
-                        style={{
-                          color: active ? "#ffffff" : (isDark ? "#cbd5e1" : "#475569")
-                        }}
+                        className={`text-[9px] font-black ${
+                          active ? "text-white" : "text-slate-600 dark:text-slate-400"
+                        }`}
                       >
                         {getChipCount(chip)}
                       </Text>
@@ -653,11 +693,11 @@ export default function ComplaintsScreen() {
                 return (
                   <Pressable
                     key={`${item.id}-${item.status}`}
-                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 shadow-sm"
+                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm"
                     style={({ pressed }) => [{ opacity: pressed ? 0.9 : 1 }]}
                     onPress={() => openDetailModal(item)}
                   >
-                    <View className="flex-row justify-between items-start mb-3">
+                    <View className="flex-row justify-between items-start mb-2">
                       <View className="flex-row items-center gap-1.5">
                         <Clock size={12} color="#64748b" />
                         <Text className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">
@@ -665,7 +705,7 @@ export default function ComplaintsScreen() {
                         </Text>
                       </View>
                       <View 
-                        className="rounded-full border px-2.5 py-0.5"
+                        className="rounded-full border px-2 py-0.5"
                         style={{
                           backgroundColor: isDark ? badge.bgDark : badge.bgLight,
                           borderColor: isDark ? badge.borderDark : badge.borderLight,
@@ -682,30 +722,23 @@ export default function ComplaintsScreen() {
                       </View>
                     </View>
 
-                    <Text className="text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-semibold mb-3">
+                    <Text 
+                      className={`text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-semibold ${item.owner_response ? "mb-2" : ""}`}
+                      numberOfLines={2}
+                    >
                       {item.complaint_message}
                     </Text>
 
                     {/* Inline Owner Response Display */}
                     {item.owner_response && (
-                      <View className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800/80 rounded-2xl p-3 flex-row gap-2">
-                        <View className="mt-0.5">
-                          <MessageSquare size={13} color="#64748b" />
-                        </View>
-                        <View className="flex-1">
-                          <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-extrabold uppercase tracking-wide">Reply</Text>
-                          <Text className="text-[11px] text-slate-600 dark:text-slate-300 font-medium mt-0.5 leading-relaxed">
-                            {item.owner_response}
-                          </Text>
-                        </View>
+                      <View className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800/60 rounded-xl px-2.5 py-1.5 flex-row items-center gap-2">
+                        <MessageSquare size={12} color="#64748b" />
+                        <Text className="text-[11px] text-slate-600 dark:text-slate-300 font-medium flex-1" numberOfLines={2}>
+                          <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-extrabold uppercase tracking-wide mr-1">Reply: </Text>
+                          {item.owner_response}
+                        </Text>
                       </View>
                     )}
-
-                    <View className="flex-row justify-end items-center mt-3 pt-2 border-t border-slate-100 dark:border-slate-800/60">
-                      <Text className="text-[10px] text-red-500 dark:text-red-400 font-black flex-row items-center gap-1.5">
-                        Manage Complaint <ChevronRight size={10} color="#ef4444" />
-                      </Text>
-                    </View>
                   </Pressable>
                 )
               })}
@@ -752,10 +785,17 @@ export default function ComplaintsScreen() {
               <Pressable 
                 className="flex-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 py-3 rounded-xl flex-row items-center justify-center gap-1.5"
                 style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
-                onPress={handleCopyLink}
+                onPress={handleDownloadQR}
+                disabled={isDownloading}
               >
-                <Copy size={13} color={isDark ? "#cbd5e1" : "#475569"} />
-                <Text className="text-xs font-black text-slate-700 dark:text-slate-300">Copy Link</Text>
+                {isDownloading ? (
+                  <ActivityIndicator size="small" color={isDark ? "#cbd5e1" : "#475569"} />
+                ) : (
+                  <>
+                    <Download size={13} color={isDark ? "#cbd5e1" : "#475569"} />
+                    <Text className="text-xs font-black text-slate-700 dark:text-slate-300">Download</Text>
+                  </>
+                )}
               </Pressable>
               
               <Pressable 
@@ -768,6 +808,7 @@ export default function ComplaintsScreen() {
               </Pressable>
             </View>
           </View>
+          {renderToast()}
         </View>
       </Modal>
 
@@ -900,8 +941,22 @@ export default function ComplaintsScreen() {
               </View>
             </View>
           </KeyboardAvoidingView>
+          {renderToast()}
         </View>
       </Modal>
+
+      {/* Confirm Regenerate Link Modal */}
+      <ConfirmModal
+        visible={confirmModalVisible}
+        title="Regenerate Link"
+        message="Are you sure you want to regenerate the complaint box link? The old link will stop working immediately."
+        confirmText="Regenerate"
+        cancelText="Cancel"
+        isDestructive={false}
+        onConfirm={confirmRegenerate}
+        onCancel={() => setConfirmModalVisible(false)}
+        icon={<RefreshCw size={24} color={isDark ? "#0091ff" : "#0071df"} />}
+      />
 
       {/* Toast Notification Container */}
       {renderToast()}
@@ -912,7 +967,7 @@ export default function ComplaintsScreen() {
 const styles = StyleSheet.create({
   toastContainer: {
     position: "absolute",
-    bottom: 96,
+    top: 60,
     left: 16,
     right: 16,
     borderRadius: 20,

@@ -8,6 +8,8 @@ import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, Clock, AlertT
 import * as Haptics from "expo-haptics"
 import Animated, { FadeIn } from "react-native-reanimated"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
+
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth()
@@ -27,6 +29,7 @@ export default function SettingsScreen() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [confirmModalVisible, setConfirmModalVisible] = useState(false)
 
   // Settings values
   const [rentDueDay, setRentDueDay] = useState("5")
@@ -169,21 +172,13 @@ export default function SettingsScreen() {
   // Logout trigger
   const handleLogout = () => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
-    Alert.alert(
-      "Confirm Logout",
-      "Are you sure you want to securely log out of Staytraq?",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "Log Out", 
-          style: "destructive",
-          onPress: async () => {
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)
-            await logout()
-          }
-        }
-      ]
-    )
+    setConfirmModalVisible(true)
+  }
+
+  const confirmLogout = async () => {
+    setConfirmModalVisible(false)
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)
+    await logout()
   }
 
   if (loading) {
@@ -518,6 +513,19 @@ export default function SettingsScreen() {
             </Text>
           </View>
         </KeyboardAwareScrollView>
+
+      {/* Confirm Logout Modal */}
+      <ConfirmModal
+        visible={confirmModalVisible}
+        title="Confirm Logout"
+        message="Are you sure you want to securely log out of Staytraq?"
+        confirmText="Log Out"
+        cancelText="Cancel"
+        isDestructive={true}
+        onConfirm={confirmLogout}
+        onCancel={() => setConfirmModalVisible(false)}
+        icon={<LogOut size={24} color="#ef4444" />}
+      />
     </SafeAreaView>
   )
 }
