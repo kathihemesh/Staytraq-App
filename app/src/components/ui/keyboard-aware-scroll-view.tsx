@@ -60,11 +60,13 @@ export function useKeyboardAwareInput() {
 interface KeyboardAwareScrollViewProps extends ScrollViewProps {
   children: React.ReactNode
   extraScrollHeight?: number
+  disableKeyboardPadding?: boolean
 }
 
 export function KeyboardAwareScrollView({
   children,
   extraScrollHeight = 24,
+  disableKeyboardPadding = false,
   contentContainerStyle,
   ...props
 }: KeyboardAwareScrollViewProps) {
@@ -171,7 +173,7 @@ export function KeyboardAwareScrollView({
         scrollEventThrottle={16}
         contentContainerStyle={[
           contentContainerStyle,
-          { paddingBottom: basePadding + keyboardHeight + (keyboardHeight > 0 ? 16 : 0) },
+          { paddingBottom: basePadding + (disableKeyboardPadding ? 0 : keyboardHeight + (keyboardHeight > 0 ? 16 : 0)) },
         ]}
         {...props}
       >

@@ -87,7 +87,7 @@ export default function DashboardScreen() {
       const currentMonthStatusCounts = { paid: 0, pending: 0, late: 0 }
 
       allPayments.forEach((payment) => {
-        const dateStr = payment.payment_date || payment.created_at
+        const dateStr = payment.paid_at || payment.created_at
         if (!dateStr) return
         const pDate = new Date(dateStr)
 
@@ -131,7 +131,7 @@ export default function DashboardScreen() {
       }
 
       allPayments.forEach((payment) => {
-        const dateStr = payment.payment_date || payment.created_at
+        const dateStr = payment.paid_at || payment.created_at
         if (!dateStr) return
         const pDate = new Date(dateStr)
         const monthData = last6Months.find((m) => m.monthIndex === pDate.getMonth() && m.year === pDate.getFullYear())
@@ -164,7 +164,7 @@ export default function DashboardScreen() {
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
 
       allPayments.forEach((payment) => {
-        const dateStr = payment.payment_date || payment.created_at
+        const dateStr = payment.paid_at || payment.created_at
         if (!dateStr) return
         const pDate = new Date(dateStr)
 

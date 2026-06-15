@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react"
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput, Linking, Alert, Platform } from "react-native"
-import { SafeAreaView } from "react-native-safe-area-context"
+import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput, Linking, Alert, Platform, useWindowDimensions, KeyboardAvoidingView } from "react-native"
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useLocalSearchParams, router } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
@@ -8,8 +8,9 @@ import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User,
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
 import { FlashList } from "@shopify/flash-list"
-import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
+import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
+import ThemeDatePicker from "@/components/ui/theme-date-picker"
 
 type Tenant = {
   id: number
@@ -45,6 +46,9 @@ export default function TenantsScreen() {
   const { isDark } = useTheme()
   const { user } = useAuth()
   const { tenant: tenantParam } = useLocalSearchParams<{ tenant?: string }>()
+  const { height } = useWindowDimensions()
+  const insets = useSafeAreaInsets()
+  const keyboardHeight = useKeyboardHeight()
   const [loading, setLoading] = useState(true)
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [rooms, setRooms] = useState<RoomOption[]>([])
@@ -753,7 +757,21 @@ export default function TenantsScreen() {
         onRequestClose={() => setFormModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 justify-end">
-          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[85%] border-t border-border dark:border-border-dark p-6">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={0}
+            className="w-full"
+          >
+            {(() => {
+              const sheetMax = Math.min(
+                height * 0.92,
+                keyboardHeight > 0 ? height - keyboardHeight - insets.top : height * 0.85
+              )
+              return (
+                <View
+                  style={{ maxHeight: sheetMax }}
+                  className="bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark p-6"
+                >
             {/* Header */}
             <View className="flex-row justify-between items-center mb-6">
               <View>
@@ -776,7 +794,7 @@ export default function TenantsScreen() {
               </View>
             )}
 
-            <KeyboardAwareScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingBottom: 24 }} className="mb-6">
+            <KeyboardAwareScrollView showsVerticalScrollIndicator={false} disableKeyboardPadding={true} contentContainerStyle={{ gap: 16, paddingBottom: 24 }} className="mb-6">
               {/* Full Name */}
               <View>
                 <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Tenant Name</Text>
@@ -825,15 +843,11 @@ export default function TenantsScreen() {
               {/* Grid: Join Date & Rent Due Day */}
               <View className="flex-row gap-3">
                 <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Join Date</Text>
-                  <TextInput
-                    ref={joinDateInput.ref}
-                    onFocus={joinDateInput.onFocus}
+                  <ThemeDatePicker
                     value={joinDate}
-                    onChangeText={setJoinDate}
+                    onChange={setJoinDate}
+                    label="Join Date"
                     placeholder="YYYY-MM-DD"
-                    placeholderTextColor="#9ca3af"
-                    className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark"
                   />
                 </View>
 
@@ -968,7 +982,10 @@ export default function TenantsScreen() {
                 <Text className="text-white text-sm font-bold">Save Occupant</Text>
               </TouchableOpacity>
             </View>
-          </View>
+                </View>
+              )
+            })()}
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 

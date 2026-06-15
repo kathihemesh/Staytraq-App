@@ -138,24 +138,18 @@ export default function RemindersScreen() {
       // 2. Fetch payments to check current month collections
       const { data: paymentsData, error: paymentsErr } = await supabase
         .from("payments")
-        .select("tenant_id, status, payment_date, created_at, billing_month")
+        .select("tenant_id, status, paid_at, created_at, month, year")
         .eq("owner_id", user.id)
 
       if (paymentsErr) throw paymentsErr
 
-      // Match paid payments for the current month
-      const monthsList = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
-      const currentMonthName = monthsList[currentMonth]
-
       const paidTenantIds = new Set<number>()
       paymentsData?.forEach((p) => {
         if (p.status === "paid" && p.tenant_id) {
-          const dateStr = p.payment_date || p.created_at
+          const dateStr = p.paid_at || p.created_at
           const pDate = dateStr ? new Date(dateStr) : null
           const matchesDate = pDate && pDate.getMonth() === currentMonth && pDate.getFullYear() === currentYear
-          const matchesBillingMonth = p.billing_month && (
-            p.billing_month.includes(currentMonthName) && p.billing_month.includes(String(currentYear))
-          )
+          const matchesBillingMonth = p.month === (currentMonth + 1) && p.year === currentYear
           if (matchesDate || matchesBillingMonth) {
             paidTenantIds.add(p.tenant_id)
           }

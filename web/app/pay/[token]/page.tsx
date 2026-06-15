@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 
-type PaymentState = 'loading' | 'invalid' | 'verify_identity' | 'no_dues' | 'pending' | 'submitted' | 'paid'
+type PaymentState = 'loading' | 'invalid' | 'verify_identity' | 'no_dues' | 'select_invoice' | 'pending' | 'submitted' | 'paid'
 
 interface PaymentData {
   portalMonth?: number
@@ -22,7 +22,7 @@ interface PaymentData {
     room_number: string
     payment_code: string
   }
-  payment: {
+  payments: {
     id: number
     amount: number
     status: 'pending' | 'late' | 'submitted' | 'paid'
@@ -31,7 +31,7 @@ interface PaymentData {
     year: number
     verification_notes?: string | null
     payment_code?: string
-  } | null
+  }[]
   settings: {
     upi_id: string
     upi_name: string
@@ -52,6 +52,7 @@ export default function TenantPaymentPage() {
 
   const [state, setState] = useState<PaymentState>('loading')
   const [data, setData] = useState<PaymentData | null>(null)
+  const [selectedPayment, setSelectedPayment] = useState<PaymentData['payments'][0] | null>(null)
   
   // Verification state
   const [mobileNumber, setMobileNumber] = useState('')
@@ -81,7 +82,7 @@ export default function TenantPaymentPage() {
           portalMonth: json.month,
           portalYear: json.year,
           tenant: { name: '', room_number: '', payment_code: '' },
-          payment: null,
+          payments: [],
           settings: json.settings
         })
         setState('verify_identity')
@@ -124,18 +125,26 @@ export default function TenantPaymentPage() {
         portalMonth: prev?.portalMonth,
         portalYear: prev?.portalYear,
         tenant: json.tenant,
-        payment: json.payment,
+        payments: json.payments,
         settings: prev?.settings || null
       }))
 
-      if (!json.payment) {
+      if (!json.payments || json.payments.length === 0) {
+        setSelectedPayment(null)
         setState('no_dues')
-      } else if (json.payment.status === 'paid') {
-        setState('paid')
-      } else if (json.payment.status === 'submitted') {
-        setState('submitted')
+      } else if (json.payments.length === 1) {
+        const singlePay = json.payments[0]
+        setSelectedPayment(singlePay)
+        if (singlePay.status === 'paid') {
+          setState('paid')
+        } else if (singlePay.status === 'submitted') {
+          setState('submitted')
+        } else {
+          setState('pending')
+        }
       } else {
-        setState('pending')
+        setSelectedPayment(null)
+        setState('select_invoice')
       }
     } catch (error: any) {
       console.error(error)
@@ -241,9 +250,9 @@ export default function TenantPaymentPage() {
 
   const handleSubmitProof = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!data || !data.payment) return
+    if (!data || !selectedPayment) return
 
-    const { settings, payment } = data
+    const { settings } = data
     if (settings?.utr_required && !utrNumber) {
       toast.error('UTR/Reference Number is required')
       return
@@ -258,7 +267,7 @@ export default function TenantPaymentPage() {
 
     try {
       const formData = new FormData()
-      formData.append('payment_id', payment.id.toString())
+      formData.append('payment_id', selectedPayment.id.toString())
       if (utrNumber) formData.append('utr', utrNumber)
       if (screenshotFile) formData.append('screenshot', screenshotFile)
 
@@ -273,12 +282,13 @@ export default function TenantPaymentPage() {
       }
 
       toast.success('Payment submitted successfully!')
-      setState('submitted')
       
-      setData(prev => prev ? {
-        ...prev,
-        payment: prev.payment ? { ...prev.payment, status: 'submitted' } : null
-      } : null)
+      const updatedPayments = data.payments.map(p => 
+        p.id === selectedPayment.id ? { ...p, status: 'submitted' as const } : p
+      )
+      setData(prev => prev ? { ...prev, payments: updatedPayments } : null)
+      setSelectedPayment(prev => prev ? { ...prev, status: 'submitted' as const } : null)
+      setState('submitted')
 
     } catch (error: any) {
       console.error('Submission error:', error)
@@ -290,10 +300,10 @@ export default function TenantPaymentPage() {
 
   // Generates unique prefilled QR string using payment_code
   const generateUpiString = () => {
-    if (!data?.settings || !data?.payment || !data?.tenant) return ''
+    if (!data?.settings || !selectedPayment || !data?.tenant) return ''
     const { upi_id, upi_name } = data.settings
-    const { amount } = data.payment
-    const payCode = data.payment.payment_code || 'PAY-XXXXXX'
+    const { amount } = selectedPayment
+    const payCode = selectedPayment.payment_code || 'PAY-XXXXXX'
     
     // Unique txn reference and note to identify payment
     const txnRef = payCode
@@ -453,7 +463,86 @@ export default function TenantPaymentPage() {
             </motion.div>
           )}
 
-          {state === 'pending' && data && data.payment && (
+          {state === 'select_invoice' && data && (
+            <motion.div
+              key="select_invoice"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl overflow-hidden relative shadow-2xl">
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-blue-500" />
+                <CardHeader>
+                  <CardTitle className="text-white text-lg">Invoices for {data.tenant.name}</CardTitle>
+                  <CardDescription className="text-neutral-400">
+                    Room {data.tenant.room_number} • Select an invoice below to verify or pay.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 pb-6">
+                  {data.payments.map((p) => {
+                    let badgeStyle = "bg-neutral-800 text-neutral-400 border-neutral-700"
+                    let statusLabel: string = p.status
+                    if (p.status === 'paid') {
+                      badgeStyle = "bg-green-500/10 text-green-500 border-green-500/20"
+                      statusLabel = "Paid"
+                    } else if (p.status === 'submitted') {
+                      badgeStyle = "bg-amber-500/10 text-amber-500 border-amber-500/20"
+                      statusLabel = "Under Review"
+                    } else if (p.status === 'late') {
+                      badgeStyle = "bg-red-500/10 text-red-500 border-red-500/20"
+                      statusLabel = "Overdue"
+                    } else {
+                      badgeStyle = "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                      statusLabel = "Pending"
+                    }
+
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => {
+                          setSelectedPayment(p)
+                          if (p.status === 'paid') {
+                            setState('paid')
+                          } else if (p.status === 'submitted') {
+                            setState('submitted')
+                          } else {
+                            setState('pending')
+                          }
+                        }}
+                        className="w-full flex items-center justify-between p-4 bg-neutral-950/40 border border-neutral-800 hover:border-neutral-700 rounded-xl transition-all hover:bg-neutral-900/40 text-left"
+                      >
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-white text-sm">₹{p.amount}</span>
+                            <Badge variant="outline" className={`text-[10px] py-0 px-2 font-bold uppercase ${badgeStyle}`}>
+                              {statusLabel}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-neutral-500 mt-1">
+                            Due: {new Date(p.due_date).toLocaleDateString()} • Code: {p.payment_code || 'PAY-XXXXXX'}
+                          </p>
+                        </div>
+                        <span className="text-primary text-xs font-bold hover:underline">Select &rarr;</span>
+                      </button>
+                    )
+                  })}
+                </CardContent>
+                <CardFooter className="bg-neutral-900/40 border-t border-neutral-800 pt-6">
+                  <Button 
+                    variant="ghost" 
+                    className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-full justify-center"
+                    onClick={() => setState('verify_identity')}
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
+                  </Button>
+                </CardFooter>
+              </Card>
+            </motion.div>
+          )}
+
+          {state === 'pending' && data && selectedPayment && (
             <motion.div
               key="pending"
               initial={{ opacity: 0, y: 20 }}
@@ -469,10 +558,10 @@ export default function TenantPaymentPage() {
                     <div>
                       <CardTitle className="text-xl text-white">Rent Invoice</CardTitle>
                       <CardDescription className="text-neutral-400">
-                        {months[data.payment.month - 1]} {data.payment.year}
+                        {months[selectedPayment.month - 1]} {selectedPayment.year}
                       </CardDescription>
                     </div>
-                    {data.payment.status === 'late' && (
+                    {selectedPayment.status === 'late' && (
                       <Badge variant="destructive" className="bg-red-500/10 text-red-500 hover:bg-red-500/20 border-red-500/20">
                         Overdue
                       </Badge>
@@ -480,9 +569,9 @@ export default function TenantPaymentPage() {
                   </div>
                   
                   <div className="pt-4 flex items-end justify-between">
-                    <span className="text-4xl font-bold tracking-tight text-white">₹{data.payment.amount}</span>
+                    <span className="text-4xl font-bold tracking-tight text-white">₹{selectedPayment.amount}</span>
                     <Badge variant="outline" className="text-primary border-primary/20 bg-primary/5">
-                      Code: {data.payment.payment_code || 'PAY-XXXXXX'}
+                      Code: {selectedPayment.payment_code || 'PAY-XXXXXX'}
                     </Badge>
                   </div>
                 </CardHeader>
@@ -498,18 +587,18 @@ export default function TenantPaymentPage() {
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-neutral-400">Due Date</span>
-                    <span className="font-semibold text-white">{new Date(data.payment.due_date).toLocaleDateString()}</span>
+                    <span className="font-semibold text-white">{new Date(selectedPayment.due_date).toLocaleDateString()}</span>
                   </div>
                 </CardContent>
               </Card>
 
               {/* Rejection Note if exists */}
-              {data.payment.verification_notes && (
+              {selectedPayment.verification_notes && (
                 <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex gap-3">
                   <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
                   <div>
                     <h4 className="text-sm font-semibold text-red-500 mb-1">Previous Payment Rejected</h4>
-                    <p className="text-sm text-red-400/90">{data.payment.verification_notes}</p>
+                    <p className="text-sm text-red-400/90">{selectedPayment.verification_notes}</p>
                   </div>
                 </div>
               )}
@@ -670,21 +759,37 @@ export default function TenantPaymentPage() {
                         'Submit Verification'
                       )}
                     </Button>
-                    <Button 
-                      type="button" 
-                      variant="ghost" 
-                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-auto"
-                      onClick={() => setState('verify_identity')}
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5" /> Use another profile
-                    </Button>
+                    
+                    <div className="flex w-full gap-3 justify-between">
+                      {data.payments.length > 1 && (
+                        <Button 
+                          type="button" 
+                          variant="ghost" 
+                          className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                          onClick={() => {
+                            setSelectedPayment(null)
+                            setState('select_invoice')
+                          }}
+                        >
+                          <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
+                        </Button>
+                      )}
+                      <Button 
+                        type="button" 
+                        variant="ghost" 
+                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-auto"
+                        onClick={() => setState('verify_identity')}
+                      >
+                        Use another profile
+                      </Button>
+                    </div>
                   </CardFooter>
                 </Card>
               </form>
             </motion.div>
           )}
 
-          {state === 'submitted' && data && data.payment && (
+          {state === 'submitted' && data && selectedPayment && (
             <motion.div
               key="submitted"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -705,7 +810,7 @@ export default function TenantPaymentPage() {
                   <div className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl p-4 text-left">
                     <div className="flex justify-between items-center text-sm mb-2">
                       <span className="text-neutral-500">Amount Paid</span>
-                      <span className="font-semibold text-white">₹{data.payment.amount}</span>
+                      <span className="font-semibold text-white">₹{selectedPayment.amount}</span>
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-neutral-500">Status</span>
@@ -713,19 +818,33 @@ export default function TenantPaymentPage() {
                     </div>
                   </div>
 
-                  <Button 
-                    variant="ghost" 
-                    className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                    onClick={() => setState('verify_identity')}
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5" /> Exit
-                  </Button>
+                  <div className="flex gap-4 mt-6">
+                    {data.payments.length > 1 && (
+                      <Button 
+                        variant="ghost" 
+                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                        onClick={() => {
+                          setSelectedPayment(null)
+                          setState('select_invoice')
+                        }}
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
+                      </Button>
+                    )}
+                    <Button 
+                      variant="ghost" 
+                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                      onClick={() => setState('verify_identity')}
+                    >
+                      Exit
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </motion.div>
           )}
 
-          {state === 'paid' && data && data.payment && (
+          {state === 'paid' && data && selectedPayment && (
             <motion.div
               key="paid"
               initial={{ opacity: 0, scale: 0.95 }}
@@ -746,7 +865,7 @@ export default function TenantPaymentPage() {
                   <div className="w-full bg-neutral-950/50 border border-neutral-800 rounded-xl p-4 text-left">
                     <div className="flex justify-between items-center text-sm mb-2">
                       <span className="text-neutral-500">Amount Paid</span>
-                      <span className="font-semibold text-white">₹{data.payment.amount}</span>
+                      <span className="font-semibold text-white">₹{selectedPayment.amount}</span>
                     </div>
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-neutral-500">Status</span>
@@ -754,13 +873,27 @@ export default function TenantPaymentPage() {
                     </div>
                   </div>
 
-                  <Button 
-                    variant="ghost" 
-                    className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                    onClick={() => setState('verify_identity')}
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5" /> Exit
-                  </Button>
+                  <div className="flex gap-4 mt-6">
+                    {data.payments.length > 1 && (
+                      <Button 
+                        variant="ghost" 
+                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                        onClick={() => {
+                          setSelectedPayment(null)
+                          setState('select_invoice')
+                        }}
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
+                      </Button>
+                    )}
+                    <Button 
+                      variant="ghost" 
+                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                      onClick={() => setState('verify_identity')}
+                    >
+                      Exit
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </motion.div>

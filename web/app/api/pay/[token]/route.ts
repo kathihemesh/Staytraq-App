@@ -125,33 +125,41 @@ export async function POST(
     const roomRaw = matchedTenant.rooms_table
     const room = Array.isArray(roomRaw) ? roomRaw[0] : roomRaw
 
-    // 3. Fetch the payment record matching this tenant and this specific month & year
+    // 3. Fetch the payment records matching this tenant and this specific month & year
     const { data: payments, error: payError } = await supabase
       .from('payments')
       .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
       .eq('tenant_id', matchedTenant.id)
       .eq('month', linkRecord.month)
       .eq('year', linkRecord.year)
-      .limit(1)
 
     if (payError) {
       console.error('[pay/token] Error fetching payment:', JSON.stringify(payError))
       return NextResponse.json({ error: 'Database error retrieving billing record' }, { status: 500 })
     }
 
-    const payment = payments && payments.length > 0 ? payments[0] : null
-
-    if (!payment) {
+    if (!payments || payments.length === 0) {
       return NextResponse.json({
         tenant: {
           name: matchedTenant.name || 'Tenant',
           room_number: room?.room_number || 'Unknown',
           payment_code: matchedTenant.payment_code || 'ST-XXXXXX'
         },
-        payment: null,
+        payments: [],
         message: `No billing invoice generated for ${months[linkRecord.month - 1]} ${linkRecord.year} yet.`
       })
     }
+
+    const mappedPayments = payments.map(payment => ({
+      id: payment.id,
+      amount: payment.total_amount,
+      status: payment.status,
+      due_date: payment.due_date,
+      month: payment.month,
+      year: payment.year,
+      verification_notes: payment.verification_notes || null,
+      payment_code: payment.payment_code
+    }))
 
     return NextResponse.json({
       tenant: {
@@ -159,16 +167,7 @@ export async function POST(
         room_number: room?.room_number || 'Unknown',
         payment_code: matchedTenant.payment_code || 'ST-XXXXXX'
       },
-      payment: {
-        id: payment.id,
-        amount: payment.total_amount,
-        status: payment.status,
-        due_date: payment.due_date,
-        month: payment.month,
-        year: payment.year,
-        verification_notes: payment.verification_notes || null,
-        payment_code: payment.payment_code
-      }
+      payments: mappedPayments
     })
 
   } catch (error) {

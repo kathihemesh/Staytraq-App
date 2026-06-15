@@ -255,69 +255,71 @@ const RoomRowCard = memo(function RoomRowCard({
       style={selected ? { borderCurve: "continuous" } : undefined}
     >
       <OccupancyBackdrop room={room} />
-      <View className="relative z-10 flex-row items-center py-4 pl-3 pr-2">
-        <View className="flex-1 flex-row items-center gap-3 min-w-0 pr-2">
+      <View className="relative z-10 flex-row items-center py-3.5 pl-3 pr-3">
+        <View className="flex-1 flex-row items-center gap-3 min-w-0">
           <LinearGradient
             colors={[`${primaryColor}12`, `${primaryColor}06`]}
             style={{
-              height: 40,
-              width: 40,
-              borderRadius: 999,
+              height: 42,
+              width: 42,
+              borderRadius: 21,
               alignItems: "center",
               justifyContent: "center",
               borderWidth: 1,
               borderColor: isDark ? "rgba(0,145,255,0.35)" : "rgba(0,113,223,0.3)",
             }}
           >
-            <DoorOpen size={20} color={primaryColor} />
-          </LinearGradient>
-          <View className="min-w-0 flex-1">
-            <Text numberOfLines={1} className="text-[15px] font-semibold text-slate-900 dark:text-slate-100">
-              Room {room.number}
+            <Text 
+              style={{ 
+                color: primaryColor,
+                fontSize: room.number.length > 5 ? 8 : room.number.length === 5 ? 9.5 : room.number.length === 4 ? 11 : 12
+              }} 
+              className="font-black tracking-tighter text-center"
+              numberOfLines={1}
+            >
+              {room.number}
             </Text>
-            <View className="mt-1 flex-row flex-wrap gap-x-3 gap-y-1">
+          </LinearGradient>
+          <View className="min-w-0 flex-1 justify-center gap-0.5">
+            {/* Line 1: Metadata Row */}
+            <View className="flex-row items-center gap-x-2">
               <View className="flex-row items-center gap-1">
-                <Layers size={12} color="#64748b" />
-                <Text className="text-[11px] text-slate-500 dark:text-slate-400">{room.floor}</Text>
+                <Layers size={11} color={isDark ? "#94a3b8" : "#475569"} />
+                <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                  {room.floorNo === 0 ? "G" : room.floorNo}
+                </Text>
               </View>
+              <Text className="text-[9px] text-slate-300 dark:text-slate-700">•</Text>
               <View className="flex-row items-center gap-1">
-                <Users size={12} color="#64748b" />
-                <Text className="text-[11px] text-slate-500 dark:text-slate-400">
+                <Users size={11} color={isDark ? "#94a3b8" : "#475569"} />
+                <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
                   {room.occupiedBeds} / {room.capacity}
                 </Text>
               </View>
-              <Text className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+              <Text className="text-[9px] text-slate-300 dark:text-slate-700">•</Text>
+              <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
                 {room.type === "Non-AC" ? "NON AC" : room.type}
               </Text>
-              {compactRent ? (
-                <View className="flex-row items-center gap-1">
-                  <IndianRupee size={10} color="#64748b" />
-                  <Text className="text-[11px] text-slate-500 dark:text-slate-400">
-                    {(room.rentAmount / 1000).toFixed(1)}k
-                  </Text>
-                </View>
-              ) : null}
+            </View>
+
+            {/* Line 2: Highlighted Price */}
+            <View className="flex-row items-center gap-0.5 mt-0.5">
+              <IndianRupee size={12} color={primaryColor} />
+              <Text style={{ color: primaryColor }} className="text-sm font-black tracking-tight">
+                {room.rentAmount.toLocaleString()}
+              </Text>
+              <Text className="text-[10px] font-bold text-slate-400 dark:text-slate-500"> / month</Text>
             </View>
           </View>
         </View>
-        {!compactRent ? (
-          <View className="relative z-10 w-[96px] items-end px-1">
-            <View className="flex-row items-center gap-0.5">
-              <IndianRupee size={14} color={isDark ? "#f1f5f9" : "#0f172a"} />
-              <Text className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                {room.rentAmount.toLocaleString()}
-              </Text>
-            </View>
-          </View>
-        ) : null}
-        <View className="relative z-10 w-[118px] shrink-0 items-end gap-1 pl-2">
-          <Text className={clsx("rounded-full border px-2.5 py-1 text-[10px] font-semibold", config.badge)}>
+        <View className="relative z-10 w-[96px] shrink-0 items-end justify-center">
+          <Text className={clsx("rounded-full border px-2.5 py-0.5 text-[10px] font-semibold text-center", config.badge)}>
             {room.status === "partially occupied" ? "Partial" : config.label}
           </Text>
           {room.status === "maintenance" ? (
-            <View className="flex-row items-center gap-1">
-              <Wrench size={12} color="#f59e0b" />
-              <Text className="text-[10px] font-medium text-amber-600 dark:text-amber-400 max-w-[100px]" numberOfLines={1}>
+            <View className="flex-row items-center gap-1 mt-1">
+              <Wrench size={10} color="#f59e0b" />
+              <Text className="text-[9px] font-semibold text-amber-600 dark:text-amber-400 max-w-[80px]" numberOfLines={1}>
                 Under repair
               </Text>
             </View>
@@ -888,16 +890,33 @@ export default function RoomsScreen() {
     setAddForm((prev) => ({ ...prev, floorNo: newNoFloors }))
   }
 
-  const hideFab = isSidebarOpen || isAddDialogOpen || !!previewTenant
   const loadingFirst = isLoading && !hasLoadedOnce
 
   const listHeader = (
     <>
-      <View className="mt-3 flex-row flex-wrap items-end justify-between gap-4">
-        <View>
-          <Text className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Rooms</Text>
-          <Text className="mt-1 text-sm text-slate-500 dark:text-slate-400">Manage rooms and occupancy.</Text>
+      <View className="mt-3 flex-row items-center justify-between gap-4">
+        <View className="flex-1 pr-2">
+          <Text className="text-2xl font-black text-foreground dark:text-foreground-dark tracking-tight">Rooms</Text>
+          <Text className="text-sm text-muted dark:text-muted-dark font-medium mt-1">Manage rooms and occupancy.</Text>
         </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Add room"
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+            setIsAddDialogOpen(true)
+          }}
+          className="h-10 w-10 rounded-xl items-center justify-center shadow-lg"
+          style={{
+            backgroundColor: primaryColor,
+            shadowColor: primaryColor,
+            shadowOpacity: 0.25,
+            shadowRadius: 10,
+            shadowOffset: { width: 0, height: 4 },
+          }}
+        >
+          <Plus size={20} color="#ffffff" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} className="-mx-1 mt-4 pb-4">
@@ -957,20 +976,20 @@ export default function RoomsScreen() {
         </View>
       </ScrollView>
 
-      <View className="mb-5 mt-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900/85">
-        <View className="flex-row items-center mb-3 gap-2">
+      <View className="mb-4 mt-2">
+        <View className="flex-row items-center gap-2">
           <View className="relative flex-1">
-            <View className="pointer-events-none absolute left-3 top-1/2 z-10 mt-[-7px]">
+            <View className="pointer-events-none absolute left-3.5 top-1/2 z-10 mt-[-8px]">
               <Search size={16} color="#94a3b8" />
             </View>
             <TextInput
-              placeholder="Search by room number..."
+              placeholder="Search room number..."
               placeholderTextColor="#94a3b8"
               value={search}
               onChangeText={setSearch}
               autoCorrect={false}
               clearButtonMode="while-editing"
-              className="h-11 rounded-xl border-0 bg-slate-50 pl-10 pr-3 text-[15px] leading-6 text-slate-900 dark:bg-black/35 dark:text-slate-50"
+              className="h-11 rounded-2xl border border-border dark:border-border-dark bg-card dark:bg-card-dark pl-10 pr-3 text-sm text-foreground dark:text-foreground-dark"
             />
           </View>
           {hasActiveFilters && (
@@ -985,13 +1004,13 @@ export default function RoomsScreen() {
                 })
               }}
               activeOpacity={0.8}
-              className="h-11 w-11 items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700"
+              className="h-11 w-11 items-center justify-center rounded-2xl bg-card dark:bg-card-dark border border-border dark:border-border-dark active:scale-95"
             >
               <X size={18} color={isDark ? "#e2e8f0" : "#64748b"} />
             </TouchableOpacity>
           )}
         </View>
-        <View className="mt-1 flex-row gap-2">
+        <View className="mt-2.5 flex-row gap-2">
           <InlineSelect
             key={`filter-floor-${filters.floor}-${openDropdown === "filter-floor"}`}
             options={floorFilterOptions}
@@ -1222,7 +1241,7 @@ export default function RoomsScreen() {
                 <Text className="text-[12px] font-black uppercase text-slate-900 dark:text-slate-200">Room information</Text>
               </View>
               <View className="gap-3 rounded-xl border border-slate-100 bg-white px-3 py-4 dark:border-slate-800 dark:bg-slate-950">
-                <View className="flex-row gap-3">
+                <View className="flex-row gap-3" style={{ zIndex: openDropdown === "detail-floor" ? 100 : 1, position: "relative" }}>
                   <View className="min-w-0 flex-1">
                     <RoomFieldRow
                       label="Room Number"
@@ -1239,19 +1258,16 @@ export default function RoomsScreen() {
                       }
                     />
                   </View>
-                  <View className="min-w-0 flex-1">
+                  <View className="min-w-0 flex-1" style={{ overflow: "visible" }}>
                     <RoomFieldRow
                       label="Floor"
                       isEditing={isEditing}
                       displayValue={selectedRoom.floor}
                       editable={
                         <InlineSelect
-                          key={`detail-floor-${editForm.floorNo ?? selectedRoom.floorNo}-${openDropdown === "detail-floor"}`}
                           options={addFloorOptions}
                           value={String(editForm.floorNo ?? selectedRoom.floorNo)}
                           defaultTriggerLabel="Floor"
-                          overlay
-                          keyboardHeight={keyboardHeight}
                           onChange={(v) => {
                             const floor = availableFloors.find((f) => String(f.value) === v)
                             if (floor) {
@@ -1272,23 +1288,20 @@ export default function RoomsScreen() {
                     />
                   </View>
                 </View>
-                <View className="flex-row gap-3">
-                  <View className="min-w-0 flex-1">
+                <View className="flex-row gap-3" style={{ zIndex: openDropdown === "detail-type" ? 90 : 1, position: "relative" }}>
+                  <View className="min-w-0 flex-1" style={{ overflow: "visible" }}>
                     <RoomFieldRow
                       label="Room Type"
                       isEditing={isEditing}
                       displayValue={selectedRoom.type === "Non-AC" ? "NON AC" : selectedRoom.type}
                       editable={
                         <InlineSelect
-                          key={`detail-type-${editForm.type ?? selectedRoom.type}-${openDropdown === "detail-type"}`}
                           options={[
                             { value: "AC", shortLabel: "AC" },
                             { value: "Non-AC", shortLabel: "NON AC" },
                           ]}
                           value={editForm.type ?? selectedRoom.type}
                           defaultTriggerLabel="Type"
-                          overlay
-                          keyboardHeight={keyboardHeight}
                           onChange={(v) => setEditForm((p) => ({ ...p, type: v as "AC" | "Non-AC" }))}
                           primaryColor={primaryColor}
                           isDark={isDark}
@@ -1558,7 +1571,7 @@ export default function RoomsScreen() {
         }
         contentContainerStyle={{
           flexGrow: 1,
-          paddingHorizontal: 8,
+          paddingHorizontal: 24,
           paddingBottom: insets.bottom + 110,
         }}
         renderItem={({ item }) => (
@@ -1572,32 +1585,6 @@ export default function RoomsScreen() {
           />
         )}
       />
-
-      {!hideFab && !loadingFirst && !pgMissing && !pageError ? (
-        <View pointerEvents="box-none" className="absolute bottom-0 right-0 z-[100]" style={{ marginBottom: insets.bottom + 70, marginRight: 18 }}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel="Add room"
-            onPress={() => {
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-              setIsAddDialogOpen(true)
-            }}
-            activeOpacity={0.9}
-            className="flex-row items-center gap-2 rounded-full px-7 py-[13px] shadow-lg"
-            style={{
-              backgroundColor: isDark ? "#0091ff" : "#2563eb",
-              shadowColor: "#2563eb",
-              shadowOpacity: isDark ? 0.45 : 0.35,
-              shadowRadius: 14,
-              shadowOffset: { width: 0, height: 7 },
-              elevation: 14,
-            }}
-          >
-            <Plus size={22} strokeWidth={2.5} color="#ffffff" />
-            <Text className="text-[15px] font-bold text-white">Add Room</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
 
       <Modal visible={isAddDialogOpen} animationType="slide" transparent onRequestClose={() => setIsAddDialogOpen(false)}>
         <View className="flex-1 justify-end">
@@ -1639,6 +1626,7 @@ export default function RoomsScreen() {
                   <KeyboardAwareScrollView
                     keyboardShouldPersistTaps="always"
                     showsVerticalScrollIndicator={false}
+                    disableKeyboardPadding={true}
                     style={{ maxHeight: scrollMax }}
                     contentContainerStyle={{
                       paddingHorizontal: 20,
@@ -1647,7 +1635,7 @@ export default function RoomsScreen() {
                       gap: 12,
                     }}
                   >
-                    <View className="flex-row gap-3">
+                    <View className="flex-row gap-3" style={{ zIndex: openDropdown === "add-floor" ? 100 : 1, position: "relative" }}>
                       <View className="flex-1">
                         <Text className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
                           Room Number
@@ -1662,17 +1650,14 @@ export default function RoomsScreen() {
                           className="h-11 rounded-xl border border-slate-200 bg-slate-50 px-3 text-[14px] text-slate-900 dark:border-slate-800 dark:bg-slate-950 dark:text-white"
                         />
                       </View>
-                      <View className="flex-1">
+                      <View className="flex-1" style={{ overflow: "visible" }}>
                         <Text className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Floor</Text>
                         <InlineSelect
-                          key={`add-floor-${addForm.floorNo ?? "none"}-${openDropdown === "add-floor"}`}
                           options={addFloorOptions}
                           value={addForm.floorNo !== null ? String(addForm.floorNo) : ""}
                           defaultTriggerLabel="Select floor"
                           accent="neutral"
                           isActive={addForm.floorNo !== null}
-                          overlay
-                          keyboardHeight={keyboardHeight}
                           onChange={(v) => {
                             const n = Number.parseInt(v, 10)
                             if (Number.isFinite(n)) setAddForm((p) => ({ ...p, floorNo: n }))
@@ -1700,11 +1685,10 @@ export default function RoomsScreen() {
                         />
                       </View>
                     </View>
-                    <View className="flex-row gap-3">
-                      <View className="flex-1">
+                    <View className="flex-row gap-3" style={{ zIndex: openDropdown === "add-type" ? 90 : 1, position: "relative" }}>
+                      <View className="flex-1" style={{ overflow: "visible" }}>
                         <Text className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">Room Type</Text>
                         <InlineSelect
-                          key={`add-type-${addForm.type ?? "none"}-${openDropdown === "add-type"}`}
                           options={[
                             { value: "AC", shortLabel: "AC" },
                             { value: "Non-AC", shortLabel: "NON AC" },
@@ -1713,8 +1697,6 @@ export default function RoomsScreen() {
                           defaultTriggerLabel="Select type"
                           accent="neutral"
                           isActive={addForm.type !== null}
-                          overlay
-                          keyboardHeight={keyboardHeight}
                           onChange={(v) => setAddForm((p) => ({ ...p, type: v as "AC" | "Non-AC" }))}
                           primaryColor={primaryColor}
                           isDark={isDark}

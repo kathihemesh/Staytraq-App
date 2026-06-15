@@ -239,6 +239,13 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
   const selectedIndexRef = useRef(selectedIndex)
   selectedIndexRef.current = selectedIndex
 
+  const [prevSelectedIndex, setPrevSelectedIndex] = useState(-1)
+  if (selectedIndex !== prevSelectedIndex) {
+    setPrevSelectedIndex(selectedIndex)
+    const targetSection = Math.floor(selectedIndex / VISIBLE_SLOTS)
+    setSectionIndex(targetSection)
+  }
+
   const collapsedWidth = Math.min(width - 48, 340)
   const collapsedShellWidth = collapsedWidth + 12
   const displayRoutes = useMemo<DisplayRoute[]>(
@@ -270,13 +277,6 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
   useEffect(() => {
     setSectionIndex((current) => Math.min(current, sectionCount - 1))
   }, [sectionCount])
-
-  useEffect(() => {
-    const targetSection = Math.floor(selectedIndex / VISIBLE_SLOTS)
-    if (targetSection !== sectionIndex && targetSection >= 0 && targetSection < sectionCount) {
-      setSectionIndex(targetSection)
-    }
-  }, [selectedIndex, sectionIndex, sectionCount])
 
   /* ─── Expand / collapse spring ─────────────────────────────── */
 

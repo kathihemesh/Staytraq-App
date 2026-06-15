@@ -16,9 +16,12 @@ import {
   Clipboard,
   Animated,
   StyleSheet,
-  Share
+  Share,
+  Linking,
+  useWindowDimensions,
+  KeyboardAvoidingView
 } from "react-native"
-import { SafeAreaView } from "react-native-safe-area-context"
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { 
@@ -46,8 +49,10 @@ import {
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
-import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
+import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"
 import { LinearGradient } from "expo-linear-gradient"
+import Svg, { Path } from "react-native-svg"
+import ThemeDatePicker from "@/components/ui/theme-date-picker"
 
 // Match database schema accurately
 type Payment = {
@@ -75,6 +80,7 @@ type Payment = {
   payment_code: string | null
   tenants_table?: {
     name: string | null
+    mobile_number: string | null
     rooms_table?: {
       room_number: string
       rent_amount: number
@@ -95,6 +101,12 @@ type Occupant = {
 const { width } = Dimensions.get("window")
 const CARD_WIDTH = width - 48
 
+const WhatsAppIcon = ({ size = 20, color = "#25D366" }: { size?: number; color?: string }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+    <Path d="M.057 24l1.687-6.163c-1.041-1.804-1.588-3.849-1.587-5.946C.06 5.348 5.397.01 12.008.01c3.202.001 6.212 1.246 8.477 3.514 2.266 2.268 3.507 5.28 3.505 8.484-.004 6.657-5.34 11.997-11.953 11.997-2.005-.001-3.973-.502-5.73-1.455L0 24zm6.59-4.846c1.66.986 3.298 1.448 5.355 1.449 5.483 0 9.944-4.461 9.947-9.948.002-2.656-1.03-5.153-2.906-7.03-1.876-1.874-4.373-2.907-7.028-2.907-5.488 0-9.95 4.462-9.953 9.95-.001 2.01.52 3.568 1.485 5.105L1.87 20.352l4.777-1.198zM17.472 14.382c-.3-.149-1.777-.876-2.047-.975-.27-.099-.467-.149-.662.149-.195.3-.755.95-.925 1.149-.17.199-.34.225-.64.075-.3-.149-1.266-.467-2.41-1.487-.89-.794-1.49-1.77-1.665-2.07-.175-.3-.019-.461.13-.61.135-.133.3-.349.45-.523.15-.174.2-.3.3-.499.1-.199.05-.374-.025-.524-.075-.15-.662-1.597-.907-2.193-.238-.574-.48-.496-.662-.505-.171-.007-.368-.008-.567-.008-.199 0-.523.075-.797.374-.275.3-1.05 1.024-1.05 2.5 0 1.475 1.075 2.9 1.225 3.1.15.199 2.113 3.227 5.12 4.526.715.309 1.273.493 1.71.632.719.229 1.373.197 1.892.119.579-.088 1.777-.726 2.027-1.427.25-.7 2.5-1.426 2.5-1.426.25-.099.199-.199.15-.349z" />
+  </Svg>
+)
+
 const getMonthNumber = (monthName: string): number => {
   const months = [
     "january", "february", "march", "april", "may", "june",
@@ -107,6 +119,9 @@ const getMonthNumber = (monthName: string): number => {
 export default function PaymentsScreen() {
   const { user } = useAuth()
   const { isDark } = useTheme()
+  const { height } = useWindowDimensions()
+  const insets = useSafeAreaInsets()
+  const keyboardHeight = useKeyboardHeight()
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [payments, setPayments] = useState<Payment[]>([])
@@ -196,7 +211,14 @@ export default function PaymentsScreen() {
   // Modals & Bottom Sheets state
   const [detailModalVisible, setDetailModalVisible] = useState(false)
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
+  const [selectedPaymentPortalToken, setSelectedPaymentPortalToken] = useState<string | null>(null)
   
+  // Custom Payment Confirmation States
+  const [markPaidModalVisible, setMarkPaidModalVisible] = useState(false)
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"UPI" | "Cash">("UPI")
+  const [markingPaidPaymentId, setMarkingPaidPaymentId] = useState<number | null>(null)
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+
   const [formModalVisible, setFormModalVisible] = useState(false)
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null)
   
@@ -221,6 +243,8 @@ export default function PaymentsScreen() {
   const [formUtrNumber, setFormUtrNumber] = useState("")
   const [formPaymentDate, setFormPaymentDate] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
+  const [selectedTenantIds, setSelectedTenantIds] = useState<number[]>([])
+  const [tenantSearchQuery, setTenantSearchQuery] = useState("")
 
   // Keyboard Scroll Registers
   const rentInput = useKeyboardAwareInput()
@@ -287,7 +311,7 @@ export default function PaymentsScreen() {
       // 1. Fetch payments with tenant details
       const { data: payData, error: payError } = await supabase
         .from("payments")
-        .select("*, tenants_table(name, rooms_table(room_number, rent_amount))")
+        .select("*, tenants_table(name, mobile_number, rooms_table(room_number, rent_amount))")
         .eq("owner_id", user.id)
         .order("due_date", { ascending: false })
 
@@ -527,6 +551,123 @@ export default function PaymentsScreen() {
     }
   }, [detailModalVisible, selectedPayment])
 
+  useEffect(() => {
+    if (!selectedPayment) {
+      setSelectedPaymentPortalToken(null)
+      return
+    }
+
+    const fetchPortalTokenForPayment = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("monthly_payment_links")
+          .select("portal_token")
+          .eq("owner_id", selectedPayment.owner_id)
+          .eq("month", selectedPayment.month)
+          .eq("year", selectedPayment.year)
+          .single()
+
+        if (error && error.code !== "PGRST116") {
+          console.error("Error fetching portal token for selected payment:", error)
+          return
+        }
+
+        if (data?.portal_token) {
+          setSelectedPaymentPortalToken(data.portal_token)
+        } else {
+          const newToken = Math.random().toString(36).substring(2, 14)
+          const { data: upsertData, error: upsertError } = await supabase
+            .from("monthly_payment_links")
+            .upsert({
+              owner_id: selectedPayment.owner_id,
+              month: selectedPayment.month,
+              year: selectedPayment.year,
+              portal_token: newToken
+            }, { onConflict: "owner_id,month,year" })
+            .select("portal_token")
+            .single()
+
+          if (upsertError) {
+            console.error("Error generating portal token for selected payment:", upsertError)
+            setSelectedPaymentPortalToken(newToken)
+          } else {
+            setSelectedPaymentPortalToken(upsertData?.portal_token || newToken)
+          }
+        }
+      } catch (err) {
+        console.error("Error in fetchPortalTokenForPayment:", err)
+      }
+    }
+
+    void fetchPortalTokenForPayment()
+  }, [selectedPayment])
+
+  const formatWhatsAppNumber = (phone: string | null | undefined): string => {
+    if (!phone) return ""
+    const cleaned = phone.replace(/\D/g, "")
+    if (cleaned.length === 10) {
+      return `91${cleaned}`
+    }
+    return cleaned
+  }
+
+  const formatDateFriendly = (dateStr: string): string => {
+    try {
+      const date = new Date(dateStr)
+      if (isNaN(date.getTime())) return dateStr
+      return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+    } catch {
+      return dateStr
+    }
+  }
+
+  const MONTH_NAMES = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ]
+
+  const getWhatsAppMessage = (payment: Payment, portalTokenStr: string) => {
+    const tenantName = payment.tenants_table?.name || "Tenant"
+    const amount = payment.total_amount
+    const monthName = MONTH_NAMES[payment.month - 1] || "Current Month"
+    const year = payment.year
+    const formattedDueDate = formatDateFriendly(payment.due_date)
+    const paymentLink = `https://staytraq.vercel.app/pay/${portalTokenStr}`
+
+    if (payment.status === "late") {
+      return `Hi ${tenantName},\n\nThis is a reminder that your rent payment of ₹${amount} for ${monthName} ${year} was due on ${formattedDueDate} and is currently overdue.\n\nPlease clear the outstanding amount as soon as possible and submit the payment proof here: ${paymentLink}\n\nIf you have already paid, please ignore this message. Thank you!`
+    } else {
+      return `Hi ${tenantName},\n\nThis is a friendly reminder that your rent payment of ₹${amount} for ${monthName} ${year} is due on ${formattedDueDate}.\n\nYou can view your invoice and submit the payment proof directly here: ${paymentLink}\n\nThank you!`
+    }
+  }
+
+  const handleWhatsAppReminder = async () => {
+    if (!selectedPayment) return
+    
+    if (!selectedPaymentPortalToken) {
+      showToast("Generating link...", "Payment portal link is being fetched/created. Please try again.", "info")
+      return
+    }
+
+    const phone = selectedPayment.tenants_table?.mobile_number
+    if (!phone) {
+      Alert.alert("Missing Phone Number", "This tenant does not have a registered mobile number.")
+      return
+    }
+
+    const formattedPhone = formatWhatsAppNumber(phone)
+    const message = getWhatsAppMessage(selectedPayment, selectedPaymentPortalToken)
+    const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
+
+    try {
+      await Linking.openURL(url)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    } catch (err) {
+      console.error("Error opening WhatsApp:", err)
+      Alert.alert("Error", "Could not launch WhatsApp or open the link.")
+    }
+  }
+
   // Double-tap or maximize trigger for screenshot fullscreen zoom
   const handleToggleFullscreenImage = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -536,22 +677,24 @@ export default function PaymentsScreen() {
     }
   }
 
-  // Complete Mark as Paid flow with immediate haptic response
-  const handleMarkPaid = async (paymentId: number, name: string, roomNum: string) => {
+  // Complete Mark as Paid flow with custom payment method selection
+  const confirmMarkPaid = async (paymentId: number, method: "UPI" | "Cash") => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
     
-    // Optimistic UI updates
+    setMarkPaidModalVisible(false)
     setMarkingPaidId(paymentId)
+    
+    // Optimistic UI updates
     setPayments((prev) =>
       prev.map((p) =>
         p.id === paymentId
-          ? { ...p, status: "paid" as const, paid_at: new Date().toISOString() }
+          ? { ...p, status: "paid" as const, paid_at: new Date().toISOString(), payment_method: method }
           : p
       )
     )
     if (selectedPayment?.id === paymentId) {
       setSelectedPayment((prev) =>
-        prev ? { ...prev, status: "paid" as const, paid_at: new Date().toISOString() } : null
+        prev ? { ...prev, status: "paid" as const, paid_at: new Date().toISOString(), payment_method: method } : null
       )
     }
 
@@ -564,7 +707,8 @@ export default function PaymentsScreen() {
           .update({
             status: "paid",
             paid_at: now,
-            verified_at: now
+            verified_at: now,
+            payment_method: method
           })
           .eq("id", paymentId)
 
@@ -577,9 +721,10 @@ export default function PaymentsScreen() {
           action: "proof_approved",
           old_status: "pending",
           new_status: "paid",
-          notes: "Marked paid manually by owner"
+          notes: `Marked paid manually by owner via ${method}`
         })
 
+        showToast("Payment Confirmed", `Rent marked as paid via ${method} successfully.`, "success")
       } catch (err) {
         console.error("Failed manual verification updates:", err)
         showToast("Server Error", "Could not synchronize payment status.", "error")
@@ -691,26 +836,14 @@ export default function PaymentsScreen() {
     showToast("Link Copied", "Portal link copied to clipboard.", "success")
   }
 
-  // Custom picker selection pre-filling occupants details
-  const handleSelectOccupant = (tenantId: number) => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    setFormTenantId(tenantId.toString())
-    
-    const tenant = occupants.find((o) => o.id === tenantId)
-    if (tenant) {
-      const baseRentVal = tenant.rooms_table?.rent_amount ?? 0
-      const extraVal = tenant.extra_charges ?? 0
-      setFormBaseRent(baseRentVal.toString())
-      setFormExtraCharges(extraVal.toString())
-    }
-  }
-
   const openAddModal = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     setEditingPayment(null)
     setFormTenantId("")
+    setSelectedTenantIds([])
+    setTenantSearchQuery("")
     setFormBaseRent("")
-    setFormExtraCharges("0")
+    setFormExtraCharges("")
     
     const d = new Date()
     setFormMonth((d.getMonth() + 1).toString())
@@ -729,6 +862,8 @@ export default function PaymentsScreen() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     setEditingPayment(payment)
     setFormTenantId(payment.tenant_id.toString())
+    setSelectedTenantIds([payment.tenant_id])
+    setTenantSearchQuery("")
     setFormBaseRent(payment.rent_amount.toString())
     setFormExtraCharges((payment.extra_charges ?? 0).toString())
     setFormMonth(payment.month.toString())
@@ -747,41 +882,64 @@ export default function PaymentsScreen() {
   const handleSavePayment = async () => {
     if (!user?.id) return
 
-    if (!formTenantId) {
-      setFormError("Occupant assignment is required.")
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      return
-    }
-
-    if (!formBaseRent.trim() || isNaN(Number(formBaseRent))) {
-      setFormError("Base rent amount must be a valid number.")
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      return
+    if (editingPayment) {
+      if (!formTenantId) {
+        setFormError("Occupant assignment is required.")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        return
+      }
+      if (!formBaseRent.trim() || isNaN(Number(formBaseRent))) {
+        setFormError("Base rent amount must be a valid number.")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        return
+      }
+    } else {
+      if (selectedTenantIds.length === 0) {
+        setFormError("Select at least one tenant.")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        return
+      }
+      if (formBaseRent.trim() && isNaN(Number(formBaseRent))) {
+        setFormError("Base rent amount must be a valid number.")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        return
+      }
+      if (formExtraCharges.trim() && isNaN(Number(formExtraCharges))) {
+        setFormError("Extra charges must be a valid number.")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        return
+      }
     }
 
     try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
       
-      const rentAmt = parseFloat(formBaseRent)
-      const extraChargesAmt = parseFloat(formExtraCharges) || 0
-      const totalAmount = rentAmt + extraChargesAmt
-
-      const payload = {
-        tenant_id: parseInt(formTenantId, 10),
-        rent_amount: rentAmt,
-        extra_charges: extraChargesAmt,
-        total_amount: totalAmount,
-        month: parseInt(formMonth, 10),
-        year: parseInt(formYear, 10),
-        due_date: formDueDate,
-        status: formStatus,
-        payment_method: formPaymentMethod.trim() || null,
-        utr_number: formUtrNumber.trim() || null,
-        paid_at: formStatus === "paid" ? (formPaymentDate ? `${formPaymentDate}T12:00:00Z` : new Date().toISOString()) : null,
-        owner_id: user.id
-      }
-
       if (editingPayment) {
+        const rentAmt = parseFloat(formBaseRent)
+        const extraChargesAmt = parseFloat(formExtraCharges) || 0
+        const totalAmount = rentAmt + extraChargesAmt
+
+        let finalStatus = formStatus
+        if (formStatus === "pending" || formStatus === "late") {
+          const todayStr = new Date().toISOString().split("T")[0]
+          finalStatus = formDueDate < todayStr ? "late" : "pending"
+        }
+
+        const payload = {
+          tenant_id: parseInt(formTenantId, 10),
+          rent_amount: rentAmt,
+          extra_charges: extraChargesAmt,
+          total_amount: totalAmount,
+          month: parseInt(formMonth, 10),
+          year: parseInt(formYear, 10),
+          due_date: formDueDate,
+          status: finalStatus,
+          payment_method: formPaymentMethod.trim() || null,
+          utr_number: formUtrNumber.trim() || null,
+          paid_at: finalStatus === "paid" ? (formPaymentDate ? `${formPaymentDate}T12:00:00Z` : new Date().toISOString()) : null,
+          owner_id: user.id
+        }
+
         const { error } = await (supabase as any)
           .from("payments")
           .update(payload)
@@ -789,14 +947,59 @@ export default function PaymentsScreen() {
 
         if (error) throw error
       } else {
+        const currentMonth = new Date().getMonth() + 1
+        const currentYear = new Date().getFullYear()
+
+        const payloads = selectedTenantIds.map((tId) => {
+          const tenant = occupants.find((o) => o.id === tId)
+          
+          let rentAmt = parseFloat(formBaseRent)
+          if (isNaN(rentAmt)) {
+            rentAmt = tenant?.rooms_table?.rent_amount ?? 0
+          }
+
+          let extraChargesAmt = parseFloat(formExtraCharges)
+          if (isNaN(extraChargesAmt)) {
+            extraChargesAmt = tenant?.extra_charges ?? 0
+          }
+
+          const totalAmount = rentAmt + extraChargesAmt
+          
+          const todayStr = new Date().toISOString().split("T")[0]
+          const finalStatus = formDueDate < todayStr ? "late" : "pending"
+
+          return {
+            tenant_id: tId,
+            rent_amount: rentAmt,
+            extra_charges: extraChargesAmt,
+            total_amount: totalAmount,
+            month: currentMonth,
+            year: currentYear,
+            due_date: formDueDate,
+            status: finalStatus,
+            owner_id: user.id
+          }
+        })
+
         const { error } = await (supabase as any)
           .from("payments")
-          .insert(payload)
+          .insert(payloads)
 
         if (error) throw error
       }
 
       setFormModalVisible(false)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      if (editingPayment) {
+        showToast("Record Updated", "The billing record has been successfully updated.", "success")
+      } else {
+        const count = selectedTenantIds.length
+        showToast(
+          "Records Generated",
+          `Successfully created ${count} payment record${count > 1 ? "s" : ""} for the current billing period.`,
+          "success"
+        )
+      }
       void fetchPayments(true)
     } catch (err) {
       console.error("Save payment error:", err)
@@ -1279,7 +1482,12 @@ export default function PaymentsScreen() {
                   <View className="flex-row items-center flex-1 pr-3 pl-1">
                     {/* Mark paid checkbox */}
                     <TouchableOpacity
-                      onPress={() => handleMarkPaid(item.id, item.tenants_table?.name || "", item.tenants_table?.rooms_table?.room_number || "")}
+                      onPress={() => {
+                        setMarkingPaidPaymentId(item.id)
+                        setSelectedPaymentMethod("UPI")
+                        setDropdownOpen(false)
+                        setMarkPaidModalVisible(true)
+                      }}
                       disabled={isPaid || isMarkingPaid}
                       className={`h-7 w-7 rounded-full border items-center justify-center mr-3.5 ${
                         isPaid 
@@ -1654,6 +1862,16 @@ export default function PaymentsScreen() {
                     <Trash2 size={18} color="#ef4444" />
                   </TouchableOpacity>
 
+                  {/* WhatsApp Reminder Button */}
+                  {(selectedPayment.status === "pending" || selectedPayment.status === "late") && (
+                    <TouchableOpacity
+                      onPress={handleWhatsAppReminder}
+                      className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                    >
+                      <WhatsAppIcon size={18} color="#10b981" />
+                    </TouchableOpacity>
+                  )}
+
 
                   {/* Submitted State Approval Verification Controls */}
                   {selectedPayment.status === "submitted" && !rejectingMode ? (
@@ -1674,7 +1892,12 @@ export default function PaymentsScreen() {
                     </>
                   ) : selectedPayment.status !== "paid" ? (
                     <TouchableOpacity
-                      onPress={() => handleMarkPaid(selectedPayment.id, selectedPayment.tenants_table?.name || "", selectedPayment.tenants_table?.rooms_table?.room_number || "")}
+                      onPress={() => {
+                        setMarkingPaidPaymentId(selectedPayment.id)
+                        setSelectedPaymentMethod("UPI")
+                        setDropdownOpen(false)
+                        setMarkPaidModalVisible(true)
+                      }}
                       className="flex-1 bg-success rounded-xl h-12 items-center justify-center active:scale-95 shadow-md shadow-success/20"
                     >
                       <Text className="text-white font-black text-sm">Mark as Paid</Text>
@@ -1782,7 +2005,21 @@ export default function PaymentsScreen() {
         onRequestClose={() => setFormModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 justify-end">
-          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[88%] border-t border-border dark:border-border-dark p-6">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={0}
+            className="w-full"
+          >
+            {(() => {
+              const sheetMax = Math.min(
+                height * 0.92,
+                keyboardHeight > 0 ? height - keyboardHeight - insets.top : height * 0.88
+              )
+              return (
+                <View
+                  style={{ maxHeight: sheetMax }}
+                  className="bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark p-6"
+                >
             {/* Form Header */}
             <View className="flex-row justify-between items-center mb-5">
               <View>
@@ -1807,39 +2044,137 @@ export default function PaymentsScreen() {
 
             <KeyboardAwareScrollView 
               showsVerticalScrollIndicator={false} 
+              disableKeyboardPadding={true}
               contentContainerStyle={{ gap: 16, paddingBottom: 36 }} 
               className="mb-6"
+              keyboardShouldPersistTaps="handled"
             >
               {/* Select Occupant */}
-              <View>
-                <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Assign Occupant</Text>
-                {occupants.length === 0 ? (
-                  <Text className="text-xs text-destructive font-semibold">No active tenants found. Add an occupant profile first!</Text>
-                ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} className="flex-row py-1">
-                    {occupants.map((occ) => (
-                      <TouchableOpacity
-                        key={occ.id}
-                        onPress={() => handleSelectOccupant(occ.id)}
-                        className={`px-4 py-2.5 rounded-xl mr-2 border ${
-                          formTenantId === occ.id.toString()
-                            ? "bg-primary/10 border-primary"
-                            : "bg-background dark:bg-background-dark border-border dark:border-border-dark"
-                        }`}
-                      >
-                        <Text className={`text-xs font-extrabold ${formTenantId === occ.id.toString() ? "text-primary" : "text-muted"}`}>
-                          {occ.name} (Room {occ.rooms_table?.room_number || "—"})
-                        </Text>
+              {editingPayment ? (
+                <View>
+                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Occupant</Text>
+                  <View className="px-3.5 py-2.5 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-xl h-11 justify-center">
+                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">
+                      {editingPayment.tenants_table?.name || "Occupant"} (Room {editingPayment.tenants_table?.rooms_table?.room_number || "—"})
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                <View className="gap-3">
+                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Assign Occupants</Text>
+                  
+                  {/* Search Input */}
+                  <View className="flex-row items-center border border-border dark:border-border-dark bg-background dark:bg-background-dark rounded-xl px-3 h-11">
+                    <View className="mr-2">
+                      <Search size={16} color="#9ca3af" />
+                    </View>
+                    <TextInput
+                      value={tenantSearchQuery}
+                      onChangeText={setTenantSearchQuery}
+                      placeholder="Search by name or room..."
+                      placeholderTextColor="#9ca3af"
+                      className="flex-1 text-sm text-foreground dark:text-foreground-dark py-1"
+                    />
+                    {tenantSearchQuery.length > 0 && (
+                      <TouchableOpacity onPress={() => setTenantSearchQuery("")}>
+                        <X size={16} color="#9ca3af" />
                       </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                )}
-              </View>
+                    )}
+                  </View>
+
+                  {/* Search Results Dropdown */}
+                  {tenantSearchQuery.length > 0 && (() => {
+                    const filtered = occupants.filter((occ) => {
+                      const nameMatch = occ.name.toLowerCase().includes(tenantSearchQuery.toLowerCase())
+                      const roomMatch = (occ.rooms_table?.room_number || "").toLowerCase().includes(tenantSearchQuery.toLowerCase())
+                      return nameMatch || roomMatch
+                    })
+
+                    return (
+                      <View className="border border-border dark:border-border-dark bg-background dark:bg-background-dark rounded-xl overflow-hidden max-h-40">
+                        <ScrollView nestedScrollEnabled={true} keyboardShouldPersistTaps="handled">
+                          {filtered.length === 0 ? (
+                            <View className="p-3">
+                              <Text className="text-xs text-muted text-center font-medium">No matching active tenants found</Text>
+                            </View>
+                          ) : (
+                            filtered.map((occ) => {
+                              const isSelected = selectedTenantIds.includes(occ.id)
+                              return (
+                                <TouchableOpacity
+                                  key={occ.id}
+                                  onPress={() => {
+                                    if (isSelected) {
+                                      setSelectedTenantIds((prev) => prev.filter((id) => id !== occ.id))
+                                    } else {
+                                      setSelectedTenantIds((prev) => [...prev, occ.id])
+                                    }
+                                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                  }}
+                                  className="px-4 py-3 border-b border-border/40 dark:border-border-dark/40 flex-row justify-between items-center active:bg-muted/10"
+                                >
+                                  <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                                    {occ.name} (Room {occ.rooms_table?.room_number || "—"})
+                                  </Text>
+                                  {isSelected ? (
+                                    <Check size={14} color="#10b981" strokeWidth={3} />
+                                  ) : (
+                                    <Plus size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                                  )}
+                                </TouchableOpacity>
+                              )
+                            })
+                          )}
+                        </ScrollView>
+                      </View>
+                    )
+                  })()}
+
+                  {/* Selected Tenants chips */}
+                  {selectedTenantIds.length > 0 && (
+                    <View className="gap-2">
+                      <Text className="text-[9px] font-extrabold uppercase tracking-widest text-muted">Selected Tenants ({selectedTenantIds.length})</Text>
+                      <View className="flex-row flex-wrap gap-2">
+                        {selectedTenantIds.map((tId) => {
+                          const tenant = occupants.find((o) => o.id === tId)
+                          if (!tenant) return null
+                          return (
+                            <View
+                              key={tId}
+                              className="flex-row items-center bg-card dark:bg-card-dark border border-border dark:border-border-dark px-3 py-1.5 rounded-xl shadow-sm"
+                            >
+                              <Text className="text-xs font-bold text-foreground dark:text-foreground-dark mr-2.5">
+                                {tenant.name}
+                              </Text>
+                              <View className="bg-primary/10 border border-primary/20 px-1.5 py-0.5 rounded-md mr-2">
+                                <Text className="text-[9px] font-black text-primary uppercase">
+                                  {tenant.rooms_table?.room_number || "—"}
+                                </Text>
+                              </View>
+                              <TouchableOpacity
+                                onPress={() => {
+                                  setSelectedTenantIds((prev) => prev.filter((id) => id !== tId))
+                                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                }}
+                                className="h-5 w-5 rounded-md bg-muted/10 items-center justify-center active:bg-muted/20"
+                              >
+                                <X size={10} color={isDark ? "#94a3b8" : "#64748b"} strokeWidth={3} />
+                              </TouchableOpacity>
+                            </View>
+                          )
+                        })}
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
 
               {/* Grid: Rent & Extra Charges */}
               <View className="flex-row gap-3">
                 <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Base Rent Amount (₹)</Text>
+                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">
+                    {editingPayment ? "Base Rent Amount (₹)" : "Rent (blank for default)"}
+                  </Text>
                   <TextInput
                     ref={rentInput.ref}
                     onFocus={rentInput.onFocus}
@@ -1853,7 +2188,9 @@ export default function PaymentsScreen() {
                 </View>
 
                 <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Extra Charges (₹)</Text>
+                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">
+                    {editingPayment ? "Extra Charges (₹)" : "Extra (blank for default)"}
+                  </Text>
                   <TextInput
                     ref={extraInput.ref}
                     onFocus={extraInput.onFocus}
@@ -1867,77 +2204,13 @@ export default function PaymentsScreen() {
                 </View>
               </View>
 
-              {/* Grid: Billing month & year */}
-              <View className="flex-row gap-3">
-                <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Billing Month (1-12)</Text>
-                  <TextInput
-                    ref={monthInput.ref}
-                    onFocus={monthInput.onFocus}
-                    value={formMonth}
-                    onChangeText={setFormMonth}
-                    keyboardType="numeric"
-                    placeholder="5"
-                    placeholderTextColor="#9ca3af"
-                    className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark h-11"
-                  />
-                </View>
-
-                <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Billing Year (YYYY)</Text>
-                  <TextInput
-                    ref={yearInput.ref}
-                    onFocus={yearInput.onFocus}
-                    value={formYear}
-                    onChangeText={setFormYear}
-                    keyboardType="numeric"
-                    placeholder="2026"
-                    placeholderTextColor="#9ca3af"
-                    className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark h-11"
-                  />
-                </View>
-              </View>
-
               {/* Grid: Due Date */}
-              <View>
-                <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Rent Due Date</Text>
-                <TextInput
-                  ref={dateInput.ref}
-                  onFocus={dateInput.onFocus}
-                  value={formDueDate}
-                  onChangeText={setFormDueDate}
-                  placeholder="YYYY-MM-DD"
-                  placeholderTextColor="#9ca3af"
-                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark h-11"
-                />
-              </View>
-
-              {/* Payment Status Picker */}
-              <View>
-                <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Payment Status</Text>
-                <View className="flex-row bg-background dark:bg-background-dark p-1 rounded-xl border border-border/50 dark:border-border-dark/50 flex-wrap">
-                  {["pending", "paid", "late", "submitted"].map((st) => (
-                    <TouchableOpacity
-                      key={st}
-                      onPress={() => {
-                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                        setFormStatus(st as Payment["status"])
-                      }}
-                      className={`flex-1 min-w-[70px] py-2 rounded-lg items-center justify-center ${
-                        formStatus === st
-                          ? "bg-primary"
-                          : "bg-transparent"
-                      }`}
-                    >
-                      <Text className={`text-[11px] font-bold capitalize ${
-                        formStatus === st ? "text-white" : "text-muted"
-                      }`}>
-                        {st}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
+              <ThemeDatePicker
+                value={formDueDate}
+                onChange={setFormDueDate}
+                label="Rent Due Date"
+                placeholder="YYYY-MM-DD"
+              />
 
               {/* Conditional parameters when paid or submitted */}
               {(formStatus === "paid" || formStatus === "submitted") && (
@@ -1972,18 +2245,12 @@ export default function PaymentsScreen() {
 
                   {/* Paid Date */}
                   {formStatus === "paid" && (
-                    <View>
-                      <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Payment Date</Text>
-                      <TextInput
-                        ref={payDateInput.ref}
-                        onFocus={payDateInput.onFocus}
-                        value={formPaymentDate}
-                        onChangeText={setFormPaymentDate}
-                        placeholder="YYYY-MM-DD"
-                        placeholderTextColor="#9ca3af"
-                        className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark h-11"
-                      />
-                    </View>
+                    <ThemeDatePicker
+                      value={formPaymentDate}
+                      onChange={setFormPaymentDate}
+                      label="Payment Date"
+                      placeholder="YYYY-MM-DD"
+                    />
                   )}
                 </View>
               )}
@@ -2005,7 +2272,10 @@ export default function PaymentsScreen() {
                 <Text className="text-white font-bold text-sm">Save Transaction</Text>
               </TouchableOpacity>
             </View>
-          </View>
+                </View>
+              )
+            })()}
+          </KeyboardAvoidingView>
           {formModalVisible && renderToast()}
         </View>
       </Modal>
@@ -2163,8 +2433,87 @@ export default function PaymentsScreen() {
         </View>
       </Modal>
 
+      {/* Payment Method Picker Modal */}
+      <Modal
+        visible={markPaidModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMarkPaidModalVisible(false)}
+      >
+        <View className="flex-1 bg-black/60 backdrop-blur-sm justify-center items-center p-6">
+          <View className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-sm p-6 shadow-2xl relative">
+            
+            {/* Title & Message */}
+            <Text className="text-[17px] font-black text-slate-900 dark:text-white mb-2 mt-2 text-center">
+              Confirm Payment
+            </Text>
+            <Text className="text-xs text-slate-500 dark:text-slate-400 font-bold mb-5 text-center leading-relaxed">
+              Select the payment method used by the occupant to clear this bill.
+            </Text>
+
+            {/* Dropdown Selector */}
+            <View style={{ zIndex: 100 }} className="mb-6 relative w-full">
+              <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Payment Method</Text>
+              
+              <TouchableOpacity
+                onPress={() => setDropdownOpen(!dropdownOpen)}
+                className="w-full flex-row justify-between items-center bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3.5"
+                activeOpacity={0.8}
+              >
+                <Text className="text-xs font-black text-slate-800 dark:text-slate-200">{selectedPaymentMethod}</Text>
+                <ChevronRight 
+                  size={16} 
+                  color={isDark ? "#94a3b8" : "#64748b"} 
+                  style={{ transform: [{ rotate: dropdownOpen ? "90deg" : "0deg" }] }} 
+                />
+              </TouchableOpacity>
+
+              {dropdownOpen && (
+                <View className="w-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 rounded-xl mt-1.5 overflow-hidden shadow-lg absolute top-[62px] left-0 right-0 z-50">
+                  {["UPI", "Cash"].map((method) => (
+                    <TouchableOpacity
+                      key={method}
+                      onPress={() => {
+                        setSelectedPaymentMethod(method as "UPI" | "Cash")
+                        setDropdownOpen(false)
+                      }}
+                      className="w-full px-4 py-3 border-b border-slate-100 dark:border-slate-700 last:border-b-0 flex-row justify-between items-center active:bg-slate-50 dark:active:bg-slate-700"
+                    >
+                      <Text className={`text-xs font-bold ${selectedPaymentMethod === method ? "text-primary font-black" : "text-slate-700 dark:text-slate-300"}`}>{method}</Text>
+                      {selectedPaymentMethod === method && <Check size={14} color="#10b981" strokeWidth={3} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* Buttons Row */}
+            <View className="flex-row gap-3">
+              <TouchableOpacity
+                onPress={() => setMarkPaidModalVisible(false)}
+                className="flex-1 border border-border rounded-xl h-11 items-center justify-center active:scale-95"
+              >
+                <Text className="text-muted font-bold text-sm">Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity
+                onPress={() => {
+                  if (markingPaidPaymentId) {
+                    void confirmMarkPaid(markingPaidPaymentId, selectedPaymentMethod)
+                  }
+                }}
+                className="flex-1 bg-success rounded-xl h-11 items-center justify-center active:scale-95 shadow-md shadow-success/20"
+              >
+                <Text className="text-white font-bold text-sm">Confirm</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          {markPaidModalVisible && renderToast()}
+        </View>
+      </Modal>
+
       {/* Toast Notification Overlay */}
-      {!(reminderModalVisible || detailModalVisible || formModalVisible || deleteConfirmVisible) && renderToast()}
+      {!(reminderModalVisible || detailModalVisible || formModalVisible || deleteConfirmVisible || markPaidModalVisible) && renderToast()}
     </SafeAreaView>
   )
 }
