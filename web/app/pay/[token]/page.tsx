@@ -520,7 +520,10 @@ export default function TenantPaymentPage() {
                               {statusLabel}
                             </Badge>
                           </div>
-                          <p className="text-xs text-neutral-500 mt-1">
+                          <p className="text-xs text-neutral-300 mt-1.5 font-medium">
+                            Billing Month: {months[p.month - 1]} {p.year}
+                          </p>
+                          <p className="text-xs text-neutral-500 mt-0.5">
                             Due: {new Date(p.due_date).toLocaleDateString()} • Code: {p.payment_code || 'PAY-XXXXXX'}
                           </p>
                         </div>

@@ -35,18 +35,16 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid or expired payment portal' }, { status: 404 })
     }
 
-    // 2. Fetch the payment record and verify it matches the owner, month, and year constraints
+    // 2. Fetch the payment record and verify it matches the owner constraint
     const { data: payment, error: paymentError } = await supabase
       .from('payments')
       .select('id, owner_id, status, month, year')
       .eq('id', paymentId)
       .eq('owner_id', linkRecord.owner_id)
-      .eq('month', linkRecord.month)
-      .eq('year', linkRecord.year)
       .single()
 
     if (paymentError || !payment) {
-      return NextResponse.json({ error: 'Payment invoice not found or does not match the active billing month' }, { status: 404 })
+      return NextResponse.json({ error: 'Payment invoice not found or does not belong to this property' }, { status: 404 })
     }
 
     if (payment.status === 'paid') {

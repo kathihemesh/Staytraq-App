@@ -19,6 +19,13 @@ export type InlineSelectOption = {
   value: string
   shortLabel: string
   listLabel?: string
+  count?: number
+  colorClass?: string
+  bgClass?: string
+  borderClass?: string
+  circleBgClass?: string
+  circleTextClass?: string
+  iconColor?: string
 }
 
 type InlineSelectProps = {
@@ -41,6 +48,7 @@ type InlineSelectProps = {
   overlay?: boolean
   /** When set, re-measure overlay position on keyboard show/hide (keeps menu aligned). */
   keyboardHeight?: number
+  triggerHeightClassName?: string
 }
 
 type MenuLayout = { x: number; y: number; width: number; height: number }
@@ -63,6 +71,7 @@ export function InlineSelect({
   footer,
   overlay = false,
   keyboardHeight = 0,
+  triggerHeightClassName,
 }: InlineSelectProps) {
   const triggerRef = useRef<View>(null)
   const [menuLayout, setMenuLayout] = useState<MenuLayout | null>(null)
@@ -114,13 +123,35 @@ export function InlineSelect({
   const showEmphasisBorder = open || (isActive && hasSelection)
   const showPrimaryTint = usePrimaryAccent && (open || (isActive && hasSelection))
 
-  let triggerClassName = "h-11 flex-row items-center justify-center rounded-xl px-4"
-  if (showPrimaryTint) {
-    triggerClassName += " border-2 border-primary bg-primary/10 dark:bg-primary/20"
+  const selectedHasStyles = selected && (selected.bgClass || selected.borderClass || selected.colorClass)
+
+  let triggerClassName = clsx(
+    "flex-row items-center justify-center rounded-xl px-4",
+    triggerHeightClassName || "h-11"
+  )
+
+  if (isActive && hasSelection && selectedHasStyles && selected) {
+    triggerClassName = clsx(
+      triggerClassName,
+      "border-2",
+      selected.borderClass || "border-primary",
+      selected.bgClass || "bg-primary/10 dark:bg-primary/20"
+    )
+  } else if (showPrimaryTint) {
+    triggerClassName = clsx(
+      triggerClassName,
+      "border-2 border-primary bg-primary/10 dark:bg-primary/20"
+    )
   } else if (showEmphasisBorder) {
-    triggerClassName += " border-2 border-slate-200 bg-slate-50 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+    triggerClassName = clsx(
+      triggerClassName,
+      "border-2 border-slate-200 bg-slate-50 shadow-sm dark:border-slate-700 dark:bg-slate-900"
+    )
   } else {
-    triggerClassName += " border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+    triggerClassName = clsx(
+      triggerClassName,
+      "border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+    )
   }
 
   const renderOptions = () => (
@@ -135,19 +166,39 @@ export function InlineSelect({
               onOpenChange?.(false)
             }}
             className={clsx(
-              "flex-row items-center justify-center border-b border-slate-100 px-3 py-3 dark:border-slate-800",
+              "flex-row items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800",
               sel ? "bg-slate-50 dark:bg-slate-900" : "",
             )}
           >
             <Text
-              style={sel && usePrimaryAccent ? { color: primaryColor } : undefined}
+              style={sel && usePrimaryAccent && !opt.colorClass ? { color: primaryColor } : undefined}
               className={clsx(
                 "text-[13px] font-semibold",
-                sel && usePrimaryAccent ? "" : "text-slate-800 dark:text-slate-100",
+                sel && usePrimaryAccent
+                  ? opt.colorClass || ""
+                  : opt.colorClass || "text-slate-800 dark:text-slate-100",
               )}
             >
               {opt.listLabel ?? opt.shortLabel}
             </Text>
+
+            {typeof opt.count === "number" && (
+              <View
+                className={clsx(
+                  "h-5 min-w-[20px] px-1 rounded-full items-center justify-center ml-2 border border-slate-200 dark:border-slate-700",
+                  opt.circleBgClass || "bg-slate-100 dark:bg-slate-800"
+                )}
+              >
+                <Text
+                  className={clsx(
+                    "text-[10px] font-extrabold",
+                    opt.circleTextClass || "text-slate-600 dark:text-slate-400"
+                  )}
+                >
+                  {opt.count}
+                </Text>
+              </View>
+            )}
           </TouchableOpacity>
         )
       })}
@@ -173,7 +224,9 @@ export function InlineSelect({
           {renderOptions()}
         </ScrollView>
       ) : (
-        renderOptions()
+        <ScrollView style={{ maxHeight: 220 }} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+          {renderOptions()}
+        </ScrollView>
       )}
     </Animated.View>
   )
@@ -196,14 +249,43 @@ export function InlineSelect({
         <Text
           className={clsx(
             "text-[13px] font-bold",
-            showPrimaryTint ? "text-slate-800 dark:text-slate-100" : "text-slate-600 dark:text-slate-300",
+            isActive && hasSelection && selected?.colorClass
+              ? selected.colorClass
+              : showPrimaryTint
+              ? "text-slate-800 dark:text-slate-100"
+              : "text-slate-600 dark:text-slate-300",
           )}
         >
           {triggerLabel}
         </Text>
+
+        {hasSelection && selected && typeof selected.count === "number" && (
+          <View
+            className={clsx(
+              "h-4 min-w-[16px] px-1 rounded-full items-center justify-center ml-1.5 border border-slate-200 dark:border-slate-700",
+              selected.circleBgClass || "bg-slate-200 dark:bg-slate-700"
+            )}
+          >
+            <Text
+              className={clsx(
+                "text-[9px] font-black",
+                selected.circleTextClass || "text-slate-700 dark:text-slate-300"
+              )}
+            >
+              {selected.count}
+            </Text>
+          </View>
+        )}
+
         <ChevronDown
           size={14}
-          color={showPrimaryTint ? (isDark ? "#e2e8f0" : "#334155") : "#64748b"}
+          color={
+            isActive && hasSelection && selected?.iconColor
+              ? selected.iconColor
+              : showPrimaryTint
+              ? (isDark ? "#e2e8f0" : "#334155")
+              : "#64748b"
+          }
           style={{ marginLeft: 4, transform: [{ rotate: open ? "180deg" : "0deg" }] }}
         />
       </TouchableOpacity>

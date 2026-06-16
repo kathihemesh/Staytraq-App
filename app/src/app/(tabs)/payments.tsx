@@ -53,6 +53,7 @@ import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } fro
 import { LinearGradient } from "expo-linear-gradient"
 import Svg, { Path } from "react-native-svg"
 import ThemeDatePicker from "@/components/ui/theme-date-picker"
+import { InlineSelect } from "@/components/ui/inline-select"
 
 // Match database schema accurately
 type Payment = {
@@ -218,6 +219,7 @@ export default function PaymentsScreen() {
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"UPI" | "Cash">("UPI")
   const [markingPaidPaymentId, setMarkingPaidPaymentId] = useState<number | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null)
 
   const [formModalVisible, setFormModalVisible] = useState(false)
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null)
@@ -768,6 +770,7 @@ export default function PaymentsScreen() {
       })
 
       setDetailModalVisible(false)
+      showToast("Payment Approved", "The payment proof has been approved.", "success")
       void fetchPayments(true)
     } catch (err) {
       console.error("Approve payment error:", err)
@@ -809,6 +812,9 @@ export default function PaymentsScreen() {
       })
 
       setDetailModalVisible(false)
+      setRejectingMode(false)
+      setRejectNotes("")
+      showToast("Payment Rejected", "The payment proof has been rejected.", "warning")
       void fetchPayments(true)
     } catch (err) {
       console.error("Reject payment error:", err)
@@ -1074,6 +1080,60 @@ export default function PaymentsScreen() {
     })
   }, [payments, selectedMonth])
 
+  const statusFilterOptions = useMemo(() => {
+    return [
+      { 
+        value: "all", 
+        shortLabel: "All", 
+        count: currentMonthPayments.length
+      },
+      { 
+        value: "paid", 
+        shortLabel: "Paid", 
+        count: currentMonthPayments.filter(p => p.status === "paid").length,
+        colorClass: "text-emerald-600 dark:text-emerald-300",
+        bgClass: "bg-emerald-50 dark:bg-emerald-500/10",
+        borderClass: "border-emerald-200 dark:border-emerald-500/30",
+        circleBgClass: "bg-emerald-100 dark:bg-emerald-500/25",
+        circleTextClass: "text-emerald-700 dark:text-emerald-300",
+        iconColor: isDark ? "#34d399" : "#10b981"
+      },
+      { 
+        value: "pending", 
+        shortLabel: "Pending", 
+        count: currentMonthPayments.filter(p => p.status === "pending").length,
+        colorClass: "text-amber-600 dark:text-amber-300",
+        bgClass: "bg-amber-50 dark:bg-amber-500/10",
+        borderClass: "border-amber-200 dark:border-amber-500/30",
+        circleBgClass: "bg-amber-100 dark:bg-amber-500/25",
+        circleTextClass: "text-amber-700 dark:text-amber-300",
+        iconColor: isDark ? "#fbbf24" : "#f59e0b"
+      },
+      { 
+        value: "late", 
+        shortLabel: "Late", 
+        count: currentMonthPayments.filter(p => p.status === "late").length,
+        colorClass: "text-rose-600 dark:text-rose-300",
+        bgClass: "bg-rose-50 dark:bg-rose-500/10",
+        borderClass: "border-rose-200 dark:border-rose-500/30",
+        circleBgClass: "bg-rose-100 dark:bg-rose-500/25",
+        circleTextClass: "text-rose-700 dark:text-rose-300",
+        iconColor: isDark ? "#f87171" : "#f43f5e"
+      },
+      { 
+        value: "submitted", 
+        shortLabel: "Review", 
+        count: currentMonthPayments.filter(p => p.status === "submitted").length,
+        colorClass: "text-purple-600 dark:text-purple-300",
+        bgClass: "bg-purple-50 dark:bg-purple-500/10",
+        borderClass: "border-purple-200 dark:border-purple-500/30",
+        circleBgClass: "bg-purple-100 dark:bg-purple-500/25",
+        circleTextClass: "text-purple-700 dark:text-purple-300",
+        iconColor: isDark ? "#c084fc" : "#a855f7"
+      },
+    ]
+  }, [currentMonthPayments, isDark])
+
   const totalCollected = useMemo(() => {
     return currentMonthPayments
       .filter((p) => p.status === "paid")
@@ -1252,9 +1312,9 @@ export default function PaymentsScreen() {
         <View className="flex-row gap-2">
           <TouchableOpacity 
             onPress={openAddModal}
-            className="h-10 w-10 border border-primary/20 rounded-xl items-center justify-center bg-primary"
+            className="h-9 w-9 border border-primary/20 rounded-xl items-center justify-center bg-primary"
           >
-            <Plus size={18} color="#ffffff" strokeWidth={3} />
+            <Plus size={16} color="#ffffff" strokeWidth={3} />
           </TouchableOpacity>
 
           <TouchableOpacity 
@@ -1262,16 +1322,16 @@ export default function PaymentsScreen() {
               void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
               setReminderModalVisible(true)
             }}
-            className="h-10 w-10 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
+            className="h-9 w-9 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
           >
-            <MessageSquare size={16} color={isDark ? "#0091ff" : "#0071df"} />
+            <MessageSquare size={14} color={isDark ? "#0091ff" : "#0071df"} />
           </TouchableOpacity>
           
           <TouchableOpacity 
             onPress={onRefresh}
-            className="h-10 w-10 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
+            className="h-9 w-9 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
           >
-            <RefreshCw size={16} color={isDark ? "#0091ff" : "#0071df"} />
+            <RefreshCw size={14} color={isDark ? "#0091ff" : "#0071df"} />
           </TouchableOpacity>
         </View>
       </View>
@@ -1340,84 +1400,68 @@ export default function PaymentsScreen() {
       </View>
 
       {/* Filters & Search controls */}
-      <View className="px-6 mb-2 gap-2">
-        {/* Search & Month Filter Row */}
-        <View className="flex-row items-center gap-2">
-          {/* Search */}
-          <View className="flex-1 flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-1.5 shadow-sm">
-            <View className="mr-3">
-              <Search size={16} color="#9ca3af" />
-            </View>
-            <TextInput
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              placeholder="Search tenants or rooms..."
-              placeholderTextColor="#9ca3af"
-              className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={() => setSearchQuery("")}>
-                <X size={16} color="#9ca3af" />
-              </TouchableOpacity>
-            )}
+      <View style={{ zIndex: openDropdown ? 50 : 1 }} className="px-6 mb-3 gap-3">
+        {/* Row 1: Search */}
+        <View className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-1.5 shadow-sm">
+          <View className="mr-3">
+            <Search size={16} color="#9ca3af" />
           </View>
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search tenants or rooms..."
+            placeholderTextColor="#9ca3af"
+            className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")}>
+              <X size={16} color="#9ca3af" />
+            </TouchableOpacity>
+          )}
+        </View>
 
-          {/* Month selector button next to search bar */}
+        {/* Row 2: Month, Status Dropdown & Sort Actions */}
+        <View className="flex-row items-center gap-2">
+          {/* Month selector button */}
           <TouchableOpacity 
             onPress={() => setMonthPickerVisible(true)} 
-            className="bg-primary/10 border border-primary/20 px-3 py-1.5 rounded-2xl flex-row items-center gap-1.5 justify-center"
+            className="bg-primary/10 border border-primary/20 h-9 px-3 rounded-xl flex-row items-center gap-1.5 justify-center"
           >
             <Calendar size={13} color={isDark ? "#0091ff" : "#0071df"} />
             <Text className="text-[10px] font-black text-primary uppercase">
               {selectedMonth}
             </Text>
           </TouchableOpacity>
-        </View>
 
-        {/* Row 2: Status & Sort */}
-        <View className="flex-row justify-between items-center">
-          {/* Status Pills */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            className="flex-row mr-4 flex-1"
-            contentContainerStyle={{ alignItems: "center" }}
-          >
-            {["all", "paid", "pending", "late", "submitted"].map((status) => {
-              let badgeStyle = "bg-card dark:bg-card-dark border-border dark:border-border-dark text-muted"
-              if (statusFilter === status) {
-                if (status === "all") badgeStyle = "bg-primary border-primary text-white"
-                else if (status === "paid") badgeStyle = "bg-success border-success text-white"
-                else if (status === "pending") badgeStyle = "bg-warning border-warning text-white"
-                else if (status === "late") badgeStyle = "bg-destructive border-destructive text-white"
-                else if (status === "submitted") badgeStyle = "bg-purple-500 border-purple-500 text-white"
-              }
-              return (
-                <TouchableOpacity
-                  key={`${status}-${statusFilter === status}`}
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                    setStatusFilter(status)
-                  }}
-                  className={`px-3 py-1 border rounded-full mr-1.5 capitalize ${badgeStyle}`}
-                >
-                  <Text className={`text-[11px] font-bold ${statusFilter === status ? "text-white" : "text-muted"}`}>
-                    {status}
-                  </Text>
-                </TouchableOpacity>
-              )
-            })}
-          </ScrollView>
+          {/* Status Filter Dropdown Select */}
+          <InlineSelect
+            key={`filter-status-${statusFilter}-${openDropdown === "filter-status"}`}
+            options={statusFilterOptions}
+            value={statusFilter}
+            defaultTriggerLabel="Status"
+            accent="primary"
+            primaryColor={isDark ? "#0091ff" : "#0071df"}
+            isDark={isDark}
+            overlay={false}
+            triggerHeightClassName="h-9"
+            isActive={statusFilter !== "all"}
+            open={openDropdown === "filter-status"}
+            onOpenChange={(o) => {
+              void Haptics.selectionAsync()
+              setOpenDropdown(o ? "filter-status" : null)
+            }}
+            onChange={(v) => setStatusFilter(v)}
+          />
 
           {/* Sort Button */}
           <TouchableOpacity
             onPress={() => handleToggleSort(sortField === "amount" ? "dueDate" : "amount")}
-            className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark px-3 py-1.5 rounded-full shadow-sm"
+            className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark h-9 px-3 rounded-xl shadow-sm"
           >
             <Text className="text-[11px] font-bold text-muted mr-1.5">
               {sortField === "amount" ? "Amount" : "Due Date"}
             </Text>
-            <ArrowUpDown size={12} color="#9ca3af" />
+            <ArrowUpDown size={11} color="#9ca3af" />
           </TouchableOpacity>
         </View>
       </View>
@@ -1446,22 +1490,26 @@ export default function PaymentsScreen() {
               const isLate = item.status === "late"
               const isMarkingPaid = markingPaidId === item.id
 
-              let textBadgeColor = "text-warning bg-warning/10"
-              let accentColor = "bg-warning"
-              let textAmountColor = "text-warning"
+              let badgeBgBorder = "bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30"
+              let badgeTextColor = "text-amber-600 dark:text-amber-400"
+              let accentColor = "bg-amber-500"
+              let textAmountColor = "text-amber-600 dark:text-amber-400"
               
               if (isPaid) {
-                textBadgeColor = "text-success bg-success/10"
-                accentColor = "bg-success"
-                textAmountColor = "text-success"
+                badgeBgBorder = "bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30"
+                badgeTextColor = "text-emerald-600 dark:text-emerald-400"
+                accentColor = "bg-emerald-500"
+                textAmountColor = "text-emerald-600 dark:text-emerald-400"
               } else if (isLate) {
-                textBadgeColor = "text-destructive bg-destructive/10"
-                accentColor = "bg-destructive"
-                textAmountColor = "text-destructive"
+                badgeBgBorder = "bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30"
+                badgeTextColor = "text-rose-600 dark:text-rose-400"
+                accentColor = "bg-rose-500"
+                textAmountColor = "text-rose-600 dark:text-rose-400"
               } else if (isSubmitted) {
-                textBadgeColor = "text-purple-500 bg-purple-500/10"
+                badgeBgBorder = "bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/30"
+                badgeTextColor = "text-purple-600 dark:text-purple-400"
                 accentColor = "bg-purple-500"
-                textAmountColor = "text-purple-500"
+                textAmountColor = "text-purple-600 dark:text-purple-400"
               }
 
               const formattedDue = new Date(item.due_date).toLocaleDateString("en-IN", {
@@ -1479,33 +1527,15 @@ export default function PaymentsScreen() {
                   {/* Web accent color stripe */}
                   <View className={`absolute left-0 top-0 bottom-0 w-[4px] ${accentColor}`} />
                   
-                  <View className="flex-row items-center flex-1 pr-3 pl-1">
-                    {/* Mark paid checkbox */}
-                    <TouchableOpacity
-                      onPress={() => {
-                        setMarkingPaidPaymentId(item.id)
-                        setSelectedPaymentMethod("UPI")
-                        setDropdownOpen(false)
-                        setMarkPaidModalVisible(true)
-                      }}
-                      disabled={isPaid || isMarkingPaid}
-                      className={`h-7 w-7 rounded-full border items-center justify-center mr-3.5 ${
-                        isPaid 
-                          ? "bg-success/10 border-success/30" 
-                          : "border-border dark:border-border-dark bg-background dark:bg-background-dark active:scale-95"
-                      }`}
-                    >
-                      {isPaid && <Check size={14} color="#10b981" strokeWidth={3} />}
-                    </TouchableOpacity>
-
+                  <View className="flex-row items-center flex-1 pr-3 pl-2">
                     {/* Content text */}
                     <View className="flex-1">
-                      <View className="flex-row items-center flex-wrap gap-1.5">
-                        <Text className="text-base font-bold text-foreground dark:text-foreground-dark mr-1" numberOfLines={1}>
+                      <View className="flex-row items-center gap-1.5">
+                        <Text className="text-base font-bold text-foreground dark:text-foreground-dark flex-shrink mr-1" numberOfLines={1}>
                           {item.tenants_table?.name || "Occupant"}
                         </Text>
-                        <View className={`px-1.5 py-0.5 rounded ${textBadgeColor}`}>
-                          <Text className="text-[8px] font-black uppercase">
+                        <View className={`px-1.5 py-0.5 rounded ${badgeBgBorder} flex-shrink-0`}>
+                          <Text className={`text-[8px] font-black uppercase ${badgeTextColor}`}>
                             {item.status}
                           </Text>
                         </View>
@@ -1598,24 +1628,35 @@ export default function PaymentsScreen() {
             className="absolute inset-0 bg-black/60"
           />
           
-          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[92%] border-t border-border dark:border-border-dark p-6">
+          <View 
+            className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[96%] border-t border-border dark:border-border-dark px-6 pt-6 flex-col" 
+            style={{ paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom - 10, 8) : 8 }}
+          >
             {selectedPayment && (
-              <View className="gap-5">
+              <View className="flex-col max-h-full">
                 {/* Header */}
-                <View className="flex-row justify-between items-start">
-                  <View>
+                <View className="flex-row justify-between items-start mb-5">
+                  <View className="flex-1 pr-2">
                     <View className="flex-row items-center gap-2">
                       <Text className="text-xs font-extrabold text-muted uppercase tracking-wider">Transaction Record</Text>
-                      <View className={`px-2 py-0.5 rounded capitalize ${
+                      <View className={`px-2.5 py-1 rounded border capitalize ${
                         selectedPayment.status === "paid" 
-                          ? "bg-success/10 text-success" 
+                          ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30" 
                           : selectedPayment.status === "late" 
-                            ? "bg-destructive/10 text-destructive" 
+                            ? "bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30" 
                             : selectedPayment.status === "submitted"
-                              ? "bg-purple-500/10 text-purple-500"
-                              : "bg-warning/10 text-warning"
+                              ? "bg-purple-50 dark:bg-purple-500/10 border-purple-200 dark:border-purple-500/30"
+                              : "bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/30"
                       }`}>
-                        <Text className="text-[9px] font-black uppercase">{selectedPayment.status}</Text>
+                        <Text className={`text-[9px] font-black uppercase ${
+                          selectedPayment.status === "paid" 
+                            ? "text-emerald-600 dark:text-emerald-400" 
+                            : selectedPayment.status === "late" 
+                              ? "text-rose-600 dark:text-rose-400" 
+                              : selectedPayment.status === "submitted"
+                                ? "text-purple-600 dark:text-purple-400"
+                                : "text-amber-600 dark:text-amber-400"
+                        }`}>{selectedPayment.status}</Text>
                       </View>
                     </View>
                     <Text className="text-2xl font-black text-foreground dark:text-foreground-dark mt-1">
@@ -1636,8 +1677,8 @@ export default function PaymentsScreen() {
                 {/* Main Scroll Content */}
                 <ScrollView 
                   showsVerticalScrollIndicator={false} 
-                  contentContainerStyle={{ gap: 16 }} 
-                  className="flex-shrink flex-grow-0 max-h-[75%]"
+                  contentContainerStyle={{ gap: 16, paddingBottom: 16 }} 
+                  className="flex-shrink flex-grow-0 mb-4"
                 >
                   {/* Timeline Tracker */}
                   <View className="bg-muted/10 border border-border dark:border-border-dark p-4 rounded-3xl">
@@ -1853,7 +1894,7 @@ export default function PaymentsScreen() {
                 </ScrollView>
 
                 {/* Primary Actions Drawer Footer */}
-                <View className="flex-row gap-3 pb-6 border-t border-border/40 pt-4 flex-wrap">
+                <View className="flex-row gap-3 border-t border-border/40 pt-4 flex-wrap pb-0">
                   {/* Delete Button */}
                   <TouchableOpacity
                     onPress={() => handleDeletePayment(selectedPayment.id)}

@@ -125,20 +125,27 @@ export async function POST(
     const roomRaw = matchedTenant.rooms_table
     const room = Array.isArray(roomRaw) ? roomRaw[0] : roomRaw
 
-    // 3. Fetch the payment records matching this tenant and this specific month & year
+    // 3. Fetch all payment records matching this tenant
     const { data: payments, error: payError } = await supabase
       .from('payments')
       .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
       .eq('tenant_id', matchedTenant.id)
-      .eq('month', linkRecord.month)
-      .eq('year', linkRecord.year)
 
     if (payError) {
       console.error('[pay/token] Error fetching payment:', JSON.stringify(payError))
       return NextResponse.json({ error: 'Database error retrieving billing record' }, { status: 500 })
     }
 
-    if (!payments || payments.length === 0) {
+    // Filter to show:
+    // 1. All payments generated for the current monthly link's month/year
+    // 2. Outstanding / late payments from previous months so they are not missed
+    const activePayments = (payments || []).filter((p) => {
+      const isCurrentMonth = p.month === linkRecord.month && p.year === linkRecord.year
+      const isUnpaid = p.status !== 'paid'
+      return isCurrentMonth || isUnpaid
+    })
+
+    if (!activePayments || activePayments.length === 0) {
       return NextResponse.json({
         tenant: {
           name: matchedTenant.name || 'Tenant',
@@ -150,7 +157,7 @@ export async function POST(
       })
     }
 
-    const mappedPayments = payments.map(payment => ({
+    const mappedPayments = activePayments.map(payment => ({
       id: payment.id,
       amount: payment.total_amount,
       status: payment.status,
