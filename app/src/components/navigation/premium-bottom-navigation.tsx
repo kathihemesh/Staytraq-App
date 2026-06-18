@@ -239,6 +239,11 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
   const selectedIndexRef = useRef(selectedIndex)
   selectedIndexRef.current = selectedIndex
 
+  const [localSelectedIndex, setLocalSelectedIndex] = useState(selectedIndex)
+  useEffect(() => {
+    setLocalSelectedIndex(selectedIndex)
+  }, [selectedIndex])
+
   const [prevSelectedIndex, setPrevSelectedIndex] = useState(-1)
   if (selectedIndex !== prevSelectedIndex) {
     setPrevSelectedIndex(selectedIndex)
@@ -313,6 +318,7 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
       const route = routes[index]
       if (!route) return
 
+      setLocalSelectedIndex(index)
       triggerHaptic("select")
 
       const event = navigation.emit({
@@ -322,7 +328,9 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
       })
 
       if (!event.defaultPrevented) {
-        navigation.navigate(route.name, route.params)
+        requestAnimationFrame(() => {
+          navigation.navigate(route.name, route.params)
+        })
       }
 
       setExpanded(false)
@@ -467,7 +475,7 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
 
               <View style={[styles.collapsedItemsRow, { width: collapsedItemsWidth }]}>
                 {currentSectionItems.map((displayRoute) => {
-                  const active = selectedIndex === displayRoute.routeIndex
+                  const active = localSelectedIndex === displayRoute.routeIndex
                   const visual = visuals[displayRoute.routeIndex]
 
                   return (
@@ -529,7 +537,7 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
           >
             <View style={styles.expandedGrid}>
               {displayRoutes.map((displayRoute) => {
-                const active = selectedIndex === displayRoute.routeIndex
+                const active = localSelectedIndex === displayRoute.routeIndex
                 const visual = visuals[displayRoute.routeIndex]
 
                 return (

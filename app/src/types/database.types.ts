@@ -534,6 +534,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_user_exists: {
+        Args: {
+          p_email: string | null
+          p_phone: string | null
+        }
+        Returns: boolean
+      }
       onboard_new_owner: {
         Args: {
           p_address: string

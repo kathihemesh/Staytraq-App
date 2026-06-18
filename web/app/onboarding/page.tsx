@@ -17,7 +17,7 @@ import { runWithNetworkRetry } from "@/lib/networkRetry"
 
 export default function OnboardingPage() {
   const supabase = createClient()
-  const { user, isOnboarded, isOnboardingKnown, isLoading: isAuthLoading, checkOnboardingStatus } = useAuth()
+  const { user, isOnboarded, isOnboardingKnown, isLoading: isAuthLoading, checkOnboardingStatus, logout } = useAuth()
   const router = useRouter()
 
   const [fullName, setFullName] = useState("")
@@ -258,6 +258,27 @@ export default function OnboardingPage() {
                   )}
                 </Button>
               </form>
+
+              {/* Back to Login */}
+              <div className="text-center mt-6">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setIsSubmitting(true)
+                    try {
+                      await logout()
+                    } catch (err) {
+                      console.error("Logout error:", err)
+                    } finally {
+                      setIsSubmitting(false)
+                    }
+                  }}
+                  disabled={isSubmitting}
+                  className="text-sm font-medium text-primary hover:text-primary/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 rounded-sm cursor-pointer disabled:opacity-50"
+                >
+                  Back to Login
+                </button>
+              </div>
             </CardContent>
           </Card>
         </div>

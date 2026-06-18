@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Image } from "react-native"
+import { SafeAreaView } from "react-native-safe-area-context"
 import { useRouter } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { Eye, EyeOff, Mail, Phone, Lock, ChevronRight, Hotel, AlertTriangle } from "lucide-react-native"
@@ -8,7 +9,7 @@ import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
 
 export default function LoginScreen() {
-  const { login } = useAuth()
+  const { login, authReady, isLoading: isAuthLoading } = useAuth()
   const router = useRouter()
   const { isDark } = useTheme()
   
@@ -25,6 +26,50 @@ export default function LoginScreen() {
   
   // Field validation errors matching web
   const [validationError, setValidationError] = useState<{ identifier?: string; password?: string }>({})
+
+  if (!authReady || isAuthLoading) {
+    return (
+      <SafeAreaView className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
+        {/* Branding Header Skeleton */}
+        <View className="items-center mb-8 animate-pulse">
+          <View className="h-14 w-14 bg-muted/20 dark:bg-muted-dark/20 rounded-2xl mb-4" />
+          <View className="h-8 w-48 bg-muted/20 dark:bg-muted-dark/20 rounded-xl mb-2" />
+          <View className="h-4 w-64 bg-muted/15 dark:bg-muted-dark/15 rounded-lg mb-1" />
+          <View className="h-4 w-40 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+        </View>
+
+        {/* Premium Card Skeleton */}
+        <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-6 rounded-3xl shadow-md animate-pulse">
+          {/* Tabs Skeleton */}
+          <View className="flex-row bg-background dark:bg-background-dark p-1 rounded-xl mb-6 border border-border/40 dark:border-border-dark/40 gap-2">
+            <View className="flex-1 h-9 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+            <View className="flex-1 h-9 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+          </View>
+
+          {/* Label Skeleton */}
+          <View className="h-4 w-28 bg-muted/20 dark:bg-muted-dark/20 rounded-md mb-2" />
+          {/* Input Skeleton */}
+          <View className="h-12 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-xl mb-4" />
+
+          {/* Label & Forgot Password Skeleton */}
+          <View className="flex-row justify-between items-center mb-2">
+            <View className="h-4 w-20 bg-muted/20 dark:bg-muted-dark/20 rounded-md" />
+            <View className="h-4 w-24 bg-muted/20 dark:bg-muted-dark/20 rounded-md" />
+          </View>
+          {/* Input Skeleton */}
+          <View className="h-12 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-xl mb-6" />
+
+          {/* Button Skeleton */}
+          <View className="h-11 bg-muted/20 dark:bg-muted-dark/20 rounded-xl mt-2" />
+        </View>
+
+        {/* Footer Skeleton */}
+        <View className="flex-row justify-center mt-6 animate-pulse">
+          <View className="h-4 w-48 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+        </View>
+      </SafeAreaView>
+    )
+  }
 
   const validateForm = () => {
     const errors: { identifier?: string; password?: string } = {}

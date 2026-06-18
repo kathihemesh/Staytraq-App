@@ -9,7 +9,7 @@ import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
 
 export default function OnboardingScreen() {
-  const { user, isOnboarded, isOnboardingKnown, isLoading: isAuthLoading, checkOnboardingStatus } = useAuth()
+  const { user, isOnboarded, isOnboardingKnown, isLoading: isAuthLoading, checkOnboardingStatus, logout } = useAuth()
   const { isDark } = useTheme()
   const router = useRouter()
 
@@ -97,6 +97,18 @@ export default function OnboardingScreen() {
       console.error("Onboarding error:", err)
       setError(err?.message || "Something went wrong. Please try again.")
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleLogout = async () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    setIsSubmitting(true)
+    try {
+      await logout()
+    } catch (err) {
+      console.error("Logout error:", err)
     } finally {
       setIsSubmitting(false)
     }
@@ -309,6 +321,15 @@ export default function OnboardingScreen() {
                 </View>
               </View>
             )}
+          </View>
+
+          {/* Footer Back to Login option */}
+          <View className="flex-row justify-center mt-6">
+            <TouchableOpacity onPress={handleLogout} disabled={isSubmitting} className="active:opacity-60">
+              <Text className="text-primary dark:text-primary-foreground/90 font-bold text-sm">
+                Back to Login
+              </Text>
+            </TouchableOpacity>
           </View>
         </View>
       </KeyboardAwareScrollView>

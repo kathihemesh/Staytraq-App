@@ -1,13 +1,16 @@
 import { useState, useRef } from "react"
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Platform } from "react-native"
+import { SafeAreaView } from "react-native-safe-area-context"
 import { useRouter } from "expo-router"
 import { supabase } from "@/lib/supabase"
+import { useAuth } from "@/context/auth"
 import { Eye, EyeOff, Mail, Lock, Phone, ChevronRight, Hotel, AlertTriangle, ArrowLeft, CheckCircle2 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
 
 export default function SignUpScreen() {
+  const { authReady, isLoading: isAuthLoading } = useAuth()
   const router = useRouter()
   const { isDark } = useTheme()
   const otpInputRef = useRef<TextInput>(null)
@@ -18,6 +21,42 @@ export default function SignUpScreen() {
 
   const [authType, setAuthType] = useState<"phone" | "email">("phone")
   const [step, setStep] = useState<"initial" | "otp" | "password">("initial")
+
+  if (!authReady || isAuthLoading) {
+    return (
+      <SafeAreaView className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
+        {/* Branding Header Skeleton */}
+        <View className="items-center mb-8 animate-pulse">
+          <View className="h-14 w-14 bg-muted/20 dark:bg-muted-dark/20 rounded-2xl mb-4" />
+          <View className="h-8 w-48 bg-muted/20 dark:bg-muted-dark/20 rounded-xl mb-2" />
+          <View className="h-4 w-64 bg-muted/15 dark:bg-muted-dark/15 rounded-lg mb-1" />
+          <View className="h-4 w-40 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+        </View>
+
+        {/* Premium Card Skeleton */}
+        <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-6 rounded-3xl shadow-md animate-pulse">
+          {/* Tabs Skeleton */}
+          <View className="flex-row bg-background dark:bg-background-dark p-1 rounded-xl mb-6 border border-border/40 dark:border-border-dark/40 gap-2">
+            <View className="flex-1 h-9 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+            <View className="flex-1 h-9 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
+          </View>
+
+          {/* Label Skeleton */}
+          <View className="h-4 w-28 bg-muted/20 dark:bg-muted-dark/20 rounded-md mb-2" />
+          {/* Input Skeleton */}
+          <View className="h-12 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-xl mb-4" />
+
+          {/* Button Skeleton */}
+          <View className="h-11 bg-muted/20 dark:bg-muted-dark/20 rounded-xl mt-6" />
+        </View>
+
+        {/* Footer Skeleton */}
+        <View className="flex-row justify-center mt-6 animate-pulse">
+          <View className="h-4 w-48 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+        </View>
+      </SafeAreaView>
+    )
+  }
   
   const [identifier, setIdentifier] = useState("") // Phone or email
   const [otp, setOtp] = useState("")
@@ -63,18 +102,18 @@ export default function SignUpScreen() {
       setLoading(true)
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
 
-      // 1. Check if the mobile number is already registered in pg_owners
-      const { data: existingUser, error: fetchError } = await supabase
-        .from("pg_owners")
-        .select("mobile_number")
-        .eq("mobile_number", identifier.trim())
-        .maybeSingle()
+      // 1. Check if the mobile number is already registered in auth.users via RPC
+      const { data: exists, error: fetchError } = await supabase
+        .rpc("check_user_exists", {
+          p_email: null,
+          p_phone: identifier.trim()
+        })
 
       if (fetchError) {
         throw new Error("Server error while checking registration")
       }
 
-      if (existingUser) {
+      if (exists) {
         setError("This mobile number is already registered.")
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
         setLoading(false)
@@ -203,18 +242,18 @@ export default function SignUpScreen() {
       setLoading(true)
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
 
-      // 1. Check if the email is already registered in pg_owners
-      const { data: existingUser, error: fetchError } = await supabase
-        .from("pg_owners")
-        .select("email")
-        .eq("email", identifier.trim())
-        .maybeSingle()
+      // 1. Check if the email is already registered in auth.users via RPC
+      const { data: exists, error: fetchError } = await supabase
+        .rpc("check_user_exists", {
+          p_email: identifier.trim(),
+          p_phone: null
+        })
 
       if (fetchError) {
         throw new Error("Server error while checking registration")
       }
 
-      if (existingUser) {
+      if (exists) {
         setError("This email is already registered.")
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
         setLoading(false)
@@ -457,44 +496,46 @@ export default function SignUpScreen() {
                       OTP sent to +91 {identifier}
                     </Text>
 
-                    {/* Custom Premium OTP Row with Focus Alignment */}
-                    <View className="flex-row justify-between w-full max-w-[280px] mb-4">
-                      {Array.from({ length: 6 }).map((_, index) => {
-                        const isFocused = otp.length === index
-                        const isFilled = otp.length > index
-                        return (
-                          <TouchableOpacity
-                            key={index}
-                            activeOpacity={1}
-                            onPress={() => otpInputRef.current?.focus()}
-                            className="w-10 h-12 rounded-xl border-2 items-center justify-center bg-background dark:bg-background-dark"
-                            style={{
-                              borderColor: isFocused 
-                                ? (isDark ? "#0091ff" : "#0071df")
-                                : (validationError.otp ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb"))
-                            }}
-                          >
-                            <Text className="text-xl font-bold text-foreground dark:text-foreground-dark">
-                              {otp[index] || ""}
-                            </Text>
-                          </TouchableOpacity>
-                        )
-                      })}
-                    </View>
+                    {/* Custom Premium OTP Row with Focus Alignment & Overlay Input */}
+                    <View className="relative w-full max-w-[280px] h-12 mb-4">
+                      {/* Visual slots rendered underneath */}
+                      <View className="flex-row justify-between w-full h-full" pointerEvents="none">
+                        {Array.from({ length: 6 }).map((_, index) => {
+                          const isFocused = otp.length === index
+                          return (
+                            <View
+                              key={index}
+                              className="w-10 h-full rounded-xl border-2 items-center justify-center bg-background dark:bg-background-dark"
+                              style={{
+                                borderColor: isFocused 
+                                  ? (isDark ? "#0091ff" : "#0071df")
+                                  : (validationError.otp ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb"))
+                              }}
+                            >
+                              <Text className="text-xl font-bold text-foreground dark:text-foreground-dark">
+                                {otp[index] || ""}
+                              </Text>
+                            </View>
+                          )
+                        })}
+                      </View>
 
-                    {/* Hidden Native Input coordinating visual slots */}
-                    <TextInput
-                      ref={otpInputRef}
-                      value={otp}
-                      onChangeText={(val) => {
-                        setOtp(val.replace(/\D/g, "").slice(0, 6))
-                        setValidationError({})
-                      }}
-                      maxLength={6}
-                      keyboardType="number-pad"
-                      className="absolute w-1 h-1 opacity-0"
-                      caretHidden
-                    />
+                      {/* Transparent TextInput overlaying the slots to capture touches natively */}
+                      <TextInput
+                        ref={otpInputRef}
+                        value={otp}
+                        onChangeText={(val) => {
+                          setOtp(val.replace(/\D/g, "").slice(0, 6))
+                          setValidationError({})
+                        }}
+                        maxLength={6}
+                        keyboardType="number-pad"
+                        textContentType="oneTimeCode"
+                        autoComplete="sms-otp"
+                        className="absolute inset-0 opacity-[0.01] bg-transparent text-transparent"
+                        caretHidden
+                      />
+                    </View>
 
                     {validationError.otp && (
                       <Text className="text-xs text-destructive mt-1 font-semibold text-center mb-4">{validationError.otp}</Text>

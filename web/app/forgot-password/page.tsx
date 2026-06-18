@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { createClient } from "@/lib/supabase/client"
-
+import { useAuth } from "@/components/auth-provider"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -16,10 +16,60 @@ import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp
 import { useRouter } from "next/navigation"
 
 export default function ForgotPasswordPage() {
+  const { isLoading } = useAuth()
   const supabase = createClient()
   const router = useRouter()
   const [authType, setAuthType] = useState<"phone" | "email">("phone")
   const [step, setStep] = useState<"initial" | "otp">("initial")
+
+  if (isLoading) {
+    return (
+      <div className="relative flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-muted/30 animate-in fade-in-0 duration-200">
+        {/* Header */}
+        <header className="flex items-center justify-between px-6 py-4 sm:px-8">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-muted animate-pulse" />
+            <div className="h-4 w-16 rounded bg-muted animate-pulse" />
+          </div>
+          <div className="h-9 w-9 rounded-md bg-muted animate-pulse" />
+        </header>
+
+        {/* Main Content */}
+        <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
+          <Card className="w-full max-w-[420px] border-border/50 shadow-lg">
+            <CardHeader className="space-y-1 text-center">
+              <div className="mx-auto mb-2 h-12 w-12 rounded-xl bg-muted animate-pulse" />
+              <div className="mx-auto h-6 w-36 rounded bg-muted animate-pulse" />
+              <div className="mx-auto h-4 w-64 rounded bg-muted animate-pulse" />
+            </CardHeader>
+
+            <CardContent className="space-y-6">
+              {/* Tabs Skeleton */}
+              <div className="h-10 w-full rounded-lg bg-muted/60 animate-pulse" />
+
+              {/* Input Skeleton */}
+              <div className="space-y-2">
+                <div className="h-4 w-24 rounded bg-muted animate-pulse" />
+                <div className="h-11 w-full rounded-md bg-muted/60 animate-pulse" />
+              </div>
+
+              {/* Submit Button Skeleton */}
+              <div className="h-11 w-full rounded-md bg-muted animate-pulse mt-4" />
+
+              {/* Footer Text Skeleton */}
+              <div className="pt-2 text-center">
+                <div className="mx-auto h-4 w-48 rounded bg-muted animate-pulse" />
+              </div>
+            </CardContent>
+          </Card>
+        </main>
+
+        <footer className="py-4 text-center">
+          <div className="mx-auto h-3 w-24 rounded bg-muted animate-pulse" />
+        </footer>
+      </div>
+    )
+  }
   const [identifier, setIdentifier] = useState("")
   const [otp, setOtp] = useState("")
   const [error, setError] = useState<string | null>(null)
@@ -46,16 +96,16 @@ export default function ForgotPasswordPage() {
     setError(null)
     
     try {
-      // 1. Check registration in pg_owners
-      const { data, error: fetchError } = await supabase
-        .from("pg_owners")
-        .select(authType === "email" ? "email" : "mobile_number")
-        .eq(authType === "email" ? "email" : "mobile_number", identifier.trim())
-        .maybeSingle()
+      // 1. Check registration in auth.users via RPC
+      const { data: exists, error: fetchError } = await supabase
+        .rpc("check_user_exists", {
+          p_email: authType === "email" ? identifier.trim() : null,
+          p_phone: authType === "phone" ? identifier.trim() : null
+        })
 
       if (fetchError) throw new Error("Server error")
 
-      if (!data) {
+      if (!exists) {
         setError(`This ${authType === "email" ? "email" : "mobile number"} is not registered.`)
         setIsSubmitting(false)
         return

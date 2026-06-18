@@ -63,11 +63,54 @@ export default function LoginPage() {
   // Show loading state while checking authentication
   if (isLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
+      <div className="relative flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-muted/30 animate-in fade-in-0 duration-200">
+        {/* Header */}
+        <header className="flex items-center justify-between px-4 py-4 sm:px-6 md:px-8">
+          <div className="flex items-center gap-2">
+            <div className="h-8 w-8 rounded-lg bg-muted animate-pulse" />
+            <div className="h-4 w-16 rounded bg-muted animate-pulse" />
+          </div>
+          <div className="h-9 w-9 rounded-md bg-muted animate-pulse" />
+        </header>
+
+        {/* Main Content */}
+        <main className="flex flex-1 items-center justify-center px-4 py-6 sm:px-6 sm:py-8">
+          <Card className="w-full max-w-[420px] border-border/50 shadow-lg">
+            <CardHeader className="space-y-1 px-4 pt-6 text-center sm:px-6">
+              <div className="mx-auto mb-2 h-10 w-10 sm:h-12 sm:w-12 rounded-xl bg-muted animate-pulse" />
+              <div className="mx-auto h-6 w-32 rounded bg-muted animate-pulse" />
+              <div className="mx-auto h-4 w-64 rounded bg-muted animate-pulse" />
+            </CardHeader>
+
+            <CardContent className="space-y-5 px-4 pb-6 sm:space-y-6 sm:px-6">
+              <div className="h-10 w-full rounded-lg bg-muted/60 animate-pulse" />
+
+              <div className="space-y-2">
+                <div className="h-4 w-24 rounded bg-muted animate-pulse" />
+                <div className="h-11 w-full rounded-md bg-muted/60 animate-pulse" />
+              </div>
+
+              <div className="space-y-2">
+                <div className="h-4 w-20 rounded bg-muted animate-pulse" />
+                <div className="h-11 w-full rounded-md bg-muted/60 animate-pulse" />
+                <div className="flex justify-end pt-1">
+                  <div className="h-4 w-28 rounded bg-muted animate-pulse" />
+                </div>
+              </div>
+
+              <div className="h-11 w-full rounded-md bg-muted animate-pulse mt-6" />
+
+              <div className="space-y-2 pt-2">
+                <div className="mx-auto h-4 w-40 rounded bg-muted animate-pulse" />
+                <div className="mx-auto h-4 w-48 rounded bg-muted animate-pulse" />
+              </div>
+            </CardContent>
+          </Card>
+        </main>
+
+        <footer className="py-4 text-center">
+          <div className="mx-auto h-3 w-24 rounded bg-muted animate-pulse" />
+        </footer>
       </div>
     )
   }

@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react"
-import { router } from "expo-router"
+import { router, usePathname } from "expo-router"
 import { supabase } from "@/lib/supabase"
 import type { User, Session } from "@supabase/supabase-js"
 
@@ -33,17 +33,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   
   const checkOnboardingStatus = useCallback(async (userId: string) => {
     try {
-      const { data } = await supabase
+      const fetchPromise = supabase
         .from("pg_owners")
         .select("is_onboarded")
         .eq("id", userId)
         .maybeSingle()
-      
-      const onboarded = !!data?.is_onboarded
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Onboarding check timeout")), 3500)
+      )
+
+      const response = await Promise.race([fetchPromise, timeoutPromise]) as any
+      const onboarded = !!response?.data?.is_onboarded
       setOnboardingStatus(onboarded ? "onboarded" : "not_onboarded")
       return onboarded
-    } catch {
-      // Return false but keep state stable on transient errors
+    } catch (error) {
+      console.error("Onboarding status check failed/timed out:", error)
+      // Set status to not_onboarded as safe fallback on errors so app doesn't freeze
+      setOnboardingStatus("not_onboarded")
       return false
     }
   }, [])
@@ -132,6 +139,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [checkOnboardingStatus])
 
+  const pathname = usePathname()
+
   // Central Router redirection logic.
   // Use global router here to avoid depending on a navigation hook context
   // inside a provider that can render before navigator context is available.
@@ -140,19 +149,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const isOnboardingKnown = onboardingStatus !== "unknown"
     const isOnboarded = onboardingStatus === "onboarded"
 
+    const isAuthRoute = pathname.includes("login") || pathname.includes("signup") || pathname.includes("forgot-password") || pathname.includes("reset-password")
+    const isOnboardingRoute = pathname.includes("onboarding")
+
     if (!isAuthenticated) {
-      router.replace("/(auth)/login")
+      // If not authenticated, only redirect to login if we are not already on an auth screen
+      if (!isAuthRoute) {
+        router.replace("/(auth)/login")
+      }
     } else {
       // User is authenticated
       if (!isOnboardingKnown) return // Wait for onboarding status fetching to prevent screen flicker
 
+      // Do not redirect if they are in the middle of signup or resetting password
+      if (pathname.includes("signup") || pathname.includes("reset-password")) {
+        return
+      }
+
       if (!isOnboarded) {
-        router.replace("/onboarding")
+        if (!isOnboardingRoute) {
+          router.replace("/onboarding")
+        }
       } else {
-        router.replace("/(tabs)")
+        if (isAuthRoute || isOnboardingRoute || pathname === "/") {
+          router.replace("/(tabs)")
+        }
       }
     }
-  }, [isAuthenticated, onboardingStatus, authReady, isLoading])
+  }, [isAuthenticated, onboardingStatus, authReady, isLoading, pathname])
 
   const login = useCallback(async (identifier: string, password: string, type: "email" | "phone") => {
     try {

@@ -4,9 +4,11 @@ import { StatusBar } from "expo-status-bar"
 import * as SystemUI from "expo-system-ui"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { QueryClientProvider } from "@tanstack/react-query"
-import { AuthProvider } from "@/context/auth"
+import { AuthProvider, useAuth } from "@/context/auth"
 import { queryClient } from "@/lib/queryClient"
 import useTheme from "@/hooks/use-theme"
+import { Image, View } from "react-native"
+import { SafeAreaView } from "react-native-safe-area-context"
 import "../global.css"
 
 export default function RootLayout() {
@@ -23,11 +25,26 @@ export default function RootLayout() {
 
 function RootLayoutNav() {
   const { colorScheme } = useTheme()
+  const { authReady, isLoading } = useAuth()
   const backgroundColor = colorScheme === "dark" ? "#0f111a" : "#fafafa"
 
   useEffect(() => {
     void SystemUI.setBackgroundColorAsync(backgroundColor)
   }, [backgroundColor])
+
+  if (!authReady || isLoading) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor }} className="flex-1 items-center justify-center">
+        <View className="items-center justify-center p-6">
+          <Image
+            source={require("../../assets/images/logo-glow.png")}
+            style={{ width: 112, height: 112 }}
+            resizeMode="contain"
+          />
+        </View>
+      </SafeAreaView>
+    )
+  }
 
   return (
     <>

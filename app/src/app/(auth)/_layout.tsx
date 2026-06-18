@@ -1,12 +1,15 @@
-import { Stack } from "expo-router"
+import { Stack, usePathname } from "expo-router"
 import { Image, View } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 
 export default function AuthLayout() {
   const { authReady, isAuthenticated, isLoading } = useAuth()
+  const pathname = usePathname()
 
-  if (!authReady || isLoading || isAuthenticated) {
+  const isSignupOrReset = pathname.includes("signup") || pathname.includes("reset-password")
+
+  if (!authReady || isLoading || (isAuthenticated && !isSignupOrReset)) {
     return (
       <SafeAreaView className="flex-1 bg-background dark:bg-background-dark items-center justify-center">
         <View className="items-center justify-center p-6">
@@ -24,7 +27,7 @@ export default function AuthLayout() {
     <Stack
       screenOptions={{
         headerShown: false,
-        animation: "slide_from_right",
+        animation: "none",
       }}
     >
       <Stack.Screen name="login" />

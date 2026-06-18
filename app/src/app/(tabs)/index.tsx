@@ -1268,7 +1268,10 @@ export default function DashboardScreen() {
           </View>
           <View className="flex-row gap-2">
             <TouchableOpacity 
-              onPress={() => router.push("/settings")}
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                router.push("/settings")
+              }}
               className="h-9 w-9 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
             >
               <Settings size={16} color={isDark ? "#0091ff" : "#0071df"} />

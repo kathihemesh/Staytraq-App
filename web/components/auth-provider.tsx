@@ -265,6 +265,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isOnboarded = onboardingStatus === "onboarded"
 
   if (!authReady) {
+    const normalizedPath = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname
+    const isPublicRoute = PUBLIC_ROUTES.includes(normalizedPath) || normalizedPath.startsWith("/pay/") || normalizedPath.startsWith("/complaint-submit/")
+
+    if (isPublicRoute) {
+      return (
+        <AuthContext.Provider value={{ isAuthenticated, isOnboarded, isOnboardingKnown, authReady, isLoading, user, session, login, logout, checkOnboardingStatus }}>
+          {children}
+        </AuthContext.Provider>
+      )
+    }
+
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
