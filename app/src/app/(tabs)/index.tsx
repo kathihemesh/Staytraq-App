@@ -48,6 +48,8 @@ import {
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
+import { SafeText } from "@/components/ui/safe-text"
+import { sanitizeText, stripHtml } from "@/lib/sanitize"
 import * as SecureStore from "expo-secure-store"
 import ThemeDatePicker from "@/components/ui/theme-date-picker"
 import { BarChart } from "react-native-gifted-charts"
@@ -1042,7 +1044,7 @@ export default function DashboardScreen() {
         .from("complaints")
         .update({
           status: updatedStatus,
-          owner_response: ownerResponseText.trim() || null,
+          owner_response: stripHtml(ownerResponseText.trim()) || null,
           updated_at: new Date().toISOString()
         })
         .eq("id", selectedComplaint.id)
@@ -2403,9 +2405,9 @@ export default function DashboardScreen() {
 
               {/* Message Details */}
               <ScrollView className="max-h-[160px] mb-5 bg-slate-50 dark:bg-slate-950 p-4 border border-slate-100 dark:border-slate-850 rounded-2xl">
-                <Text className="text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-semibold text-left">
+                <SafeText className="text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-semibold text-left">
                   {selectedComplaint?.complaint_message}
-                </Text>
+                </SafeText>
               </ScrollView>
 
               {/* Status Selector */}
