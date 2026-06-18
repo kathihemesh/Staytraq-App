@@ -14,7 +14,7 @@ import type { BottomTabBarProps } from "@react-navigation/bottom-tabs"
 import {
   Bell,
   BellRing,
-  Building2,
+  BedDouble,
   ChevronLeft,
   ChevronRight,
   IndianRupee,
@@ -77,7 +77,7 @@ const accents: Record<string, NavAccent> = {
 
 const iconMap: Record<string, Pick<NavVisual, "Icon" | "ActiveIcon">> = {
   index: { Icon: LayoutDashboard, ActiveIcon: LayoutDashboard },
-  rooms: { Icon: Building2, ActiveIcon: Building2 },
+  rooms: { Icon: BedDouble, ActiveIcon: BedDouble },
   tenants: { Icon: Users, ActiveIcon: UsersRound },
   payments: { Icon: IndianRupee, ActiveIcon: IndianRupee },
   complaints: { Icon: Inbox, ActiveIcon: Inbox },

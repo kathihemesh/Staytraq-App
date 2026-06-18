@@ -1,5 +1,5 @@
 import { useState, useRef } from "react"
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Platform } from "react-native"
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useRouter } from "expo-router"
 import { supabase } from "@/lib/supabase"
@@ -352,9 +352,12 @@ export default function SignUpScreen() {
       <View className="w-full px-6 py-12">
           {/* Header */}
           <View className="items-center mb-8">
-            <View className="h-14 w-14 bg-primary rounded-2xl items-center justify-center shadow-lg shadow-primary/30 mb-4">
-              <Hotel size={28} color="#ffffff" />
-            </View>
+            <Image
+              source={require("../../../assets/images/staytraqlogo.png")}
+              style={{ width: 64, height: 64, borderRadius: 16, overflow: "hidden" }}
+              className="mb-4"
+              resizeMode="contain"
+            />
             <Text className="text-3xl font-extrabold text-foreground dark:text-foreground-dark tracking-tight">
               Create Account
             </Text>

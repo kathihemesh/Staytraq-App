@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator } from "react-native"
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Image } from "react-native"
 import { useRouter } from "expo-router"
 import { supabase } from "@/lib/supabase"
 import { Lock, Eye, EyeOff, ChevronRight, Hotel, AlertTriangle, CheckCircle2 } from "lucide-react-native"
@@ -282,9 +282,12 @@ export default function ResetPasswordScreen() {
       <View className="w-full px-6 py-12">
           {/* Header */}
           <View className="items-center mb-8">
-            <View className="h-14 w-14 bg-primary rounded-2xl items-center justify-center shadow-lg shadow-primary/30 mb-4">
-              <Hotel size={28} color="#ffffff" />
-            </View>
+            <Image
+              source={require("../../../assets/images/staytraqlogo.png")}
+              style={{ width: 64, height: 64, borderRadius: 16, overflow: "hidden" }}
+              className="mb-4"
+              resizeMode="contain"
+            />
             <Text className="text-3xl font-extrabold text-foreground dark:text-foreground-dark tracking-tight text-center">
               Reset Your Password
             </Text>

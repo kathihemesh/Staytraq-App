@@ -37,8 +37,8 @@ function RootLayoutNav() {
       <SafeAreaView style={{ flex: 1, backgroundColor }} className="flex-1 items-center justify-center">
         <View className="items-center justify-center p-6">
           <Image
-            source={require("../../assets/images/logo-glow.png")}
-            style={{ width: 112, height: 112 }}
+            source={require("../../assets/images/staytraqlogo.png")}
+            style={{ width: 112, height: 112, borderRadius: 24, overflow: "hidden" }}
             resizeMode="contain"
           />
         </View>

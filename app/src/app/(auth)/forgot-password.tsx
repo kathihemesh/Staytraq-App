@@ -1,10 +1,10 @@
 import { useState, useRef } from "react"
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Platform } from "react-native"
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useRouter, Link } from "expo-router"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/context/auth"
-import { Mail, Phone, ChevronRight, ChevronLeft, Hotel, AlertTriangle, CheckCircle2, ArrowLeft } from "lucide-react-native"
+import { Mail, Phone, ChevronRight, Hotel, AlertTriangle, CheckCircle2, ArrowLeft } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
@@ -220,24 +220,16 @@ export default function ForgotPasswordScreen() {
 
   return (
     <View key="forgot-password-form" className="flex-1 bg-background dark:bg-background-dark">
-      {/* Back Header */}
-      <View className="p-4 flex-row items-center border-b border-border/10 dark:border-border-dark/10 bg-card dark:bg-card-dark">
-        <TouchableOpacity 
-          onPress={() => router.replace("/(auth)/login")}
-          className="flex-row items-center p-2 active:scale-95"
-        >
-          <ChevronLeft size={20} color={isDark ? "#0091ff" : "#0071df"} />
-          <Text className="text-primary dark:text-primary-foreground/90 font-bold text-sm ml-0.5">Back to Login</Text>
-        </TouchableOpacity>
-      </View>
-
       <KeyboardAwareScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}>
         <View className="w-full px-6 py-10">
           {/* Header */}
           <View className="items-center mb-8">
-            <View className="h-14 w-14 bg-primary rounded-2xl items-center justify-center shadow-lg shadow-primary/30 mb-4">
-              <Hotel size={28} color="#ffffff" />
-            </View>
+            <Image
+              source={require("../../../assets/images/staytraqlogo.png")}
+              style={{ width: 64, height: 64, borderRadius: 16, overflow: "hidden" }}
+              className="mb-4"
+              resizeMode="contain"
+            />
             <Text className="text-3xl font-extrabold text-foreground dark:text-foreground-dark tracking-tight text-center">
               Forgot Password?
             </Text>
@@ -450,6 +442,14 @@ export default function ForgotPasswordScreen() {
                 </TouchableOpacity>
               </View>
             )}
+          </View>
+
+          {/* Footer Navigation */}
+          <View className="flex-row justify-center mt-6">
+            <Text className="text-muted dark:text-muted-dark">Already have an account? </Text>
+            <TouchableOpacity onPress={() => router.replace("/(auth)/login")}>
+              <Text className="text-primary dark:text-primary-foreground/90 font-bold">Sign In</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </KeyboardAwareScrollView>

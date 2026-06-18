@@ -14,8 +14,9 @@ export default function AuthLayout() {
       <SafeAreaView className="flex-1 bg-background dark:bg-background-dark items-center justify-center">
         <View className="items-center justify-center p-6">
           <Image
-            source={require("../../../assets/images/logo-glow.png")}
+            source={require("../../../assets/images/staytraqlogo.png")}
             className="h-28 w-28"
+            style={{ borderRadius: 24, overflow: "hidden" }}
             resizeMode="contain"
           />
         </View>
