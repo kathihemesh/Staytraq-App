@@ -42,11 +42,23 @@ export async function GET(
       console.error('[pay/token] Error fetching settings:', JSON.stringify(settingsError))
     }
 
+    // Fetch PG details for the owner
+    const { data: pgDetails, error: pgError } = await supabase
+      .from('pg_details')
+      .select('pg_name')
+      .eq('owner_id', linkRecord.owner_id)
+      .maybeSingle()
+
+    if (pgError) {
+      console.error('[pay/token] Error fetching pg details:', JSON.stringify(pgError))
+    }
+
     return NextResponse.json({
       valid: true,
       month: linkRecord.month,
       year: linkRecord.year,
-      settings: settings || null
+      settings: settings || null,
+      pg_name: pgDetails?.pg_name || null
     })
 
   } catch (error) {

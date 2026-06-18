@@ -10,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
+import { sanitizeText } from '@/lib/utils/sanitize'
 
 type SubmissionState = 'loading' | 'invalid' | 'verify_identity' | 'write_complaint' | 'submitted'
 
@@ -352,7 +353,7 @@ export default function TenantComplaintPage() {
                           </span>
                         </div>
                         <p className="text-xs text-neutral-300 leading-relaxed font-medium">
-                          {c.complaint_message}
+                          {sanitizeText(c.complaint_message)}
                         </p>
                         {c.owner_response && (
                           <div className="bg-neutral-900/60 border border-neutral-800/40 rounded-lg p-2.5 mt-2 flex gap-2">
@@ -360,7 +361,7 @@ export default function TenantComplaintPage() {
                             <div>
                               <span className="text-[9px] text-neutral-500 font-extrabold uppercase tracking-wide">Reply from Owner</span>
                               <p className="text-[11px] text-neutral-300 font-medium leading-relaxed mt-0.5">
-                                {c.owner_response}
+                                {sanitizeText(c.owner_response)}
                               </p>
                             </div>
                           </div>

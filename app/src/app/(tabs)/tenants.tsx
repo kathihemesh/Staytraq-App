@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react"
-import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Modal, TextInput, Linking, Alert, Platform, useWindowDimensions, KeyboardAvoidingView, Image, StyleSheet, Clipboard, Animated as RNAnimated } from "react-native"
+import { View, Text, ScrollView, RefreshControl, TouchableOpacity, ActivityIndicator, Modal, TextInput, Linking, Alert, Platform, useWindowDimensions, KeyboardAvoidingView, Image, StyleSheet, Clipboard, Animated as RNAnimated } from "react-native"
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
-import { useLocalSearchParams, router } from "expo-router"
+import { useLocalSearchParams, router, useFocusEffect } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
-import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User, Hotel, Edit3, Trash2, Camera, Upload, Check, AlertTriangle, Info, Maximize2, Copy, Clock, ShieldCheck } from "lucide-react-native"
+import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User, Hotel, Edit3, Trash2, Camera, Upload, Check, AlertTriangle, Info, Maximize2, Copy, Clock, ShieldCheck, LogOut, DollarSign, Lock } from "lucide-react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import Svg, { Path } from "react-native-svg"
 import * as Haptics from "expo-haptics"
@@ -33,6 +33,12 @@ type Tenant = {
   status: "active" | "pending_move_in" | "notice_period" | "move_out"
   pg_id: number | null
   id_documents?: any
+  deleted_at?: string | null
+  pending_deposit_deduction?: number | null
+  deduction_payment_id?: number | null
+  original_payment_amount?: number | null
+  deduction_target_month?: number | null
+  deduction_target_year?: number | null
   rooms_table?: {
     id: number
     room_number: string
@@ -95,11 +101,15 @@ const WhatsAppIcon = ({ size = 20, color = "#25D366" }: { size?: number; color?:
 export default function TenantsScreen() {
   const { isDark } = useTheme()
   const { user } = useAuth()
-  const { tenant: tenantParam } = useLocalSearchParams<{ tenant?: string }>()
+  const { tenant: tenantParam, status: statusParam, search: searchParam } = useLocalSearchParams<{ tenant?: string; status?: string; search?: string }>()
   const { height } = useWindowDimensions()
   const insets = useSafeAreaInsets()
   const keyboardHeight = useKeyboardHeight()
   const [loading, setLoading] = useState(true)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const fetchInProgressRef = useRef(false)
+  const hasLoadedOnce = useRef(false)
+  const statusSyncRunningRef = useRef(false)
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [rooms, setRooms] = useState<RoomOption[]>([])
   const [pgId, setPgId] = useState<number | null>(null)
@@ -125,6 +135,27 @@ export default function TenantsScreen() {
   const [error, setError] = useState<string | null>(null)
   const [confirmModalVisible, setConfirmModalVisible] = useState(false)
   const [tenantToDelete, setTenantToDelete] = useState<{ id: number; roomId: number | null } | null>(null)
+
+  // Move Out flow states
+  const [moveOutModalVisible, setMoveOutModalVisible] = useState(false)
+  const [moveOutDate, setMoveOutDate] = useState("")
+  const [depositRefundAmount, setDepositRefundAmount] = useState("")
+  const [isCheckingOut, setIsCheckingOut] = useState(false)
+  const [isSettlingDues, setIsSettlingDues] = useState(false)
+  // Deposit deduction states
+  const [deductionMode, setDeductionMode] = useState(false)
+  const [selectedDeductionPayment, setSelectedDeductionPayment] = useState<any | null>(null)
+  const [upcomingPayments, setUpcomingPayments] = useState<any[]>([])
+  const [deductionLocked, setDeductionLocked] = useState(false)
+
+  // WhatsApp Invite & Deposit Modal States
+  const [whatsappInviteModalVisible, setWhatsappInviteModalVisible] = useState(false)
+  const [justAddedTenant, setJustAddedTenant] = useState<Tenant | null>(null)
+  const [createDepositPayment, setCreateDepositPayment] = useState(true)
+  const [customInviteMessage, setCustomInviteMessage] = useState("")
+  const [ownerSettings, setOwnerSettings] = useState<any>(null)
+  const [portalToken, setPortalToken] = useState<string>("")
+  const [pgName, setPgName] = useState<string>("")
 
   // Form fields
   const [name, setName] = useState("")
@@ -357,35 +388,60 @@ export default function TenantsScreen() {
     )
   }
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (isRefresh = false) => {
     if (!user?.id) {
       setLoading(false)
       return
     }
+    // Prevent concurrent calls (realtime feedback loop guard)
+    if (fetchInProgressRef.current) return
+    fetchInProgressRef.current = true
+
     try {
-      setLoading(true)
+      if (!isRefresh) setLoading(true)
 
-      // Get PG details
-      const { data: pgDetails } = await supabase
-        .from("pg_details")
-        .select("id")
-        .eq("owner_id", user.id)
-        .maybeSingle()
+      const currentMonth = new Date().getMonth() + 1
+      const currentYear = new Date().getFullYear()
 
-      if (!pgDetails) return
+      // Fetch pg_details, tenants, settings, and monthly_payment_links in parallel
+      const [pgResult, tenantsResult, settingsResult, linkResult] = await Promise.all([
+        supabase
+          .from("pg_details")
+          .select("id, pg_name")
+          .eq("owner_id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("tenants_table")
+          .select("*, rooms_table(id, room_number, rent_amount)")
+          .eq("owner_id", user.id)
+          .is("deleted_at", null)
+          .order("name", { ascending: true }),
+        supabase
+          .from("settings")
+          .select("whatsapp_invite_link, upi_id, upi_name, rent_due_day")
+          .eq("owner_id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("monthly_payment_links")
+          .select("portal_token")
+          .eq("owner_id", user.id)
+          .eq("month", currentMonth)
+          .eq("year", currentYear)
+          .maybeSingle()
+      ])
+
+      const pgDetails = pgResult.data
+      if (!pgDetails) {
+        setLoading(false)
+        fetchInProgressRef.current = false
+        return
+      }
       setPgId(pgDetails.id)
+      setPgName(pgDetails.pg_name || "")
+      setTenants(tenantsResult.data || [])
+      setOwnerSettings(settingsResult.data || null)
 
-      // Get Tenants with Room Details
-      const { data: tenantsData, error: tenantsErr } = await supabase
-        .from("tenants_table")
-        .select("*, rooms_table(id, room_number, rent_amount)")
-        .eq("owner_id", user.id)
-        .order("name", { ascending: true })
-
-      if (tenantsErr) throw tenantsErr
-      setTenants(tenantsData || [])
-
-      // Get Rooms to assign
+      // Fetch rooms once we have pgDetails.id
       const { data: roomsData, error: roomsErr } = await supabase
         .from("rooms_table")
         .select("id, room_number, occupied_beds, total_beds, rent_amount")
@@ -394,16 +450,184 @@ export default function TenantsScreen() {
 
       if (roomsErr) throw roomsErr
       setRooms(roomsData || [])
+
+      // Generate or retrieve portal token
+      let activeToken = linkResult.data?.portal_token
+      if (!activeToken && user.id) {
+        activeToken = Math.random().toString(36).substring(2, 14)
+        void (async () => {
+          try {
+            await supabase
+              .from("monthly_payment_links")
+              .upsert({
+                owner_id: user.id,
+                month: currentMonth,
+                year: currentYear,
+                portal_token: activeToken
+              }, { onConflict: "owner_id,month,year" })
+          } catch (tokenErr) {
+            console.error("Error generating monthly payment link:", tokenErr)
+          }
+        })()
+      }
+      setPortalToken(activeToken || "")
+      hasLoadedOnce.current = true
+
+      // Trigger background status sync asynchronously
+      if (!statusSyncRunningRef.current) {
+        statusSyncRunningRef.current = true
+        void (async () => {
+          try {
+            const todayStr = new Date().toISOString().split("T")[0]
+            let hasChanges = false
+
+            // Auto-activate pending move-in tenants
+            const { data: activated } = await supabase
+              .from("tenants_table")
+              .update({ status: "active" })
+              .eq("owner_id", user.id)
+              .eq("status", "pending_move_in")
+              .lte("join_date", todayStr)
+              .select("id")
+
+            if (activated && activated.length > 0) {
+              hasChanges = true
+            }
+
+            // Fetch notice-period tenants whose exit date has arrived or passed
+            const { data: noticeTenants } = await supabase
+              .from("tenants_table")
+              .select("id, room_id")
+              .eq("owner_id", user.id)
+              .eq("status", "notice_period")
+              .lte("exit_date", todayStr)
+
+            if (noticeTenants && noticeTenants.length > 0) {
+              hasChanges = true
+              for (const tenant of noticeTenants) {
+                await supabase
+                  .from("tenants_table")
+                  .update({ status: "move_out", room_id: null })
+                  .eq("id", tenant.id)
+
+                if (tenant.room_id) {
+                  const { data: roomData } = await supabase
+                    .from("rooms_table")
+                    .select("occupied_beds")
+                    .eq("id", tenant.room_id)
+                    .single()
+
+                  if (roomData) {
+                    await supabase
+                      .from("rooms_table")
+                      .update({ occupied_beds: Math.max(roomData.occupied_beds - 1, 0) })
+                      .eq("id", tenant.room_id)
+                  }
+                }
+              }
+            }
+
+            if (hasChanges) {
+              void fetchData(true)
+            }
+          } catch (syncErr) {
+            console.error("Error syncing tenant statuses in background:", syncErr)
+          } finally {
+            statusSyncRunningRef.current = false
+          }
+        })()
+      }
     } catch (err) {
       console.error("Error fetching tenants:", err)
     } finally {
       setLoading(false)
+      setIsRefreshing(false)
+      fetchInProgressRef.current = false
     }
   }, [user?.id])
 
-  useEffect(() => {
-    void fetchData()
+  const buildWelcomeMessage = useCallback((tenant: Tenant, includeDeposit: boolean) => {
+    let msg = `Hello ${tenant.name || "Occupant"}! Welcome to ${pgName ? pgName : "our PG"}.`
+    if (ownerSettings?.whatsapp_invite_link) {
+      msg += ` Please join our WhatsApp group using this link: ${ownerSettings.whatsapp_invite_link}`
+    }
+    if (includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
+      const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
+      msg += `\n\nAdditionally, please process your security deposit fee of ₹${tenant.deposit_amount} via our secure payment portal: ${portalUrl}`
+    }
+    return msg
+  }, [ownerSettings?.whatsapp_invite_link, portalToken, pgName])
+
+  const handleSendInvite = async () => {
+    if (!justAddedTenant) return
+    setIsSaving(true)
+    try {
+      // 1. Create deposit payment record if checked
+      if (createDepositPayment && justAddedTenant.deposit_amount && justAddedTenant.deposit_amount > 0) {
+        const currentMonth = new Date().getMonth() + 1
+        const currentYear = new Date().getFullYear()
+        
+        const { error: payErr } = await supabase
+          .from("payments")
+          .insert({
+            tenant_id: justAddedTenant.id,
+            owner_id: user!.id,
+            month: currentMonth,
+            year: currentYear,
+            rent_amount: justAddedTenant.deposit_amount,
+            extra_charges: 0,
+            total_amount: justAddedTenant.deposit_amount,
+            due_date: justAddedTenant.join_date || new Date().toISOString().split("T")[0],
+            status: "pending",
+            verification_notes: "Security Deposit Fee"
+          })
+          
+        if (payErr) throw payErr
+      }
+
+      // 2. Open WhatsApp Web/App
+      const rawMobile = justAddedTenant.mobile_number || ""
+      const cleanMobile = rawMobile.replace(/\D/g, "")
+      
+      let formattedPhone = cleanMobile
+      if (cleanMobile.length === 10) {
+        formattedPhone = `91${cleanMobile}`
+      }
+      
+      const whatsappUrl = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(customInviteMessage)}`
+      
+      setWhatsappInviteModalVisible(false)
+      showToast("Invite Sent", "Redirecting to WhatsApp...", "success")
+      
+      try {
+        await Linking.openURL(whatsappUrl)
+      } catch (err) {
+        Alert.alert("WhatsApp Error", "Could not open WhatsApp. Please ensure it is installed.")
+      }
+      
+      setJustAddedTenant(null)
+      setCustomInviteMessage("")
+    } catch (err: any) {
+      console.error("Error creating deposit invoice or redirecting:", err)
+      Alert.alert("Error", err?.message || "Failed to process invitation")
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const onRefresh = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    setIsRefreshing(true)
+    void fetchData(true)
   }, [fetchData])
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        void fetchData(hasLoadedOnce.current)
+      }
+    }, [user?.id, fetchData])
+  )
 
   // Realtime subscription
   useEffect(() => {
@@ -415,7 +639,7 @@ export default function TenantsScreen() {
         "postgres_changes",
         { event: "*", schema: "public", table: "tenants_table", filter: `owner_id=eq.${user.id}` },
         () => {
-          void fetchData()
+          void fetchData(true)
         }
       )
       .subscribe()
@@ -429,17 +653,14 @@ export default function TenantsScreen() {
     if (!mobile) return
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     const telUrl = `tel:${mobile}`
-    const canCall = await Linking.canOpenURL(telUrl)
-
-    if (canCall) {
-      void Linking.openURL(telUrl)
-      return
+    try {
+      await Linking.openURL(telUrl)
+    } catch (error) {
+      Alert.alert(
+        "Call Not Supported",
+        `Calling is not available on this device/browser. Number: ${mobile}`
+      )
     }
-
-    Alert.alert(
-      "Call Not Supported",
-      `Calling is not available on this device/browser. Number: ${mobile}`
-    )
   }
 
   const openDetailSheet = async (tenant: Tenant) => {
@@ -555,10 +776,27 @@ export default function TenantsScreen() {
     if (!Number.isFinite(id)) return
     const match = tenants.find((t) => t.id === id)
     if (match) {
+      setStatusFilter("all")
+      setSearchQuery("")
       openDetailSheet(match)
       router.setParams({ tenant: undefined })
     }
   }, [tenantParam, loading, tenants])
+
+  useEffect(() => {
+    if (statusParam) {
+      setStatusFilter(statusParam)
+      router.setParams({ status: undefined })
+    }
+  }, [statusParam])
+
+  useEffect(() => {
+    if (searchParam) {
+      setSearchQuery(searchParam)
+      setStatusFilter("all")
+      router.setParams({ search: undefined })
+    }
+  }, [searchParam])
 
   const openAddModal = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -567,7 +805,7 @@ export default function TenantsScreen() {
     setMobileNumber("")
     setEmail("")
     setJoinDate(new Date().toISOString().split("T")[0])
-    setRentDueDay("5")
+    setRentDueDay((ownerSettings?.rent_due_day || 5).toString())
     setDepositAmount("10000")
     setExtraCharges("0")
     setSelectedRoomId("")
@@ -582,7 +820,7 @@ export default function TenantsScreen() {
     setFormModalVisible(true)
   }
 
-  const openEditModal = async (tenant: Tenant) => {
+  const openEditModal = (tenant: Tenant) => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     setEditingTenant(tenant)
     setName(tenant.name || "")
@@ -598,36 +836,288 @@ export default function TenantsScreen() {
     setRoomSearchQuery("")
     setSelectedIdType("")
     
-    // Load existing documents with signed URLs for form previews
+    // Clear/initialize documents instantly so modal opens without lag
     const docs = (tenant.id_documents as any[]) || []
-    const mappedDocs = []
-    for (const d of docs) {
-      let signedUrl = ""
-      try {
-        const { data, error } = await supabase.storage
-          .from("staytraq_docs")
-          .createSignedUrl(d.url, 3600)
-        if (!error && data?.signedUrl) {
-          signedUrl = data.signedUrl
-        }
-      } catch (err) {
-        console.error("Failed to load edit signed URL", err)
-      }
-      mappedDocs.push({
-        type: d.type,
-        url: d.url,
-        uri: signedUrl || undefined,
-        name: d.url.split('/').pop() || 'document.jpg',
-        mimeType: "image/jpeg",
-      })
-    }
-    setIdDocs(mappedDocs)
+    const initialDocs = docs.map((d) => ({
+      type: d.type,
+      url: d.url,
+      uri: undefined as string | undefined,
+      name: d.url.split("/").pop() || "document.jpg",
+      mimeType: "image/jpeg",
+    }))
+    setIdDocs(initialDocs)
     
     setIsSaving(false)
     setOpenDropdown(null)
     setError(null)
-    setDetailModalVisible(false) // Close detail if editing from detail sheet
-    setFormModalVisible(true)
+    setFormModalVisible(true) // Open edit form overlay immediately
+
+    // Fetch signed URLs asynchronously in the background
+    if (docs.length > 0) {
+      void (async () => {
+        const mappedDocs = []
+        for (const d of docs) {
+          let signedUrl = ""
+          try {
+            const { data, error } = await supabase.storage
+              .from("staytraq_docs")
+              .createSignedUrl(d.url, 3600)
+            if (!error && data?.signedUrl) {
+              signedUrl = data.signedUrl
+            }
+          } catch (err) {
+            console.error("Failed to load edit signed URL", err)
+          }
+          mappedDocs.push({
+            type: d.type,
+            url: d.url,
+            uri: signedUrl || undefined,
+            name: d.url.split("/").pop() || "document.jpg",
+            mimeType: "image/jpeg",
+          })
+        }
+        setIdDocs(mappedDocs)
+      })()
+    }
+  }
+
+  const handleQuickSettleDues = async () => {
+    if (!selectedTenant) return
+    try {
+      setIsSettlingDues(true)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+
+      const unpaidIds = paymentHistory
+        .filter(p => p.status === "pending" || p.status === "late" || p.status === "submitted")
+        .map(p => p.id)
+
+      if (unpaidIds.length === 0) return
+
+      const now = new Date().toISOString()
+      
+      // Update in payments table
+      const { error } = await supabase
+        .from("payments")
+        .update({
+          status: "paid",
+          paid_at: now,
+          verified_at: now,
+          payment_method: "Cash"
+        })
+        .in("id", unpaidIds)
+
+      if (error) throw error
+
+      // Insert audit logs
+      for (const payId of unpaidIds) {
+        await supabase.from("payment_audit_log").insert({
+          payment_id: payId,
+          owner_id: user!.id,
+          action: "proof_approved",
+          old_status: "pending",
+          new_status: "paid",
+          notes: "Outstanding dues settled during checkout/move-out flow"
+        })
+      }
+
+      showToast("Dues Settled", `All unpaid dues have been marked as paid successfully.`, "success")
+      
+      // Update local state
+      setPaymentHistory(prev =>
+        prev.map(p => unpaidIds.includes(p.id) ? { ...p, status: "paid", paid_at: now, verified_at: now, payment_method: "Cash" } : p)
+      )
+      
+      // Recalculate refund input to default to full security deposit since dues are cleared
+      setDepositRefundAmount((selectedTenant.deposit_amount || 0).toString())
+
+    } catch (err: any) {
+      console.error("Failed to settle dues:", err)
+      Alert.alert("Error", err.message || "Failed to settle outstanding dues.")
+    } finally {
+      setIsSettlingDues(false)
+    }
+  }
+
+  // Compute upcoming rent payment records between today and the move-out date
+  const computeUpcomingPayments = useCallback(() => {
+    if (!selectedTenant || !moveOutDate) return
+    const rentDueDay = selectedTenant.rent_due_day
+    if (!rentDueDay) return
+
+    const today = new Date()
+    const exitDate = new Date(moveOutDate)
+    const upcoming: any[] = []
+
+    // Start from next month's due date
+    let current = new Date(today.getFullYear(), today.getMonth(), rentDueDay)
+    if (current <= today) {
+      current.setMonth(current.getMonth() + 1)
+    }
+
+    while (current <= exitDate) {
+      const month = current.getMonth() + 1
+      const year = current.getFullYear()
+
+      // Check if this record already exists in paymentHistory
+      const exists = paymentHistory.some(
+        p => p.month === month && p.year === year
+      )
+
+      if (!exists) {
+        const rentAmount = selectedTenant.rooms_table?.rent_amount || 0
+        const extraChargesAmt = selectedTenant.extra_charges || 0
+        upcoming.push({
+          id: null, // Not yet created — marker for upcoming
+          month,
+          year,
+          rent_amount: rentAmount,
+          extra_charges: extraChargesAmt,
+          total_amount: rentAmount + extraChargesAmt,
+          due_date: current.toISOString().split("T")[0],
+          status: "upcoming",
+          isUpcoming: true,
+        })
+      }
+
+      current.setMonth(current.getMonth() + 1)
+    }
+
+    setUpcomingPayments(upcoming)
+  }, [selectedTenant, moveOutDate, paymentHistory])
+
+  const handleConfirmMoveOut = async () => {
+    if (!selectedTenant || !user?.id) return
+    try {
+      setIsCheckingOut(true)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+
+      const todayStr = new Date().toISOString().split("T")[0]
+      const status: Tenant["status"] = moveOutDate > todayStr ? "notice_period" : "move_out"
+      const refundAmt = parseFloat(depositRefundAmount) || 0
+
+      // Build tenant update payload
+      const tenantUpdate: any = {
+        status,
+        exit_date: moveOutDate,
+        deposit_refund_amount: refundAmt,
+        room_id: status === "move_out" ? null : selectedTenant.room_id,
+      }
+
+      // Handle deposit deduction
+      if (selectedDeductionPayment && refundAmt > 0 && !deductionLocked) {
+        const previousDeductionPaymentId = selectedTenant.deduction_payment_id
+        const previousOriginalAmount = selectedTenant.original_payment_amount
+
+        // 1. Restore previous deduction if switching to a different payment
+        if (previousDeductionPaymentId && previousOriginalAmount !== null && previousDeductionPaymentId !== selectedDeductionPayment.id) {
+          await supabase
+            .from("payments")
+            .update({
+              rent_amount: previousOriginalAmount,
+              total_amount: previousOriginalAmount + (paymentHistory.find(p => p.id === previousDeductionPaymentId)?.extra_charges || 0),
+              verification_notes: null,
+            })
+            .eq("id", previousDeductionPaymentId)
+
+          await supabase.from("payment_audit_log").insert({
+            payment_id: previousDeductionPaymentId,
+            owner_id: user.id,
+            action: "deposit_deduction_reversed",
+            notes: `Deposit deduction reversed. Amount restored to ₹${previousOriginalAmount}`,
+          })
+        }
+
+        // 2. Apply deduction to the selected payment
+        if (selectedDeductionPayment.id) {
+          // Existing payment record — update directly
+          const originalRent = selectedDeductionPayment.rent_amount
+          const originalTotal = selectedDeductionPayment.total_amount
+          const newRent = Math.max(originalRent - refundAmt, 0)
+          const newTotal = Math.max(originalTotal - refundAmt, 0)
+
+          await supabase
+            .from("payments")
+            .update({
+              rent_amount: newRent,
+              total_amount: newTotal,
+              verification_notes: `₹${refundAmt} deducted from deposit refund`,
+            })
+            .eq("id", selectedDeductionPayment.id)
+
+          await supabase.from("payment_audit_log").insert({
+            payment_id: selectedDeductionPayment.id,
+            owner_id: user.id,
+            action: "deposit_deduction",
+            notes: `₹${refundAmt} deducted from deposit. Original: ₹${originalTotal}, New: ₹${newTotal}`,
+          })
+
+          // Save deduction tracking on tenant
+          tenantUpdate.deduction_payment_id = selectedDeductionPayment.id
+          tenantUpdate.original_payment_amount = originalRent
+          tenantUpdate.pending_deposit_deduction = null
+          tenantUpdate.deduction_target_month = null
+          tenantUpdate.deduction_target_year = null
+        } else {
+          // Upcoming payment (not yet created) — store pending deduction for edge function
+          tenantUpdate.pending_deposit_deduction = refundAmt
+          tenantUpdate.deduction_target_month = selectedDeductionPayment.month
+          tenantUpdate.deduction_target_year = selectedDeductionPayment.year
+          tenantUpdate.deduction_payment_id = null
+          tenantUpdate.original_payment_amount = null
+        }
+      } else if (!selectedDeductionPayment && !deductionLocked) {
+        // No deduction selected — clear any previous tracking
+        tenantUpdate.deduction_payment_id = null
+        tenantUpdate.original_payment_amount = null
+        tenantUpdate.pending_deposit_deduction = null
+        tenantUpdate.deduction_target_month = null
+        tenantUpdate.deduction_target_year = null
+      }
+
+      // Update tenant record
+      const { error: tenantErr } = await supabase
+        .from("tenants_table")
+        .update(tenantUpdate)
+        .eq("id", selectedTenant.id)
+
+      if (tenantErr) throw tenantErr
+
+      // If they are checking out immediately (status === 'move_out') and were in a room, vacate the room bed
+      if (status === "move_out" && selectedTenant.room_id) {
+        const { data: roomData } = await supabase
+          .from("rooms_table")
+          .select("occupied_beds")
+          .eq("id", selectedTenant.room_id)
+          .single()
+
+        if (roomData) {
+          await supabase
+            .from("rooms_table")
+            .update({ occupied_beds: Math.max(roomData.occupied_beds - 1, 0) })
+            .eq("id", selectedTenant.room_id)
+        }
+      }
+
+      setMoveOutModalVisible(false)
+      setDetailModalVisible(false)
+      setDeductionMode(false)
+      setSelectedDeductionPayment(null)
+      
+      if (status === "notice_period") {
+        showToast("Notice Period Scheduled", `${selectedTenant.name} is now in notice period.`, "success")
+      } else {
+        showToast("Move Out Completed", `${selectedTenant.name} has been successfully checked out.`, "success")
+      }
+
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      void fetchData()
+    } catch (err: any) {
+      console.error("Checkout error:", err)
+      Alert.alert("Error", err.message || "Could not complete checkout.")
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+    } finally {
+      setIsCheckingOut(false)
+    }
   }
 
   const rentDueDayOptions = useMemo(() => {
@@ -791,6 +1281,12 @@ export default function TenantsScreen() {
         }
       }
 
+      const todayStr = new Date().toISOString().split("T")[0]
+      const calculatedStatus: Tenant["status"] = (joinDate && joinDate > todayStr) ? "pending_move_in" : "active"
+      const finalStatus: Tenant["status"] = editingTenant 
+        ? ((editingTenant.status === "active" || editingTenant.status === "pending_move_in") ? calculatedStatus : editingTenant.status)
+        : calculatedStatus
+
       const tenantPayload = {
         name: name.trim(),
         mobile_number: mobileNumber.trim() || null,
@@ -800,7 +1296,7 @@ export default function TenantsScreen() {
         deposit_amount: parseInt(depositAmount, 10) || 0,
         extra_charges: parseInt(extraCharges, 10) || 0,
         room_id: targetRoomId,
-        status: editingTenant ? editingTenant.status : "active",
+        status: finalStatus,
         notes: notes.trim() || null,
         owner_id: user.id,
         pg_id: pgId,
@@ -817,11 +1313,31 @@ export default function TenantsScreen() {
         if (editErr) throw editErr
       } else {
         // Insert tenant
-        const { error: insertErr } = await supabase
+        const { data: insertedData, error: insertErr } = await supabase
           .from("tenants_table")
           .insert(tenantPayload)
+          .select()
+          .single()
 
         if (insertErr) throw insertErr
+
+        // Open WhatsApp Invite popup for newly added occupant
+        if (insertedData) {
+          setJustAddedTenant(insertedData)
+          setCreateDepositPayment(insertedData.deposit_amount ? insertedData.deposit_amount > 0 : false)
+          
+          // Generate message text dynamically
+          let msg = `Hello ${insertedData.name || "Occupant"}! Welcome to ${pgName ? pgName : "our PG"}.`
+          if (ownerSettings?.whatsapp_invite_link) {
+            msg += ` Please join our WhatsApp group using this link: ${ownerSettings.whatsapp_invite_link}`
+          }
+          if (insertedData.deposit_amount && insertedData.deposit_amount > 0) {
+            const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
+            msg += `\n\nAdditionally, please process your security deposit fee of ₹${insertedData.deposit_amount} via our secure payment portal: ${portalUrl}`
+          }
+          setCustomInviteMessage(msg)
+          setWhatsappInviteModalVisible(true)
+        }
       }
 
       // Update occupied beds on the rooms if room assignment changed
@@ -849,6 +1365,9 @@ export default function TenantsScreen() {
       }
 
       setFormModalVisible(false)
+      if (editingTenant) {
+        setDetailModalVisible(false)
+      }
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       if (editingTenant) {
         showToast("Profile Updated", `Profile for ${name} has been successfully updated.`, "success")
@@ -881,14 +1400,15 @@ export default function TenantsScreen() {
     try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
       
-      const { error: deleteErr } = await supabase
+      // Soft delete: Mark tenant as deleted instead of removing from database
+      const { error: softDeleteErr } = await (supabase as any)
         .from("tenants_table")
-        .delete()
+        .update({ deleted_at: new Date().toISOString() })
         .eq("id", tenantId)
 
-      if (deleteErr) throw deleteErr
+      if (softDeleteErr) throw softDeleteErr
 
-      // Dec old room beds if deleted
+      // Decrement room occupied beds if tenant was assigned to a room
       if (roomId) {
         const matchedRoom = rooms.find(r => r.id === roomId)
         if (matchedRoom) {
@@ -901,11 +1421,12 @@ export default function TenantsScreen() {
 
       setDetailModalVisible(false)
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-      showToast("Occupant Deleted", "Occupant profile has been permanently removed.", "success")
+      showToast("Occupant Deleted", "Occupant has been removed from your directory. All payment records are preserved.", "success")
       void fetchData()
     } catch (err: any) {
       console.error(err)
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      Alert.alert("Deletion Error", err.message || "Failed to delete occupant.")
     }
   }
 
@@ -1189,11 +1710,24 @@ export default function TenantsScreen() {
     })
   }, [rooms, editingTenant])
 
-  // Filtered tenants
+  // Filtered tenants (exclude move_out from main list unless specifically filtered)
   const filteredTenants = tenants.filter((tenant) => {
     const nameMatch = (tenant.name || "").toLowerCase().includes(searchQuery.toLowerCase())
     const phoneMatch = (tenant.mobile_number || "").includes(searchQuery)
-    const statusMatch = statusFilter === "all" || tenant.status === statusFilter
+    
+    // Status filtering logic
+    let statusMatch = false
+    if (statusFilter === "all") {
+      // "All" shows active, pending_move_in, and notice_period only (not move_out)
+      statusMatch = tenant.status !== "move_out"
+    } else if (statusFilter === "move_out") {
+      // "Move Out" shows only moved-out tenants
+      statusMatch = tenant.status === "move_out"
+    } else {
+      // Specific status filter
+      statusMatch = tenant.status === statusFilter
+    }
+    
     return (nameMatch || phoneMatch) && statusMatch
   })
 
@@ -1282,20 +1816,20 @@ export default function TenantsScreen() {
 
       {/* Search Input */}
       <View className="px-6 mb-4">
-        <View className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-2.5 shadow-sm">
+        <View className="flex-row items-center border border-border dark:border-border-dark bg-card dark:bg-card-dark rounded-2xl px-4 py-1.5 shadow-sm">
           <View className="mr-3">
-            <Search size={18} color="#9ca3af" />
+            <Search size={16} color="#9ca3af" />
           </View>
           <TextInput
             value={searchQuery}
             onChangeText={setSearchQuery}
             placeholder="Search by name or mobile..."
             placeholderTextColor="#9ca3af"
-            className="flex-1 text-base text-foreground dark:text-foreground-dark"
+            className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery("")}>
-              <X size={18} color="#9ca3af" />
+              <X size={16} color="#9ca3af" />
             </TouchableOpacity>
           )}
         </View>
@@ -1335,12 +1869,19 @@ export default function TenantsScreen() {
 
       {/* Tenant Directory */}
       {filteredTenants.length === 0 ? (
-        <View className="flex-1 items-center justify-center px-12">
+        <ScrollView
+          className="flex-1"
+          contentContainerStyle={{ flexGrow: 1, justifyContent: "center", alignItems: "center", paddingHorizontal: 48 }}
+          refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={isDark ? "#0091ff" : "#0071df"} />}
+        >
           <User size={48} color="#9ca3af" />
           <Text className="text-sm font-semibold text-muted dark:text-muted-dark mt-4 text-center">
             No tenants found
           </Text>
-        </View>
+          <Text className="text-xs text-muted/60 dark:text-muted-dark/60 mt-2 text-center">
+            Pull down to refresh
+          </Text>
+        </ScrollView>
       ) : (
         <View className="flex-1 px-6">
           <FlashList
@@ -1348,6 +1889,7 @@ export default function TenantsScreen() {
             keyExtractor={(item) => `${item.id}-${item.status}`}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 110 }}
+            refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={isDark ? "#0091ff" : "#0071df"} />}
             renderItem={({ item }) => {
               let badgeBgBorder = "bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30"
               let badgeTextColor = "text-emerald-600 dark:text-emerald-400"
@@ -1418,7 +1960,7 @@ export default function TenantsScreen() {
 
       {/* Drawer 1: Tenant Detail Sheet */}
       <Modal
-        animationType="slide"
+        animationType="none"
         transparent={true}
         visible={detailModalVisible}
         onRequestClose={() => setDetailModalVisible(false)}
@@ -1513,38 +2055,56 @@ export default function TenantsScreen() {
                     contentContainerStyle={{ gap: 16 }} 
                     className="flex-shrink flex-grow-0 mb-6"
                   >
-                    {/* Room Assignment Highlighted Card */}
-                    <View className="rounded-3xl mb-1 overflow-hidden relative border border-primary/20">
-                      <LinearGradient
-                        colors={isDark ? ["rgba(0, 145, 255, 0.15)", "rgba(0, 71, 223, 0.05)"] : ["rgba(0, 145, 255, 0.08)", "rgba(0, 71, 223, 0.03)"]}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                        style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
-                      />
-                      <View className="p-4 flex-row justify-between items-center">
-                        <View className="flex-row items-center flex-1 mr-3">
-                          <View className="h-10 w-10 bg-primary/20 rounded-full items-center justify-center mr-3">
-                            <Hotel size={18} color={isDark ? "#0091ff" : "#0071df"} />
-                          </View>
-                          <View className="flex-1">
-                            <Text className="text-[10px] font-black text-primary uppercase tracking-wider">Assigned Room</Text>
-                            <Text className="text-base font-extrabold text-foreground dark:text-foreground-dark mt-0.5">
-                              Room {selectedTenant.rooms_table?.room_number || "Unassigned"}
-                            </Text>
-                          </View>
-                        </View>
-                        <TouchableOpacity
-                          onPress={() => {
-                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                            setRoomChangeSearchQuery("")
-                            setChangeRoomModalVisible(true)
-                          }}
-                          className="bg-primary px-4 py-2.5 rounded-xl shadow-lg shadow-primary/20 active:scale-95"
-                        >
-                          <Text className="text-xs font-bold text-white">Change Room</Text>
-                        </TouchableOpacity>
+                    {/* Notice Period / Pending Move In Warning Notes */}
+                    {selectedTenant.status !== "move_out" && (selectedTenant.status === "notice_period" || selectedTenant.status === "pending_move_in") && (
+                      <View className={`rounded-2xl p-3 mb-2 flex-row items-center gap-2 border ${
+                        selectedTenant.status === "pending_move_in"
+                          ? "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200/80 dark:border-emerald-900/40"
+                          : "bg-purple-50 dark:bg-purple-950/30 border-purple-200/80 dark:border-purple-900/40"
+                      }`}>
+                        <Info size={14} color={selectedTenant.status === "pending_move_in" ? "#10b981" : "#8b5cf6"} />
+                        <Text className="text-[10px] font-bold text-foreground dark:text-foreground-dark flex-1">
+                          {selectedTenant.status === "pending_move_in"
+                            ? `Joining on ${selectedTenant.join_date ? new Date(selectedTenant.join_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}`
+                            : `Moving out on ${selectedTenant.exit_date ? new Date(selectedTenant.exit_date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}`
+                          }
+                        </Text>
                       </View>
-                    </View>
+                    )}
+                    {/* Room Assignment Highlighted Card - Only show for active/pending/notice_period tenants */}
+                    {selectedTenant.status !== "move_out" && (
+                      <View className="rounded-3xl mb-1 overflow-hidden relative border border-primary/20">
+                        <LinearGradient
+                          colors={isDark ? ["rgba(0, 145, 255, 0.15)", "rgba(0, 71, 223, 0.05)"] : ["rgba(0, 145, 255, 0.08)", "rgba(0, 71, 223, 0.03)"]}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                          style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0 }}
+                        />
+                        <View className="p-4 flex-row justify-between items-center">
+                          <View className="flex-row items-center flex-1 mr-3">
+                            <View className="h-10 w-10 bg-primary/20 rounded-full items-center justify-center mr-3">
+                              <Hotel size={18} color={isDark ? "#0091ff" : "#0071df"} />
+                            </View>
+                            <View className="flex-1">
+                              <Text className="text-[10px] font-black text-primary uppercase tracking-wider">Assigned Room</Text>
+                              <Text className="text-base font-extrabold text-foreground dark:text-foreground-dark mt-0.5">
+                                Room {selectedTenant.rooms_table?.room_number || "Unassigned"}
+                              </Text>
+                            </View>
+                          </View>
+                          <TouchableOpacity
+                            onPress={() => {
+                              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                              setRoomChangeSearchQuery("")
+                              setChangeRoomModalVisible(true)
+                            }}
+                            className="bg-primary px-4 py-2.5 rounded-xl shadow-lg shadow-primary/20 active:scale-95"
+                          >
+                            <Text className="text-xs font-bold text-white">Change Room</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
                     {/* Phone */}
                     {selectedTenant.mobile_number && (
                       <View className="flex-row items-center justify-between py-3 border-b border-border/40 dark:border-border-dark/40">
@@ -1554,10 +2114,22 @@ export default function TenantsScreen() {
                           </View>
                           <Text className="text-sm font-semibold text-muted dark:text-muted-dark">Phone Number</Text>
                         </View>
-                        <TouchableOpacity onPress={() => handleCallTenant(selectedTenant.mobile_number)} className="flex-row items-center bg-primary/10 px-3 py-1.5 rounded-xl">
-                          <Text className="text-xs font-black text-primary mr-1.5">{selectedTenant.mobile_number}</Text>
-                          <Phone size={12} color={isDark ? "#0091ff" : "#0071df"} />
-                        </TouchableOpacity>
+                        <View className="flex-row items-center gap-2">
+                          <TouchableOpacity onPress={() => handleCallTenant(selectedTenant.mobile_number)} className="flex-row items-center bg-primary/10 px-3 py-1.5 rounded-xl active:scale-95">
+                            <Text className="text-xs font-black text-primary mr-1.5">{selectedTenant.mobile_number}</Text>
+                            <Phone size={12} color={isDark ? "#0091ff" : "#0071df"} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                              Clipboard.setString(selectedTenant.mobile_number || "")
+                              showToast("Copied", "Phone number copied to clipboard.", "success")
+                            }}
+                            className="bg-primary/10 p-2 rounded-xl active:scale-95 items-center justify-center animate-none"
+                          >
+                            <Copy size={12} color={isDark ? "#0091ff" : "#0071df"} />
+                          </TouchableOpacity>
+                        </View>
                       </View>
                     )}
 
@@ -1810,36 +2382,122 @@ export default function TenantsScreen() {
 
                 {/* Primary Actions */}
                 <View className="flex-row gap-2.5 pt-3 border-t border-border/40 dark:border-border-dark/40 pb-4">
-                  <TouchableOpacity
-                    onPress={() => requestDeleteTenant(selectedTenant.id, selectedTenant.room_id)}
-                    className="h-12 w-12 border border-destructive/20 bg-destructive/5 rounded-xl items-center justify-center active:scale-95"
-                  >
-                    <Trash2 size={20} color="#ef4444" />
-                  </TouchableOpacity>
+                  {selectedTenant.status === "move_out" ? (
+                    // Moved Out Tenant: WhatsApp + Delete (No Edit Profile)
+                    <>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const phone = selectedTenant?.mobile_number
+                          if (!phone) {
+                            Alert.alert("Missing Phone Number", "This tenant does not have a registered mobile number.")
+                            return
+                          }
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          const formattedPhone = formatWhatsAppNumber(phone)
+                          const url = `https://wa.me/${formattedPhone}`
+                          void Linking.openURL(url).catch(err => {
+                            console.error("Error opening WhatsApp:", err)
+                            Alert.alert("Error", "Could not launch WhatsApp.")
+                          })
+                        }}
+                        className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                      >
+                        <WhatsAppIcon size={20} color="#10b981" />
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={() => {
-                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                      setRoomChangeSearchQuery("")
-                      setChangeRoomModalVisible(true)
-                    }}
-                    className="flex-1 border border-primary/20 bg-primary/5 rounded-xl h-12 items-center justify-center flex-row active:scale-95"
-                  >
-                    <View className="mr-1.5">
-                      <Hotel size={18} color={isDark ? "#0091ff" : "#0071df"} />
-                    </View>
-                    <Text className="text-primary text-sm font-extrabold">Change Room</Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => requestDeleteTenant(selectedTenant.id, selectedTenant.room_id)}
+                        className="flex-1 bg-destructive rounded-xl h-12 items-center justify-center flex-row shadow-lg shadow-destructive/20 active:scale-95"
+                      >
+                        <View className="mr-1.5">
+                          <Trash2 size={18} color="#ffffff" />
+                        </View>
+                        <Text className="text-white text-sm font-bold">Delete Record</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    // Standard Tenant: WhatsApp + Move Out + Edit Profile
+                    <>
+                      <TouchableOpacity
+                        onPress={() => {
+                          const phone = selectedTenant?.mobile_number
+                          if (!phone) {
+                            Alert.alert("Missing Phone Number", "This tenant does not have a registered mobile number.")
+                            return
+                          }
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          const formattedPhone = formatWhatsAppNumber(phone)
+                          const url = `https://wa.me/${formattedPhone}`
+                          void Linking.openURL(url).catch(err => {
+                            console.error("Error opening WhatsApp:", err)
+                            Alert.alert("Error", "Could not launch WhatsApp.")
+                          })
+                        }}
+                        className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                      >
+                        <WhatsAppIcon size={20} color="#10b981" />
+                      </TouchableOpacity>
 
-                  <TouchableOpacity
-                    onPress={() => openEditModal(selectedTenant)}
-                    className="flex-1 bg-primary rounded-xl h-12 items-center justify-center flex-row shadow-lg shadow-primary/20 active:scale-95"
-                  >
-                    <View className="mr-1.5">
-                      <Edit3 size={18} color="#ffffff" />
-                    </View>
-                    <Text className="text-white text-sm font-bold">Edit Profile</Text>
-                  </TouchableOpacity>
+                      <TouchableOpacity
+                        onPress={() => {
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          // Pre-fill with saved values for notice_period tenants
+                          if (selectedTenant.status === "notice_period" && selectedTenant.exit_date) {
+                            setMoveOutDate(selectedTenant.exit_date)
+                            setDepositRefundAmount(
+                              (selectedTenant.deposit_refund_amount ?? Math.floor((selectedTenant.deposit_amount || 0) * 0.5)).toString()
+                            )
+                          } else {
+                            setMoveOutDate(new Date().toISOString().split("T")[0])
+                            const fiftyPercent = Math.floor((selectedTenant.deposit_amount || 0) * 0.5)
+                            setDepositRefundAmount(fiftyPercent.toString())
+                          }
+
+                          // Check if previous deduction was applied and if that payment is now paid
+                          if (selectedTenant.deduction_payment_id) {
+                            const deductedPayment = paymentHistory.find(p => p.id === selectedTenant.deduction_payment_id)
+                            if (deductedPayment && deductedPayment.status === "paid") {
+                              // Previously deducted payment is paid — lock deduction
+                              setDeductionLocked(true)
+                              setSelectedDeductionPayment(deductedPayment)
+                              setDeductionMode(true)
+                            } else if (deductedPayment) {
+                              // Still unpaid — allow editing
+                              setDeductionLocked(false)
+                              setSelectedDeductionPayment(deductedPayment)
+                              setDeductionMode(true)
+                            } else {
+                              setDeductionLocked(false)
+                              setSelectedDeductionPayment(null)
+                              setDeductionMode(false)
+                            }
+                          } else {
+                            setDeductionLocked(false)
+                            setSelectedDeductionPayment(null)
+                            setDeductionMode(false)
+                          }
+                          setUpcomingPayments([])
+                          setMoveOutModalVisible(true)
+                        }}
+                        className="flex-1 border border-primary/20 bg-primary/5 rounded-xl h-12 items-center justify-center flex-row active:scale-95"
+                      >
+                        <View className="mr-1.5">
+                          <LogOut size={18} color={isDark ? "#0091ff" : "#0071df"} />
+                        </View>
+                        <Text className="text-primary text-sm font-extrabold">Move Out</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        onPress={() => openEditModal(selectedTenant)}
+                        className="flex-1 bg-primary rounded-xl h-12 items-center justify-center flex-row shadow-lg shadow-primary/20 active:scale-95"
+                      >
+                        <View className="mr-1.5">
+                          <Edit3 size={18} color="#ffffff" />
+                        </View>
+                        <Text className="text-white text-sm font-bold">Edit Profile</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
                 </View>
               </View>
             )}
@@ -1849,7 +2507,7 @@ export default function TenantsScreen() {
       </Modal>
 
       <Modal
-        animationType="slide"
+        animationType="none"
         transparent={true}
         visible={formModalVisible}
         onRequestClose={() => setFormModalVisible(false)}
@@ -1916,6 +2574,7 @@ export default function TenantsScreen() {
                   value={mobileNumber}
                   onChangeText={setMobileNumber}
                   keyboardType="phone-pad"
+                  maxLength={10}
                   placeholder="10-digit number"
                   placeholderTextColor="#9ca3af"
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark"
@@ -1939,7 +2598,7 @@ export default function TenantsScreen() {
               </View>
 
               {/* Grid: Join Date & Rent Due Day */}
-              <View className="flex-row gap-3 z-50">
+              <View className="flex-row gap-3 z-50" style={{ overflow: 'visible' }}>
                 <View className="flex-1">
                   <ThemeDatePicker
                     value={joinDate}
@@ -1949,7 +2608,7 @@ export default function TenantsScreen() {
                   />
                 </View>
 
-                <View className="flex-1">
+                <View className="flex-1" style={{ overflow: 'visible', zIndex: 100 }}>
                   <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Rent Due Day</Text>
                   <InlineSelect
                     options={rentDueDayOptions}
@@ -2240,7 +2899,7 @@ export default function TenantsScreen() {
 
       {/* Document Viewer Modal */}
       <Modal
-        animationType="fade"
+        animationType="none"
         transparent={true}
         visible={viewerVisible}
         onRequestClose={() => setViewerVisible(false)}
@@ -2304,9 +2963,282 @@ export default function TenantsScreen() {
         icon={<Trash2 size={24} color="#ef4444" />}
       />
 
+      {/* Move Out Flow Modal */}
+      <Modal
+        animationType="none"
+        transparent={true}
+        visible={moveOutModalVisible}
+        onRequestClose={() => setMoveOutModalVisible(false)}
+      >
+        <View className="flex-1 bg-black/60 justify-end">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            className="w-full"
+          >
+            {selectedTenant && (() => {
+              const unpaidPayments = paymentHistory.filter(
+                p => p.status === "pending" || p.status === "late" || p.status === "submitted"
+              )
+              const unpaidTotal = unpaidPayments.reduce((acc, curr) => acc + (curr.rent_amount || 0) + (curr.extra_charges || 0), 0)
+              
+              return (
+                <View className="bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark p-6">
+                  {/* Header */}
+                  <View className="flex-row justify-between items-center mb-6">
+                    <View>
+                      <Text className="text-xl font-black text-foreground dark:text-foreground-dark">
+                        Schedule Move Out
+                      </Text>
+                      <Text className="text-xs text-muted mt-0.5 font-medium">Configure move out details for {selectedTenant.name}</Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setMoveOutModalVisible(false)}
+                      className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
+                    >
+                      <X size={20} color="#9ca3af" />
+                    </TouchableOpacity>
+                  </View>
+
+                  <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ gap: 16, paddingBottom: 24 }} className="mb-6 max-h-[480px]">
+                    {/* Date Picker */}
+                    <ThemeDatePicker
+                      value={moveOutDate}
+                      onChange={(date) => {
+                        setMoveOutDate(date)
+                        // Only auto-set refund for fresh move-outs (not already in notice_period)
+                        if (selectedTenant.status !== "notice_period" && !deductionLocked) {
+                          const todayStr = new Date().toISOString().split("T")[0]
+                          if (date > todayStr) {
+                            const fiftyPercent = Math.floor((selectedTenant.deposit_amount || 0) * 0.5)
+                            setDepositRefundAmount(fiftyPercent.toString())
+                          } else {
+                            if (unpaidTotal > 0) {
+                              const calculated = Math.max((selectedTenant.deposit_amount || 0) - unpaidTotal, 0)
+                              setDepositRefundAmount(calculated.toString())
+                            } else {
+                              const fiftyPercent = Math.floor((selectedTenant.deposit_amount || 0) * 0.5)
+                              setDepositRefundAmount(fiftyPercent.toString())
+                            }
+                          }
+                        }
+                      }}
+                      label="Move Out Date"
+                      placeholder="YYYY-MM-DD"
+                    />
+
+                    {/* Unresolved Dues Warning + Deduction UI */}
+                    {(() => {
+                      const allDeductiblePayments = [
+                        ...unpaidPayments,
+                        ...upcomingPayments,
+                      ]
+                      const refundAmt = parseFloat(depositRefundAmount) || 0
+
+                      return allDeductiblePayments.length > 0 || deductionMode ? (
+                        <View className="bg-amber-500/5 border border-amber-500/20 p-4 rounded-3xl gap-3">
+                          <View className="flex-row items-center gap-2">
+                            <AlertTriangle size={18} color="#f59e0b" />
+                            <Text className="text-sm font-extrabold text-amber-600 dark:text-amber-400">
+                              {deductionLocked ? "Deposit Deduction Applied" : "Unresolved Dues Detected"}
+                            </Text>
+                          </View>
+
+                          {deductionLocked ? (
+                            <View className="flex-row items-center gap-2 bg-amber-500/10 p-3 rounded-xl">
+                              <Lock size={14} color="#f59e0b" />
+                              <Text className="text-xs text-amber-600 dark:text-amber-400 font-medium flex-1">
+                                The previously deducted payment has been paid. Deduction settings are locked.
+                              </Text>
+                            </View>
+                          ) : (
+                            <>
+                              <Text className="text-xs text-muted dark:text-muted-dark leading-relaxed">
+                                This occupant has <Text className="font-bold text-foreground dark:text-foreground-dark">{unpaidPayments.length} unpaid billing record{unpaidPayments.length !== 1 ? "s" : ""}</Text> totaling <Text className="font-bold text-foreground dark:text-foreground-dark">₹{unpaidTotal.toLocaleString()}</Text>.
+                              </Text>
+
+                              <View className="flex-row gap-2 mt-1">
+                                <TouchableOpacity
+                                  onPress={handleQuickSettleDues}
+                                  disabled={isSettlingDues}
+                                  className="bg-amber-500/10 border border-amber-500/20 px-4 py-2.5 rounded-xl flex-1 items-center justify-center active:scale-95"
+                                >
+                                  {isSettlingDues ? (
+                                    <ActivityIndicator size="small" color="#f59e0b" />
+                                  ) : (
+                                    <Text className="text-amber-600 dark:text-amber-400 text-xs font-bold">
+                                      Settle Dues (Cash)
+                                    </Text>
+                                  )}
+                                </TouchableOpacity>
+
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    const newMode = !deductionMode
+                                    setDeductionMode(newMode)
+                                    if (newMode) {
+                                      computeUpcomingPayments()
+                                    }
+                                  }}
+                                  className={`border px-4 py-2.5 rounded-xl flex-1 items-center justify-center active:scale-95 ${
+                                    deductionMode
+                                      ? "bg-primary/20 border-primary/40"
+                                      : "bg-primary/10 border-primary/20"
+                                  }`}
+                                >
+                                  <Text className="text-primary text-xs font-bold">
+                                    {deductionMode ? "Hide Records" : "Deduct from Deposit"}
+                                  </Text>
+                                </TouchableOpacity>
+                              </View>
+
+                              {/* Selectable Payment Records */}
+                              {deductionMode && (
+                                <View className="mt-2 gap-2">
+                                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">
+                                    Select a record to deduct ₹{refundAmt.toLocaleString()} from
+                                  </Text>
+                                  {allDeductiblePayments.map((payment, index) => {
+                                    const isSelected = selectedDeductionPayment &&
+                                      (payment.id
+                                        ? payment.id === selectedDeductionPayment.id
+                                        : payment.month === selectedDeductionPayment.month && payment.year === selectedDeductionPayment.year && payment.isUpcoming)
+                                    const deductedTotal = Math.max(payment.total_amount - refundAmt, 0)
+                                    const monthNames = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+                                    const label = payment.isUpcoming
+                                      ? `Upcoming — ${monthNames[payment.month]} ${payment.year}`
+                                      : `${payment.status === "late" ? "Late" : payment.status === "submitted" ? "Submitted" : "Pending"} — ${monthNames[payment.month]} ${payment.year}`
+
+                                    return (
+                                      <TouchableOpacity
+                                        key={payment.id || `upcoming-${payment.month}-${payment.year}`}
+                                        onPress={() => {
+                                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                          setSelectedDeductionPayment(payment)
+                                        }}
+                                        className={`flex-row items-center p-3 rounded-xl border ${
+                                          isSelected
+                                            ? "border-primary/40 bg-primary/10"
+                                            : "border-border/40 dark:border-border-dark/40 bg-background/50 dark:bg-background-dark/50"
+                                        }`}
+                                      >
+                                        {/* Radio indicator */}
+                                        <View className={`h-5 w-5 rounded-full border-2 mr-3 items-center justify-center ${
+                                          isSelected ? "border-primary" : "border-muted/30"
+                                        }`}>
+                                          {isSelected && (
+                                            <View className="h-2.5 w-2.5 rounded-full bg-primary" />
+                                          )}
+                                        </View>
+
+                                        {/* Payment info */}
+                                        <View className="flex-1">
+                                          <View className="flex-row items-center gap-1.5">
+                                            {payment.isUpcoming && (
+                                              <Clock size={12} color={isDark ? "#0091ff" : "#0071df"} />
+                                            )}
+                                            <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                                              {label}
+                                            </Text>
+                                          </View>
+                                          {payment.isUpcoming && (
+                                            <Text className="text-[10px] text-muted mt-0.5">Due: {payment.due_date}</Text>
+                                          )}
+                                        </View>
+
+                                        {/* Price */}
+                                        <View className="items-end">
+                                          {isSelected && refundAmt > 0 ? (
+                                            <>
+                                              <Text className="text-xs text-muted line-through">
+                                                ₹{payment.total_amount.toLocaleString()}
+                                              </Text>
+                                              <Text className="text-sm font-extrabold text-primary">
+                                                ₹{deductedTotal.toLocaleString()}
+                                              </Text>
+                                            </>
+                                          ) : (
+                                            <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">
+                                              ₹{payment.total_amount.toLocaleString()}
+                                            </Text>
+                                          )}
+                                        </View>
+                                      </TouchableOpacity>
+                                    )
+                                  })}
+
+                                  {allDeductiblePayments.length === 0 && (
+                                    <Text className="text-xs text-muted text-center py-3">
+                                      No payment records available for deduction.
+                                    </Text>
+                                  )}
+                                </View>
+                              )}
+                            </>
+                          )}
+                        </View>
+                      ) : null
+                    })()}
+
+                    {/* Refund Amount Input */}
+                    <View>
+                      <View className="flex-row justify-between items-center mb-2">
+                        <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Refund Amount (₹)</Text>
+                        <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">
+                          Deposit: ₹{(selectedTenant.deposit_amount || 0).toLocaleString()}
+                        </Text>
+                      </View>
+                      <TextInput
+                        value={depositRefundAmount}
+                        onChangeText={setDepositRefundAmount}
+                        keyboardType="numeric"
+                        placeholder="0"
+                        placeholderTextColor="#9ca3af"
+                        editable={!deductionLocked}
+                        className={`border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark ${
+                          deductionLocked ? "opacity-50" : ""
+                        }`}
+                      />
+                      <Text className="text-[10px] text-muted italic mt-1.5 leading-relaxed">
+                        {deductionLocked
+                          ? "Refund amount is locked because the deducted payment has been paid."
+                          : "Specify how much of the security deposit should be returned to the occupant upon checkout."}
+                      </Text>
+                    </View>
+                  </ScrollView>
+
+                  {/* Actions */}
+                  <View className="flex-row gap-3 pb-6">
+                    <TouchableOpacity
+                      onPress={() => setMoveOutModalVisible(false)}
+                      className="flex-1 border border-border dark:border-border-dark rounded-xl py-3.5 items-center justify-center bg-background dark:bg-background-dark"
+                    >
+                      <Text className="text-muted dark:text-muted-dark text-sm font-bold">Cancel</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      onPress={handleConfirmMoveOut}
+                      disabled={isCheckingOut}
+                      className={`flex-1 bg-primary rounded-xl py-3.5 items-center justify-center shadow-lg shadow-primary/20 ${
+                        isCheckingOut ? "opacity-50" : ""
+                      }`}
+                    >
+                      {isCheckingOut ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <Text className="text-white text-sm font-bold">Confirm Move Out</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )
+            })()}
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
       {/* Drawer 1.5: Payment Detail Sheet */}
       <Modal
-        animationType="slide"
+        animationType="none"
         transparent={true}
         visible={paymentDetailVisible}
         onRequestClose={() => setPaymentDetailVisible(false)}
@@ -2667,7 +3599,7 @@ export default function TenantsScreen() {
 
       {/* Modal 2: Change Room Modal */}
       <Modal
-        animationType="slide"
+        animationType="none"
         transparent={true}
         visible={changeRoomModalVisible}
         onRequestClose={() => setChangeRoomModalVisible(false)}
@@ -2755,7 +3687,7 @@ export default function TenantsScreen() {
 
       {/* Payment Delete Confirmation Modal */}
       <Modal
-        animationType="fade"
+        animationType="none"
         transparent={true}
         visible={deletePaymentConfirmVisible}
         onRequestClose={() => setDeletePaymentConfirmVisible(false)}
@@ -2795,7 +3727,7 @@ export default function TenantsScreen() {
       <Modal
         visible={markPaidModalVisible}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setMarkPaidModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 justify-center items-center p-6">
@@ -2869,8 +3801,125 @@ export default function TenantsScreen() {
         </View>
       </Modal>
 
+      {/* WhatsApp Invite Drawer/Modal */}
+      <Modal
+        animationType="none"
+        transparent={true}
+        visible={whatsappInviteModalVisible}
+        onRequestClose={() => {
+          setWhatsappInviteModalVisible(false)
+          setJustAddedTenant(null)
+        }}
+      >
+        <View className="flex-1 bg-black/60 justify-end">
+          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[85%] border-t border-border dark:border-border-dark p-6">
+            <View className="flex-row justify-between items-center mb-5">
+              <Text className="text-lg font-black text-foreground dark:text-foreground-dark">WhatsApp Invite & Deposit</Text>
+              <TouchableOpacity onPress={() => {
+                setWhatsappInviteModalVisible(false)
+                setJustAddedTenant(null)
+              }}>
+                <X size={18} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+              <View className="gap-5">
+                <Text className="text-sm font-semibold text-muted dark:text-muted-dark leading-5">
+                  Occupant <Text className="font-extrabold text-foreground dark:text-foreground-dark">{justAddedTenant?.name}</Text> has been added. You can now invite them to join your WhatsApp group and optionally request the security deposit.
+                </Text>
+
+                {/* Edit Message Preview */}
+                <View className="gap-2">
+                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Invite Message Preview</Text>
+                  <TextInput
+                    value={customInviteMessage}
+                    onChangeText={setCustomInviteMessage}
+                    multiline
+                    numberOfLines={6}
+                    className="border border-border dark:border-border-dark rounded-2xl p-4 text-sm leading-5 text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark min-h-[140px] font-medium"
+                  />
+                </View>
+
+                {/* Deposit Option Checkbox (Highlighted) */}
+                {justAddedTenant?.deposit_amount && justAddedTenant.deposit_amount > 0 ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      const nextVal = !createDepositPayment
+                      setCreateDepositPayment(nextVal)
+                      if (justAddedTenant) {
+                        setCustomInviteMessage(buildWelcomeMessage(justAddedTenant, nextVal))
+                      }
+                    }}
+                    activeOpacity={0.8}
+                    className="border border-primary/20 dark:border-primary/20 rounded-2xl p-4 bg-primary/5 flex-row items-center gap-3 active:scale-[0.98]"
+                  >
+                    <View
+                      className={`w-6 h-6 border-2 rounded-md items-center justify-center ${
+                        createDepositPayment 
+                          ? "bg-primary border-primary" 
+                          : "border-muted dark:border-muted-dark bg-white dark:bg-neutral-900"
+                      }`}
+                    >
+                      {createDepositPayment && <Check size={14} color="#ffffff" strokeWidth={3} />}
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Create Deposit Invoice</Text>
+                      <Text className="text-xs text-muted dark:text-muted-dark mt-0.5">
+                        Adds a pending deposit fee of ₹{justAddedTenant.deposit_amount} to their ledger and includes the payment link in the welcome invite message.
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ) : (
+                  <View className="border border-border/40 dark:border-border-dark/40 rounded-2xl p-4 bg-muted/5 flex-row items-center gap-3">
+                    <View className="h-6 w-6 rounded-md bg-muted/10 items-center justify-center">
+                      <Info size={14} color="#9ca3af" />
+                    </View>
+                    <View className="flex-1">
+                      <Text className="text-sm font-bold text-muted">Deposit Record Disabled</Text>
+                      <Text className="text-xs text-muted/80 dark:text-muted-dark/80 mt-0.5">
+                        No security deposit amount was specified for this occupant.
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* Action Buttons */}
+                <View className="gap-3 pt-2">
+                  <TouchableOpacity
+                    onPress={handleSendInvite}
+                    disabled={isSaving}
+                    className="w-full bg-primary rounded-xl h-12 flex-row items-center justify-center active:scale-95 shadow-md shadow-primary/20"
+                  >
+                    {isSaving ? (
+                      <ActivityIndicator size="small" color="#ffffff" />
+                    ) : (
+                      <>
+                        <WhatsAppIcon size={18} color="#ffffff" />
+                        <Text className="text-white font-bold text-sm ml-2">Send via WhatsApp</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      setWhatsappInviteModalVisible(false)
+                      setJustAddedTenant(null)
+                    }}
+                    className="w-full border border-border dark:border-border-dark rounded-xl h-12 flex-row items-center justify-center bg-card dark:bg-card-dark active:scale-95"
+                  >
+                    <Text className="text-muted font-bold text-sm">Skip & Close</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* Toast Notification Overlay */}
-      {!(detailModalVisible || formModalVisible || confirmModalVisible || changeRoomModalVisible || paymentDetailVisible || deletePaymentConfirmVisible || markPaidModalVisible) && renderToast()}
+      {!(detailModalVisible || formModalVisible || confirmModalVisible || changeRoomModalVisible || paymentDetailVisible || deletePaymentConfirmVisible || markPaidModalVisible || whatsappInviteModalVisible) && renderToast()}
     </SafeAreaView>
   )
 }

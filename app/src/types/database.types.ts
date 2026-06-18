@@ -399,6 +399,7 @@ export type Database = {
           upi_id: string | null
           upi_name: string | null
           utr_required: boolean | null
+          whatsapp_invite_link: string | null
         }
         Insert: {
           created_at?: string
@@ -413,6 +414,7 @@ export type Database = {
           upi_id?: string | null
           upi_name?: string | null
           utr_required?: boolean | null
+          whatsapp_invite_link?: string | null
         }
         Update: {
           created_at?: string
@@ -427,6 +429,7 @@ export type Database = {
           upi_id?: string | null
           upi_name?: string | null
           utr_required?: boolean | null
+          whatsapp_invite_link?: string | null
         }
         Relationships: [
           {

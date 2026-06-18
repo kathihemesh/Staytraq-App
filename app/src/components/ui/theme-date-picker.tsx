@@ -141,7 +141,7 @@ export default function ThemeDatePicker({
       <Modal
         visible={modalVisible}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setModalVisible(false)}
       >
         <TouchableOpacity

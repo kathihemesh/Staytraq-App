@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { stripHtml } from '@/lib/utils/sanitize'
 
 export async function POST(
   request: Request,
@@ -84,12 +85,14 @@ export async function POST(
     }
 
     // 4. Insert complaint record
+    const sanitizedMessage = stripHtml(complaint_message.trim())
+    
     const { error: insertError } = await supabase
       .from('complaints')
       .insert({
         owner_id: ownerRecord.id,
         tenant_phone: tenantPhoneDb,
-        complaint_message: complaint_message.trim(),
+        complaint_message: sanitizedMessage,
         status: 'Under Working'
       })
 

@@ -25,7 +25,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 // Public routes that don't require authentication
-const PUBLIC_ROUTES = ["/login", "/reset-password", "/forgot-password", "/signup"]
+const PUBLIC_ROUTES = ["/login", "/reset-password", "/forgot-password", "/signup", "/verified"]
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const supabase = useMemo(() => createClient(), [])
@@ -66,12 +66,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(true)
         const { data: { session: currentSession } } = await supabase.auth.getSession()
         if (currentSession) {
-          sessionRef.current = currentSession
-          userIdRef.current = currentSession.user.id
-          setSession(currentSession)
-          setUser(currentSession.user)
-          setIsAuthenticated(true)
-          await checkOnboardingStatus(currentSession.user.id)
+          // Verify if user still exists and token is valid
+          const { data: { user: currentUser }, error: userError } = await supabase.auth.getUser()
+          if (currentUser && !userError) {
+            sessionRef.current = currentSession
+            userIdRef.current = currentUser.id
+            setSession(currentSession)
+            setUser(currentUser)
+            setIsAuthenticated(true)
+            await checkOnboardingStatus(currentUser.id)
+          } else {
+            // User deleted or session invalid, force clear auth
+            await supabase.auth.signOut({ scope: "local" })
+            sessionRef.current = null
+            userIdRef.current = null
+            setSession(null)
+            setUser(null)
+            setIsAuthenticated(false)
+            setOnboardingStatus("unknown")
+          }
         } else {
           sessionRef.current = null
           userIdRef.current = null

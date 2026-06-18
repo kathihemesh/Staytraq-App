@@ -17,6 +17,7 @@ type PaymentState = 'loading' | 'invalid' | 'verify_identity' | 'no_dues' | 'sel
 interface PaymentData {
   portalMonth?: number
   portalYear?: number
+  pgName?: string | null
   tenant: {
     name: string
     room_number: string
@@ -81,6 +82,7 @@ export default function TenantPaymentPage() {
         setData({
           portalMonth: json.month,
           portalYear: json.year,
+          pgName: json.pg_name,
           tenant: { name: '', room_number: '', payment_code: '' },
           payments: [],
           settings: json.settings
@@ -124,6 +126,7 @@ export default function TenantPaymentPage() {
       setData(prev => ({
         portalMonth: prev?.portalMonth,
         portalYear: prev?.portalYear,
+        pgName: prev?.pgName,
         tenant: json.tenant,
         payments: json.payments,
         settings: prev?.settings || null
@@ -321,7 +324,7 @@ export default function TenantPaymentPage() {
       <div className="w-full max-w-md z-10">
         {/* Logo/Brand Area */}
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-white">Staytraq</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-white">{data?.pgName || 'Staytraq'}</h1>
           <p className="text-sm text-neutral-400">Secure Payment Portal</p>
         </div>
 
@@ -378,7 +381,7 @@ export default function TenantPaymentPage() {
                       <CardTitle className="text-white text-lg">Tenant Verification</CardTitle>
                     </div>
                     <CardDescription className="text-neutral-400">
-                      Enter your registered mobile number to fetch your active invoice and QR code for {data?.portalMonth ? months[data.portalMonth - 1] : ''} {data?.portalYear || ''}.
+                      Enter your registered mobile number to fetch your active invoice and QR code for {data?.pgName ? `${data.pgName} ` : ''}for {data?.portalMonth ? months[data.portalMonth - 1] : ''} {data?.portalYear || ''}.
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">

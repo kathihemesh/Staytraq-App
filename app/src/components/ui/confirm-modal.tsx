@@ -31,7 +31,7 @@ export function ConfirmModal({
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType="none"
       onRequestClose={onCancel}
     >
       <View className="flex-1 bg-black/60 backdrop-blur-sm justify-center items-center p-6">

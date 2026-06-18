@@ -168,7 +168,7 @@ export default function SignUpScreen() {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
       } else {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-        setIsSuccess(true)
+        router.replace("/onboarding")
       }
     } catch (err) {
       setError("Failed to set password. Please try again.")
@@ -226,14 +226,14 @@ export default function SignUpScreen() {
         email: identifier.trim(),
         password,
         options: {
-          emailRedirectTo: "staytraq://login",
+          emailRedirectTo: "https://staytraq.vercel.app/verified",
         },
       })
 
       if (signUpError) {
         setError(signUpError.message)
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      } else if (data.user) {
+      } else {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
         setIsSuccess(true)
       }

@@ -20,6 +20,7 @@ import {
   KeyboardAvoidingView
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
+import { useFocusEffect } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { 
@@ -49,6 +50,8 @@ import { LinearGradient } from "expo-linear-gradient"
 import { File, Paths } from "expo-file-system"
 import * as MediaLibrary from "expo-media-library"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
+import { SafeText } from "@/components/ui/safe-text"
+import { sanitizeText, stripHtml } from "@/lib/sanitize"
 
 type Complaint = {
   id: number
@@ -70,6 +73,7 @@ export default function ComplaintsScreen() {
   const [complaints, setComplaints] = useState<Complaint[]>([])
   const [complaintToken, setComplaintToken] = useState("")
   const [isRefreshingLink, setIsRefreshingLink] = useState(false)
+  const hasLoadedOnce = useRef(false)
 
   // Custom Toast State
   const [toast, setToast] = useState<{
@@ -157,36 +161,42 @@ export default function ComplaintsScreen() {
         else setIsRefreshing(true)
       }
 
-      // Fetch complaints. NOTE: we explicitly DO NOT select the tenant_phone column
-      const { data: complaintsData, error: complaintsError } = await supabase
-        .from("complaints")
-        .select("id, owner_id, complaint_message, status, owner_response, created_at, updated_at")
-        .eq("owner_id", user.id)
-        .order("created_at", { ascending: false })
+      // Fetch complaints and pg_owners token concurrently
+      const [complaintsResult, ownerResult] = await Promise.all([
+        supabase
+          .from("complaints")
+          .select("id, owner_id, complaint_message, status, owner_response, created_at, updated_at")
+          .eq("owner_id", user.id)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("pg_owners")
+          .select("complaint_token")
+          .eq("id", user.id)
+          .single()
+      ])
 
-      if (complaintsError) throw complaintsError
-      setComplaints((complaintsData || []) as Complaint[])
+      if (complaintsResult.error) throw complaintsResult.error
+      setComplaints((complaintsResult.data || []) as Complaint[])
 
-      // Fetch complaint portal token
-      const { data: ownerData, error: ownerError } = await supabase
-        .from("pg_owners")
-        .select("complaint_token")
-        .eq("id", user.id)
-        .single()
+      if (ownerResult.error) throw ownerResult.error
 
-      if (ownerError) throw ownerError
-
-      let activeToken = ownerData?.complaint_token
+      let activeToken = ownerResult.data?.complaint_token
       if (!activeToken) {
         // Generate on the fly if missing
         activeToken = Math.random().toString(36).substring(2, 14)
-        await supabase
-          .from("pg_owners")
-          .update({ complaint_token: activeToken })
-          .eq("id", user.id)
+        void (async () => {
+          try {
+            await supabase
+              .from("pg_owners")
+              .update({ complaint_token: activeToken })
+              .eq("id", user.id)
+          } catch (err) {
+            console.error("Error updating complaint token:", err)
+          }
+        })()
       }
       setComplaintToken(activeToken || "")
-
+      hasLoadedOnce.current = true
     } catch (err) {
       console.error("Error fetching complaints:", err)
       showToast("Error", "Failed to retrieve complaints.", "error")
@@ -196,9 +206,13 @@ export default function ComplaintsScreen() {
     }
   }, [user?.id, complaints.length])
 
-  useEffect(() => {
-    void fetchComplaintsData()
-  }, [fetchComplaintsData])
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        void fetchComplaintsData(hasLoadedOnce.current)
+      }
+    }, [user?.id, fetchComplaintsData])
+  )
 
   // Realtime updates
   useEffect(() => {
@@ -283,7 +297,7 @@ export default function ComplaintsScreen() {
         .from("complaints")
         .update({
           status: updatedStatus,
-          owner_response: ownerResponseText.trim() || null,
+          owner_response: stripHtml(ownerResponseText.trim()) || null,
           updated_at: new Date().toISOString()
         })
         .eq("id", selectedComplaint.id)
@@ -722,21 +736,21 @@ export default function ComplaintsScreen() {
                       </View>
                     </View>
 
-                    <Text 
+                    <SafeText 
                       className={`text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-semibold ${item.owner_response ? "mb-2" : ""}`}
                       numberOfLines={2}
                     >
                       {item.complaint_message}
-                    </Text>
+                    </SafeText>
 
                     {/* Inline Owner Response Display */}
                     {item.owner_response && (
                       <View className="bg-slate-50 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800/60 rounded-xl px-2.5 py-1.5 flex-row items-center gap-2">
                         <MessageSquare size={12} color="#64748b" />
-                        <Text className="text-[11px] text-slate-600 dark:text-slate-300 font-medium flex-1" numberOfLines={2}>
+                        <SafeText className="text-[11px] text-slate-600 dark:text-slate-300 font-medium flex-1" numberOfLines={2}>
                           <Text className="text-[10px] text-slate-400 dark:text-slate-500 font-extrabold uppercase tracking-wide mr-1">Reply: </Text>
                           {item.owner_response}
-                        </Text>
+                        </SafeText>
                       </View>
                     )}
                   </Pressable>
@@ -751,7 +765,7 @@ export default function ComplaintsScreen() {
       <Modal
         visible={qrModalVisible}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setQrModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 backdrop-blur-sm justify-center items-center p-4">
@@ -816,7 +830,7 @@ export default function ComplaintsScreen() {
       <Modal
         visible={detailModalVisible}
         transparent
-        animationType="slide"
+        animationType="none"
         onRequestClose={() => setDetailModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 backdrop-blur-sm justify-end">
@@ -844,9 +858,9 @@ export default function ComplaintsScreen() {
 
               {/* Message Details */}
               <ScrollView className="max-h-[160px] mb-5 bg-slate-50 dark:bg-slate-950 p-4 border border-slate-100 dark:border-slate-850 rounded-2xl">
-                <Text className="text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-semibold">
+                <SafeText className="text-xs text-slate-800 dark:text-slate-200 leading-relaxed font-semibold">
                   {selectedComplaint?.complaint_message}
-                </Text>
+                </SafeText>
               </ScrollView>
 
               {/* Status Selector */}

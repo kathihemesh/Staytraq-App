@@ -19,6 +19,7 @@ export interface TenantPreview {
   moveInDate: string
   status: string
   extraCharges: number
+  exitDate?: string
 }
 
 export interface Room {
@@ -115,6 +116,7 @@ export function groupTenantsByRoomId(
         join_date?: string | null
         status?: string | null
         extra_charges?: number | null
+        exit_date?: string | null
       }[]
     | null,
   roomsMapped: Room[]
@@ -136,6 +138,7 @@ export function groupTenantsByRoomId(
       moveInDate: t.join_date || "",
       status: t.status || "",
       extraCharges: t.extra_charges || 0,
+      exitDate: t.exit_date || "",
     })
   }
   return byRoom

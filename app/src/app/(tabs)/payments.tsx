@@ -22,6 +22,7 @@ import {
   KeyboardAvoidingView
 } from "react-native"
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
+import { useFocusEffect, useLocalSearchParams } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { 
@@ -45,7 +46,8 @@ import {
   Edit2,
   Trash2,
   MessageSquare,
-  Eye
+  Eye,
+  Link
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
@@ -119,6 +121,7 @@ const getMonthNumber = (monthName: string): number => {
 
 export default function PaymentsScreen() {
   const { user } = useAuth()
+  const params = useLocalSearchParams<{ search?: string; status?: string }>()
   const { isDark } = useTheme()
   const { height } = useWindowDimensions()
   const insets = useSafeAreaInsets()
@@ -127,6 +130,7 @@ export default function PaymentsScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [payments, setPayments] = useState<Payment[]>([])
   const [occupants, setOccupants] = useState<Occupant[]>([])
+  const hasLoadedOnce = useRef(false)
 
   // Payment Reminder Portal States
   const [reminderModalVisible, setReminderModalVisible] = useState(false)
@@ -200,6 +204,15 @@ export default function PaymentsScreen() {
   // Filtering, Search, & Sorting
   const [searchQuery, setSearchQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
+
+  useEffect(() => {
+    if (params.search !== undefined) {
+      setSearchQuery(params.search)
+    }
+    if (params.status !== undefined) {
+      setStatusFilter(params.status)
+    }
+  }, [params.search, params.status])
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const d = new Date()
     const monthStr = d.toLocaleString("en-US", { month: "long" })
@@ -227,6 +240,7 @@ export default function PaymentsScreen() {
   const [monthPickerVisible, setMonthPickerVisible] = useState(false)
   const [imageFullScreen, setImageFullScreen] = useState(false)
   const [signedScreenshotUrl, setSignedScreenshotUrl] = useState<string | null>(null)
+  const [pgName, setPgName] = useState<string>("")
   const [imageAspectRatio, setImageAspectRatio] = useState<number | null>(null)
   const [detailsCollapsed, setDetailsCollapsed] = useState(false)
   const [loadingImage, setLoadingImage] = useState(false)
@@ -310,59 +324,65 @@ export default function PaymentsScreen() {
         else setIsRefreshing(true)
       }
 
-      // 1. Fetch payments with tenant details
-      const { data: payData, error: payError } = await supabase
-        .from("payments")
-        .select("*, tenants_table(name, mobile_number, rooms_table(room_number, rent_amount))")
-        .eq("owner_id", user.id)
-        .order("due_date", { ascending: false })
-
-      if (payError) throw payError
-      setPayments((payData || []) as any)
-
-      // 2. Fetch active occupants for selection
-      const { data: tenantData, error: tenantError } = await supabase
-        .from("tenants_table")
-        .select("id, name, extra_charges, rooms_table(room_number, rent_amount)")
-        .eq("owner_id", user.id)
-        .eq("status", "active")
-        .order("name", { ascending: true })
-
-      if (tenantError) throw tenantError
-      setOccupants((tenantData || []) as any)
-
-      // 3. Fetch portal_token for the selected month and year from monthly_payment_links
       const [monthName, yearStr] = selectedMonth.split(" ")
       const monthVal = getMonthNumber(monthName)
       const yearVal = parseInt(yearStr, 10) || new Date().getFullYear()
 
-      const { data: linkData, error: linkError } = await supabase
-        .from("monthly_payment_links")
-        .select("portal_token")
-        .eq("owner_id", user.id)
-        .eq("month", monthVal)
-        .eq("year", yearVal)
-        .single()
+      // Fetch payments, occupants, portal token, and PG details concurrently
+      const [payResult, tenantResult, linkResult, pgResult] = await Promise.all([
+        supabase
+          .from("payments")
+          .select("*, tenants_table(name, mobile_number, rooms_table(room_number, rent_amount))")
+          .eq("owner_id", user.id)
+          .order("due_date", { ascending: false }),
+        supabase
+          .from("tenants_table")
+          .select("id, name, extra_charges, rooms_table(room_number, rent_amount)")
+          .eq("owner_id", user.id)
+          .eq("status", "active")
+          .order("name", { ascending: true }),
+        supabase
+          .from("monthly_payment_links")
+          .select("portal_token")
+          .eq("owner_id", user.id)
+          .eq("month", monthVal)
+          .eq("year", yearVal)
+          .maybeSingle(),
+        supabase
+          .from("pg_details")
+          .select("pg_name")
+          .eq("owner_id", user.id)
+          .maybeSingle()
+      ])
 
-      if (linkError && linkError.code !== "PGRST116") {
-        console.error("Error fetching monthly portal link:", linkError)
-      }
+      if (payResult.error) throw payResult.error
+      setPayments((payResult.data || []) as any)
 
-      let activePortalToken = linkData?.portal_token
+      if (tenantResult.error) throw tenantResult.error
+      setOccupants((tenantResult.data || []) as any)
+
+      let activePortalToken = linkResult.data?.portal_token
       if (!activePortalToken) {
         // Generate portal_token on the fly if it's missing/null in DB for this month
         activePortalToken = Math.random().toString(36).substring(2, 14)
-        await supabase
-          .from("monthly_payment_links")
-          .upsert({
-            owner_id: user.id,
-            month: monthVal,
-            year: yearVal,
-            portal_token: activePortalToken
-          }, { onConflict: "owner_id,month,year" })
+        void (async () => {
+          try {
+            await supabase
+              .from("monthly_payment_links")
+              .upsert({
+                owner_id: user.id,
+                month: monthVal,
+                year: yearVal,
+                portal_token: activePortalToken
+              }, { onConflict: "owner_id,month,year" })
+          } catch (tokenErr) {
+            console.error("Error generating monthly payment link:", tokenErr)
+          }
+        })()
       }
       setPortalToken(activePortalToken || "")
-
+      setPgName(pgResult.data?.pg_name || "")
+      hasLoadedOnce.current = true
     } catch (err) {
       console.error("Error fetching payments records:", err)
     } finally {
@@ -403,8 +423,8 @@ export default function PaymentsScreen() {
 
   // Prewritten notice messages
   const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
-  const friendlyMessage = `Dear Tenant, this is a friendly reminder that rent is due soon. You can view your invoice details, scan the QR code, and submit your payment receipt securely here: ${portalUrl}\nThank you!`
-  const firmMessage = `Dear Tenant, this is a formal notice that your rent payment is now due. Please clear outstanding amounts immediately and submit your verification details on our portal: ${portalUrl}`
+  const friendlyMessage = `Dear Tenant, this is a friendly reminder that rent is due soon for ${pgName ? pgName : "your PG"}. You can view your invoice details, scan the QR code, and submit your payment receipt securely here: ${portalUrl}\nThank you!`
+  const firmMessage = `Dear Tenant, this is a formal notice that your rent payment for ${pgName ? pgName : "your PG"} is now due. Please clear outstanding amounts immediately and submit your verification details on our portal: ${portalUrl}`
 
   const currentReminderMessage = reminderType === "friendly" ? friendlyMessage : firmMessage
 
@@ -479,9 +499,13 @@ export default function PaymentsScreen() {
     )
   }
 
-  useEffect(() => {
-    void fetchPayments()
-  }, [fetchPayments])
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        void fetchPayments(hasLoadedOnce.current)
+      }
+    }, [user?.id, fetchPayments])
+  )
 
   // Realtime updates
   useEffect(() => {
@@ -1324,7 +1348,7 @@ export default function PaymentsScreen() {
             }}
             className="h-9 w-9 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
           >
-            <MessageSquare size={14} color={isDark ? "#0091ff" : "#0071df"} />
+            <Link size={14} color={isDark ? "#0091ff" : "#0071df"} />
           </TouchableOpacity>
           
           <TouchableOpacity 
@@ -1571,7 +1595,7 @@ export default function PaymentsScreen() {
 
       {/* Custom Bottom-Sheet Month Picker */}
       <Modal
-        animationType="fade"
+        animationType="none"
         transparent={true}
         visible={monthPickerVisible}
         onRequestClose={() => setMonthPickerVisible(false)}
@@ -1615,7 +1639,7 @@ export default function PaymentsScreen() {
 
       {/* Drawer: Replicated Detail Sheet */}
       <Modal
-        animationType="slide"
+        animationType="none"
         transparent={true}
         visible={detailModalVisible}
         onRequestClose={() => setDetailModalVisible(false)}
@@ -1960,7 +1984,7 @@ export default function PaymentsScreen() {
       {/* Screenshot Fullscreen Zoom View Modal */}
       {imageFullScreen && signedScreenshotUrl && (
         <Modal
-          animationType="fade"
+          animationType="none"
           transparent={true}
           visible={imageFullScreen}
           onRequestClose={handleToggleFullscreenImage}
@@ -2040,7 +2064,7 @@ export default function PaymentsScreen() {
 
       {/* Modal 3: Add / Edit Payment Record Form Sheet */}
       <Modal
-        animationType="slide"
+        animationType="none"
         transparent={true}
         visible={formModalVisible}
         onRequestClose={() => setFormModalVisible(false)}
@@ -2323,7 +2347,7 @@ export default function PaymentsScreen() {
 
       {/* Reminder Notice Share Drawer/Modal */}
       <Modal
-        animationType="slide"
+        animationType="none"
         transparent={true}
         visible={reminderModalVisible}
         onRequestClose={() => setReminderModalVisible(false)}
@@ -2389,7 +2413,7 @@ export default function PaymentsScreen() {
                       {portalUrl}
                     </Text>
                   </View>
-                  <Copy size={16} className="text-primary dark:text-primary-dark" />
+                  <Copy size={16} color={isDark ? "#ffffff" : "#000000"} />
                 </TouchableOpacity>
               </View>
 
@@ -2437,7 +2461,7 @@ export default function PaymentsScreen() {
 
       {/* Custom Delete Confirmation Modal */}
       <Modal
-        animationType="fade"
+        animationType="none"
         transparent={true}
         visible={deleteConfirmVisible}
         onRequestClose={() => setDeleteConfirmVisible(false)}
@@ -2478,7 +2502,7 @@ export default function PaymentsScreen() {
       <Modal
         visible={markPaidModalVisible}
         transparent
-        animationType="fade"
+        animationType="none"
         onRequestClose={() => setMarkPaidModalVisible(false)}
       >
         <View className="flex-1 bg-black/60 backdrop-blur-sm justify-center items-center p-6">

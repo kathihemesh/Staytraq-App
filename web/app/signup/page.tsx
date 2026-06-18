@@ -156,13 +156,13 @@ export default function SignupPage() {
         email: identifier.trim(),
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/login`,
+          emailRedirectTo: `${window.location.origin}/verified`,
         },
       })
 
       if (signUpError) {
         setError(signUpError.message)
-      } else if (data.user) {
+      } else {
         setIsSuccess(true)
       }
     } catch (err) {

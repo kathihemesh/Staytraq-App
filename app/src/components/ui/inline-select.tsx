@@ -53,8 +53,8 @@ type InlineSelectProps = {
 
 type MenuLayout = { x: number; y: number; width: number; height: number }
 
-const MENU_ANIM_IN = FadeIn.duration(140)
-const MENU_ANIM_OUT = FadeOut.duration(110)
+const MENU_ANIM_IN = FadeIn.duration(80)
+const MENU_ANIM_OUT = FadeOut.duration(60)
 
 export function InlineSelect({
   options,
@@ -320,7 +320,7 @@ export function InlineSelect({
 
       {overlay && open && menuLayout ? (
         <Modal transparent visible animationType="none" statusBarTranslucent={true} onRequestClose={() => onOpenChange?.(false)}>
-          <Animated.View entering={FadeIn.duration(120)} exiting={FadeOut.duration(90)} style={StyleSheet.absoluteFill}>
+          <Animated.View entering={FadeIn.duration(60)} exiting={FadeOut.duration(40)} style={StyleSheet.absoluteFill}>
             <Pressable style={StyleSheet.absoluteFill} onPress={() => onOpenChange?.(false)} />
           </Animated.View>
           <View

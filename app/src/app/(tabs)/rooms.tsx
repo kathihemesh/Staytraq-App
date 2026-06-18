@@ -34,7 +34,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import clsx from "clsx"
 import { LinearGradient } from "expo-linear-gradient"
 import * as Haptics from "expo-haptics"
-import { router } from "expo-router"
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router"
 import {
   Plus,
   Search,
@@ -53,6 +53,7 @@ import {
   Mail,
   CalendarDays,
   ArrowRight,
+  ArrowUpDown,
 } from "lucide-react-native"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
@@ -119,6 +120,14 @@ const STAT_CHIPS = [
     text: "text-amber-600 dark:text-amber-400",
     border: "border-amber-300 dark:border-amber-500/40",
     bg: "bg-amber-50 dark:bg-amber-500/10",
+  },
+  {
+    id: "notice_period" as const,
+    label: "Notice",
+    color: "#8b5cf6",
+    text: "text-purple-600 dark:text-purple-400",
+    border: "border-purple-300 dark:border-purple-500/40",
+    bg: "bg-purple-50 dark:bg-purple-500/10",
   },
 ]
 
@@ -247,7 +256,7 @@ const RoomRowCard = memo(function RoomRowCard({
     <Pressable
       onPress={onPress}
       className={clsx(
-        "mb-3 overflow-hidden rounded-2xl border shadow-sm active:opacity-95",
+        "mb-1.5 overflow-hidden rounded-xl border shadow-sm active:opacity-95",
         selected
           ? clsx(borderSelected, "bg-slate-50 dark:bg-slate-800/50")
           : "border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900",
@@ -255,14 +264,14 @@ const RoomRowCard = memo(function RoomRowCard({
       style={selected ? { borderCurve: "continuous" } : undefined}
     >
       <OccupancyBackdrop room={room} />
-      <View className="relative z-10 flex-row items-center py-3.5 pl-3 pr-3">
-        <View className="flex-1 flex-row items-center gap-3 min-w-0">
+      <View className="relative z-10 flex-row items-center py-2 pl-3 pr-3">
+        <View className="flex-1 flex-row items-center gap-2.5 min-w-0">
           <LinearGradient
             colors={[`${primaryColor}12`, `${primaryColor}06`]}
             style={{
-              height: 42,
-              width: 42,
-              borderRadius: 21,
+              height: 36,
+              width: 36,
+              borderRadius: 18,
               alignItems: "center",
               justifyContent: "center",
               borderWidth: 1,
@@ -272,7 +281,7 @@ const RoomRowCard = memo(function RoomRowCard({
             <Text 
               style={{ 
                 color: primaryColor,
-                fontSize: room.number.length > 5 ? 8 : room.number.length === 5 ? 9.5 : room.number.length === 4 ? 11 : 12
+                fontSize: room.number.length > 5 ? 7.5 : room.number.length === 5 ? 8.5 : room.number.length === 4 ? 9.5 : 11
               }} 
               className="font-black tracking-tighter text-center"
               numberOfLines={1}
@@ -284,42 +293,42 @@ const RoomRowCard = memo(function RoomRowCard({
             {/* Line 1: Metadata Row */}
             <View className="flex-row items-center gap-x-2">
               <View className="flex-row items-center gap-1">
-                <Layers size={11} color={isDark ? "#94a3b8" : "#475569"} />
-                <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                <Layers size={10} color={isDark ? "#94a3b8" : "#475569"} />
+                <Text className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
                   {room.floorNo === 0 ? "G" : room.floorNo}
                 </Text>
               </View>
               <Text className="text-[9px] text-slate-300 dark:text-slate-700">•</Text>
               <View className="flex-row items-center gap-1">
-                <Users size={11} color={isDark ? "#94a3b8" : "#475569"} />
-                <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                <Users size={10} color={isDark ? "#94a3b8" : "#475569"} />
+                <Text className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
                   {room.occupiedBeds} / {room.capacity}
                 </Text>
               </View>
               <Text className="text-[9px] text-slate-300 dark:text-slate-700">•</Text>
-              <Text className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+              <Text className="text-[10px] font-bold text-slate-700 dark:text-slate-300">
                 {room.type === "Non-AC" ? "NON AC" : room.type}
               </Text>
             </View>
 
             {/* Line 2: Highlighted Price */}
             <View className="flex-row items-center gap-0.5 mt-0.5">
-              <IndianRupee size={12} color={primaryColor} />
-              <Text style={{ color: primaryColor }} className="text-sm font-black tracking-tight">
+              <IndianRupee size={10} color={primaryColor} />
+              <Text style={{ color: primaryColor }} className="text-xs font-black tracking-tight">
                 {room.rentAmount.toLocaleString()}
               </Text>
-              <Text className="text-[10px] font-bold text-slate-400 dark:text-slate-500"> / month</Text>
+              <Text className="text-[9px] font-bold text-slate-400 dark:text-slate-500"> / month</Text>
             </View>
           </View>
         </View>
         <View className="relative z-10 w-[96px] shrink-0 items-end justify-center">
-          <Text className={clsx("rounded-full border px-2.5 py-0.5 text-[10px] font-semibold text-center", config.badge)}>
+          <Text className={clsx("rounded-full border px-2 py-0.5 text-[9px] font-semibold text-center", config.badge)}>
             {room.status === "partially occupied" ? "Partial" : config.label}
           </Text>
           {room.status === "maintenance" ? (
-            <View className="flex-row items-center gap-1 mt-1">
-              <Wrench size={10} color="#f59e0b" />
-              <Text className="text-[9px] font-semibold text-amber-600 dark:text-amber-400 max-w-[80px]" numberOfLines={1}>
+            <View className="flex-row items-center gap-1 mt-0.5">
+              <Wrench size={9} color="#f59e0b" />
+              <Text className="text-[8px] font-semibold text-amber-600 dark:text-amber-400 max-w-[80px]" numberOfLines={1}>
                 Under repair
               </Text>
             </View>
@@ -357,6 +366,7 @@ function RoomFieldRow(props: {
 
 export default function RoomsScreen() {
   const { user } = useAuth()
+  const params = useLocalSearchParams<{ status?: string; sort?: string }>()
   const { isDark, colorScheme } = useTheme()
   const insets = useSafeAreaInsets()
   const { width, height } = useWindowDimensions()
@@ -369,6 +379,7 @@ export default function RoomsScreen() {
   const [previewTenant, setPreviewTenant] = useState<TenantPreview | null>(null)
 
   const [search, setSearch] = useState("")
+  const [vacantFirst, setVacantFirst] = useState(true)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
@@ -390,6 +401,23 @@ export default function RoomsScreen() {
     capacity: "All Beds",
   })
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (params.status) {
+      setFilters((prev) => ({
+        ...prev,
+        status: params.status === "notice_period" ? "notice_period" : (params.status === "vacant" ? "vacant" : "All Statuses")
+      }))
+    }
+    if (params.sort === "vacant_first") {
+      setVacantFirst(true)
+      setFilters((prev) => ({
+        ...prev,
+        status: "All Statuses"
+      }))
+      router.setParams({ sort: undefined })
+    }
+  }, [params.status, params.sort])
 
   const hasActiveFilters =
     filters.floor !== "All Floors" ||
@@ -493,21 +521,38 @@ export default function RoomsScreen() {
     [availableFloors],
   )
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (silent = false) => {
     if (!user?.id) {
       setIsLoading(false)
       setIsRefreshing(false)
       return
     }
-    if (!hasLoadedOnce) setIsLoading(true)
-    else setIsRefreshing(true)
+    if (!silent) {
+      if (!hasLoadedOnce) setIsLoading(true)
+      else setIsRefreshing(true)
+    }
     setPageError(null)
     setPgMissing(false)
 
     try {
-      const { data: pgData, error: pgError } = await runWithNetworkRetry(() =>
-        supabase.from("pg_details").select("id, no_floors").eq("owner_id", user.id).maybeSingle(),
-      )
+      // Fetch pg_details and tenants concurrently
+      const [pgResult, tenantsResult] = await Promise.all([
+        runWithNetworkRetry(() =>
+          supabase.from("pg_details").select("id, no_floors").eq("owner_id", user.id).maybeSingle(),
+        ),
+        runWithNetworkRetry(() =>
+          supabase
+            .from("tenants_table")
+            .select("id, name, mobile_number, email, room_id, join_date, status, extra_charges, exit_date")
+            .eq("owner_id", user.id)
+            .neq("status", "move_out"),
+        )
+      ])
+
+      const pgData = pgResult.data
+      const pgError = pgResult.error
+      const tenantsData = tenantsResult.data
+      const tenantsError = tenantsResult.error
 
       if (pgError) {
         const msg =
@@ -547,14 +592,6 @@ export default function RoomsScreen() {
         } else {
           const mapped = (roomsData || []).map(mapDbRowToRoom)
           setRooms(mapped)
-
-          const { data: tenantsData, error: tenantsError } = await runWithNetworkRetry(() =>
-            supabase
-              .from("tenants_table")
-              .select("id, name, mobile_number, email, room_id, join_date, status, extra_charges")
-              .eq("owner_id", user.id)
-              .neq("status", "move_out"),
-          )
           if (tenantsError) {
             console.error(tenantsError)
           }
@@ -569,11 +606,15 @@ export default function RoomsScreen() {
       setIsRefreshing(false)
       setHasLoadedOnce(true)
     }
-  }, [user?.id])
+  }, [user?.id, hasLoadedOnce])
 
-  useEffect(() => {
-    void fetchData()
-  }, [fetchData])
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) {
+        void fetchData(hasLoadedOnce)
+      }
+    }, [user?.id, fetchData, hasLoadedOnce])
+  )
 
   const selectedRoomIdRef = useRef<string | null>(null)
   useEffect(() => {
@@ -662,13 +703,17 @@ export default function RoomsScreen() {
   }, [isAddDialogOpen])
 
   const filteredRooms = useMemo(() => {
-    return rooms.filter((room) => {
+    const list = rooms.filter((room) => {
       const matchesSearch = room.number.toLowerCase().includes(search.toLowerCase())
 
       const matchesFloor = filters.floor === "All Floors" || room.floor === filters.floor
       const matchesType = filters.type === "All Types" || room.type === filters.type
       const matchesStatus =
-        filters.status === "All Statuses" || room.status === filters.status.toLowerCase()
+        filters.status === "All Statuses"
+          ? true
+          : filters.status === "notice_period"
+            ? (tenantsByRoom[room.id]?.some(t => t.status === "notice_period" || t.status === "move_out") || false)
+            : room.status === filters.status.toLowerCase()
 
       const matchesCapacity =
         filters.capacity === "All Beds"
@@ -680,7 +725,20 @@ export default function RoomsScreen() {
 
       return matchesSearch && matchesFloor && matchesType && matchesStatus && matchesCapacity
     })
-  }, [rooms, search, filters])
+
+    if (vacantFirst) {
+      return [...list].sort((a, b) => {
+        const getOrder = (status: string) => {
+          if (status === "vacant") return 0
+          if (status === "partially occupied") return 1
+          if (status === "full") return 2
+          return 3 // maintenance
+        }
+        return getOrder(a.status) - getOrder(b.status)
+      })
+    }
+    return list
+  }, [rooms, search, filters, tenantsByRoom, vacantFirst])
 
   const stats = useMemo(() => {
     return {
@@ -697,8 +755,9 @@ export default function RoomsScreen() {
       "partially occupied": stats.partial,
       full: stats.full,
       maintenance: stats.maintenance,
+      notice_period: rooms.filter(r => tenantsByRoom[r.id]?.some(t => t.status === "notice_period" || t.status === "move_out")).length
     }),
-    [stats],
+    [stats, rooms, tenantsByRoom],
   )
 
   const openRoomSheet = useCallback((room: Room) => {
@@ -894,10 +953,10 @@ export default function RoomsScreen() {
 
   const listHeader = (
     <>
-      <View className="mt-3 flex-row items-center justify-between gap-4">
+      <View className="mt-1.5 flex-row items-center justify-between gap-4">
         <View className="flex-1 pr-2">
           <Text className="text-2xl font-black text-foreground dark:text-foreground-dark tracking-tight">Rooms</Text>
-          <Text className="text-sm text-muted dark:text-muted-dark font-medium mt-1">Manage rooms and occupancy.</Text>
+          <Text className="text-xs text-muted dark:text-muted-dark font-medium mt-0.5">Manage rooms and occupancy.</Text>
         </View>
         <TouchableOpacity
           accessibilityRole="button"
@@ -919,7 +978,7 @@ export default function RoomsScreen() {
         </TouchableOpacity>
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="-mx-1 mt-4 pb-4">
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="-mx-1 mt-1.5 pb-1.5">
         <View className="flex-row gap-2 px-1">
           {STAT_CHIPS.map((stat) => {
             const active = filters.status === stat.id
@@ -936,7 +995,7 @@ export default function RoomsScreen() {
                   }))
                 }}
                 className={clsx(
-                  "shrink-0 flex-row items-center gap-2 rounded-full border px-3.5 py-2",
+                  "shrink-0 flex-row items-center gap-1.5 rounded-full border px-3 py-1.5",
                   stat.text,
                   stat.border,
                   active ? stat.bg : "bg-white dark:bg-slate-900",
@@ -955,7 +1014,7 @@ export default function RoomsScreen() {
                     : { borderWidth: 1 }
                 }
               >
-                <Text className={clsx("text-sm font-medium", stat.text, active ? "font-semibold" : "")}>
+                <Text className={clsx("text-xs font-medium", stat.text, active ? "font-semibold" : "")}>
                   {stat.label}
                 </Text>
                 {isLoading ? (
@@ -963,7 +1022,7 @@ export default function RoomsScreen() {
                 ) : (
                   <Text
                     className={clsx(
-                      "rounded-full px-2 py-0.5 text-xs font-semibold bg-black/10 dark:bg-white/10",
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold bg-black/10 dark:bg-white/10",
                       stat.text,
                     )}
                   >
@@ -976,10 +1035,10 @@ export default function RoomsScreen() {
         </View>
       </ScrollView>
 
-      <View className="mb-4 mt-2">
+      <View className="mb-2 mt-1">
         <View className="flex-row items-center gap-2">
           <View className="relative flex-1">
-            <View className="pointer-events-none absolute left-3.5 top-1/2 z-10 mt-[-8px]">
+            <View className="pointer-events-none absolute left-3 top-1/2 z-10 mt-[-8px]">
               <Search size={16} color="#94a3b8" />
             </View>
             <TextInput
@@ -989,9 +1048,31 @@ export default function RoomsScreen() {
               onChangeText={setSearch}
               autoCorrect={false}
               clearButtonMode="while-editing"
-              className="h-11 rounded-2xl border border-border dark:border-border-dark bg-card dark:bg-card-dark pl-10 pr-3 text-sm text-foreground dark:text-foreground-dark"
+              className="h-9 rounded-xl border border-border dark:border-border-dark bg-card dark:bg-card-dark pl-9 pr-3 text-xs text-foreground dark:text-foreground-dark"
             />
           </View>
+          <TouchableOpacity
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+              setVacantFirst(prev => !prev)
+            }}
+            className={clsx(
+              "h-9 px-3 rounded-xl border items-center justify-center flex-row gap-1.5",
+              vacantFirst 
+                ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/40" 
+                : "bg-card dark:bg-card-dark border-border dark:border-border-dark"
+            )}
+          >
+            <ArrowUpDown size={12} color={vacantFirst ? "#10b981" : "#94a3b8"} />
+            <Text 
+              className={clsx(
+                "text-[10px] font-bold",
+                vacantFirst ? "text-emerald-600 dark:text-emerald-400" : "text-slate-500 dark:text-slate-400"
+              )}
+            >
+              Vacant First
+            </Text>
+          </TouchableOpacity>
           {hasActiveFilters && (
             <TouchableOpacity
               onPress={() => {
@@ -1004,13 +1085,13 @@ export default function RoomsScreen() {
                 })
               }}
               activeOpacity={0.8}
-              className="h-11 w-11 items-center justify-center rounded-2xl bg-card dark:bg-card-dark border border-border dark:border-border-dark active:scale-95"
+              className="h-9 w-9 items-center justify-center rounded-xl bg-card dark:bg-card-dark border border-border dark:border-border-dark active:scale-95"
             >
               <X size={18} color={isDark ? "#e2e8f0" : "#64748b"} />
             </TouchableOpacity>
           )}
         </View>
-        <View className="mt-2.5 flex-row gap-2">
+        <View className="mt-1.5 flex-row gap-2">
           <InlineSelect
             key={`filter-floor-${filters.floor}-${openDropdown === "filter-floor"}`}
             options={floorFilterOptions}
@@ -1103,16 +1184,16 @@ export default function RoomsScreen() {
       ) : null}
 
       {!loadingFirst && !pgMissing && !pageError ? (
-        <View className="mb-3 flex-row rounded-md px-1">
-          <Text className="min-w-0 flex-1 pr-4 text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+        <View className="mb-2 flex-row rounded-md px-1">
+          <Text className="min-w-0 flex-1 pr-4 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
             Room
           </Text>
           {!compactRent ? (
-            <Text className="w-[94px] text-right text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+            <Text className="w-[94px] text-right text-[9px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
               Rent / Mo
             </Text>
           ) : null}
-          <Text className="w-[116px] text-right text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
+          <Text className="w-[116px] text-right text-[9px] font-bold uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">
             Status
           </Text>
         </View>
@@ -1153,7 +1234,7 @@ export default function RoomsScreen() {
     <Modal
       visible={isSidebarOpen && !!selectedRoom}
       transparent
-      animationType="slide"
+      animationType="none"
       onRequestClose={() => setIsSidebarOpen(false)}
     >
       <View className="flex-1 flex-row-reverse bg-black/45">
@@ -1403,17 +1484,31 @@ export default function RoomsScreen() {
                         <Bed size={18} color={tenant ? primaryColor : "#94a3b8"} />
                       </View>
                       <View className="min-w-0 flex-1">
-                        <Text
-                          numberOfLines={1}
-                          ellipsizeMode="tail"
-                          className={clsx(
-                            "text-[13px] font-bold tracking-tight",
-                            tenant ? "text-slate-900 dark:text-slate-100" : "italic text-slate-400 dark:text-slate-500",
+                        <View className="flex-row items-center flex-wrap gap-1.5">
+                          <Text
+                            numberOfLines={1}
+                            ellipsizeMode="tail"
+                            className={clsx(
+                              "text-[13px] font-bold tracking-tight",
+                              tenant ? "text-slate-900 dark:text-slate-100" : "italic text-slate-400 dark:text-slate-500",
+                            )}
+                          >
+                            {tenant ? tenant.name : "Vacant"}
+                          </Text>
+                          {tenant && (tenant.status === "notice_period" || tenant.status === "move_out") && (
+                            <View className="px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/40">
+                              <Text className="text-[8px] font-black uppercase text-purple-600 dark:text-purple-400">Notice</Text>
+                            </View>
                           )}
-                        >
-                          {tenant ? tenant.name : "Vacant"}
-                        </Text>
-                        <Text className="mt-0.5 text-[11px] text-slate-400 dark:text-slate-500">{bedLabel}</Text>
+                        </View>
+                        <View className="flex-row items-center justify-between mt-0.5">
+                          <Text className="text-[11px] text-slate-400 dark:text-slate-500">{bedLabel}</Text>
+                          {tenant && (tenant.status === "notice_period" || tenant.status === "move_out") && tenant.exitDate && (
+                            <Text className="text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                              Out: {new Date(tenant.exitDate).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                            </Text>
+                          )}
+                        </View>
                       </View>
                     </View>
                     {tenant ? (
@@ -1571,7 +1666,7 @@ export default function RoomsScreen() {
         }
         contentContainerStyle={{
           flexGrow: 1,
-          paddingHorizontal: 24,
+          paddingHorizontal: 16,
           paddingBottom: insets.bottom + 110,
         }}
         renderItem={({ item }) => (
@@ -1586,7 +1681,7 @@ export default function RoomsScreen() {
         )}
       />
 
-      <Modal visible={isAddDialogOpen} animationType="slide" transparent onRequestClose={() => setIsAddDialogOpen(false)}>
+      <Modal visible={isAddDialogOpen} animationType="none" transparent onRequestClose={() => setIsAddDialogOpen(false)}>
         <View className="flex-1 justify-end">
           <Pressable
             className="absolute bottom-0 left-0 right-0 top-0 bg-black/55"
@@ -1804,7 +1899,7 @@ export default function RoomsScreen() {
         </View>
       </Modal>
 
-      <Modal visible={!!previewTenant} transparent animationType="fade" onRequestClose={() => setPreviewTenant(null)}>
+      <Modal visible={!!previewTenant} transparent animationType="none" onRequestClose={() => setPreviewTenant(null)}>
         <Pressable className="flex-1 justify-center bg-black/55 px-5" onPress={() => setPreviewTenant(null)}>
           {previewTenant ? (
             <Pressable

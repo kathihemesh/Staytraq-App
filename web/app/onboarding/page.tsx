@@ -65,9 +65,7 @@ export default function OnboardingPage() {
   }, [isOnboarded, isOnboardingKnown, isAuthLoading, router])
 
   const isValid = fullName.trim().length > 0 && 
-                  pgName.trim().length > 0 && 
-                  address.trim().length > 0 && 
-                  city.trim().length > 0
+                  pgName.trim().length > 0
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -223,7 +221,7 @@ export default function OnboardingPage() {
                         </div>
                         <Input
                           id="address"
-                          placeholder="Complete Address"
+                          placeholder="Complete Address (Optional)"
                           className="pl-10 h-11 bg-muted/50 focus:bg-background transition-colors"
                           value={address}
                           onChange={(e) => setAddress(e.target.value)}
@@ -234,7 +232,7 @@ export default function OnboardingPage() {
                       <div className="relative">
                         <Input
                           id="city"
-                          placeholder="City"
+                          placeholder="City (Optional)"
                           className="h-11 bg-muted/50 focus:bg-background transition-colors"
                           value={city}
                           onChange={(e) => setCity(e.target.value)}

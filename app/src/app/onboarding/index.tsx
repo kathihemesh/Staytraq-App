@@ -26,6 +26,7 @@ export default function OnboardingScreen() {
   
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [errors, setErrors] = useState<{ fullName?: string; pgName?: string }>({})
 
   // Redirect if they are somehow already onboarded
   useEffect(() => {
@@ -37,10 +38,11 @@ export default function OnboardingScreen() {
   const handleNext = () => {
     if (step === 1) {
       if (!fullName.trim()) {
-        setError("Please enter your full name")
+        setErrors({ fullName: "Full name is required" })
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
         return
       }
+      setErrors({})
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
       setError(null)
       setStep(2)
@@ -50,23 +52,29 @@ export default function OnboardingScreen() {
   const handleBack = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     setError(null)
+    setErrors({})
     setStep(1)
   }
 
   const isValid = fullName.trim().length > 0 && 
-                  pgName.trim().length > 0 && 
-                  address.trim().length > 0 && 
-                  city.trim().length > 0
+                  pgName.trim().length > 0
 
   const handleSubmit = async () => {
-    if (!isValid) {
-      setError("Please fill in all fields")
+    if (!fullName.trim()) {
+      setStep(1)
+      setErrors({ fullName: "Full name is required" })
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      return
+    }
+    if (!pgName.trim()) {
+      setErrors({ pgName: "PG name is required" })
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
       return
     }
 
     setIsSubmitting(true)
     setError(null)
+    setErrors({})
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
 
     try {
@@ -123,7 +131,7 @@ export default function OnboardingScreen() {
           </View>
 
           {/* Stepper indicator */}
-          <View className="flex-row justify-center items-center mb-8 space-x-2">
+          <View className="flex-row justify-center items-center mb-8 gap-2">
             <View className={`h-2.5 rounded-full ${step === 1 ? "w-8 bg-primary" : "w-2.5 bg-border dark:bg-border-dark"}`} />
             <View className={`h-2.5 rounded-full ${step === 2 ? "w-8 bg-primary" : "w-2.5 bg-border dark:bg-border-dark"}`} />
           </View>
@@ -151,25 +159,38 @@ export default function OnboardingScreen() {
                   <Text className="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">
                     Your Full Name
                   </Text>
-                  <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark">
+                  <View 
+                    className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
+                    style={{ borderColor: errors.fullName ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
+                  >
                     <User size={20} color="#9ca3af" className="mr-3" />
                     <TextInput
                       ref={fullNameInput.ref}
                       onFocus={fullNameInput.onFocus}
                       value={fullName}
-                      onChangeText={setFullName}
+                      onChangeText={(txt) => {
+                        setFullName(txt)
+                        if (txt.trim().length > 0) {
+                          setErrors(prev => ({ ...prev, fullName: undefined }))
+                        }
+                      }}
                       placeholder="e.g. John Doe"
                       placeholderTextColor="#9ca3af"
                       autoCapitalize="words"
                       autoCorrect={false}
-                      className="flex-1 py-3 text-base text-foreground dark:text-foreground-dark"
+                      className="flex-1 text-base text-foreground dark:text-foreground-dark h-full"
                     />
                   </View>
+                  {errors.fullName && (
+                    <Text className="text-xs text-destructive mt-1.5 font-semibold">
+                      {errors.fullName}
+                    </Text>
+                  )}
                 </View>
 
                 <TouchableOpacity
                   onPress={handleNext}
-                  className="bg-primary rounded-xl py-3.5 mt-6 items-center flex-row justify-center shadow-lg shadow-primary/20"
+                  className="bg-primary rounded-xl h-11 mt-6 items-center flex-row justify-center shadow-lg shadow-primary/20"
                 >
                   <Text className="text-white text-base font-bold mr-2">Continue</Text>
                   <ChevronRight size={18} color="#ffffff" />
@@ -191,38 +212,51 @@ export default function OnboardingScreen() {
                   <Text className="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">
                     Property / PG Name
                   </Text>
-                  <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark">
+                  <View 
+                    className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
+                    style={{ borderColor: errors.pgName ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
+                  >
                     <Building size={20} color="#9ca3af" className="mr-3" />
                     <TextInput
                       ref={pgNameInput.ref}
                       onFocus={pgNameInput.onFocus}
                       value={pgName}
-                      onChangeText={setPgName}
+                      onChangeText={(txt) => {
+                        setPgName(txt)
+                        if (txt.trim().length > 0) {
+                          setErrors(prev => ({ ...prev, pgName: undefined }))
+                        }
+                      }}
                       placeholder="e.g. Royal Nest PG"
                       placeholderTextColor="#9ca3af"
                       autoCapitalize="words"
                       autoCorrect={false}
-                      className="flex-1 py-3 text-base text-foreground dark:text-foreground-dark"
+                      className="flex-1 text-base text-foreground dark:text-foreground-dark h-full"
                     />
                   </View>
+                  {errors.pgName && (
+                    <Text className="text-xs text-destructive mt-1.5 font-semibold">
+                      {errors.pgName}
+                    </Text>
+                  )}
                 </View>
 
                 {/* Address */}
                 <View className="mt-2">
                   <Text className="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">
-                    Complete Address
+                    Complete Address (Optional)
                   </Text>
-                  <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark">
+                  <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark h-12">
                     <MapPin size={20} color="#9ca3af" className="mr-3" />
                     <TextInput
                       ref={addressInput.ref}
                       onFocus={addressInput.onFocus}
                       value={address}
                       onChangeText={setAddress}
-                      placeholder="e.g. Flat 302, Sector 15"
+                      placeholder="e.g. Flat 302, Sector 15 (Optional)"
                       placeholderTextColor="#9ca3af"
                       autoCapitalize="sentences"
-                      className="flex-1 py-3 text-base text-foreground dark:text-foreground-dark"
+                      className="flex-1 text-base text-foreground dark:text-foreground-dark h-full"
                     />
                   </View>
                 </View>
@@ -230,29 +264,29 @@ export default function OnboardingScreen() {
                 {/* City */}
                 <View className="mt-2">
                   <Text className="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">
-                    City
+                    City (Optional)
                   </Text>
-                  <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark">
+                  <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark h-12">
                     <MapPin size={20} color="#9ca3af" className="mr-3" />
                     <TextInput
                       ref={cityInput.ref}
                       onFocus={cityInput.onFocus}
                       value={city}
                       onChangeText={setCity}
-                      placeholder="e.g. Bangalore"
+                      placeholder="e.g. Bangalore (Optional)"
                       placeholderTextColor="#9ca3af"
                       autoCapitalize="words"
-                      className="flex-1 py-3 text-base text-foreground dark:text-foreground-dark"
+                      className="flex-1 text-base text-foreground dark:text-foreground-dark h-full"
                     />
                   </View>
                 </View>
 
                 {/* Actions */}
-                <View className="flex-row space-x-3 mt-6">
+                <View className="flex-row gap-3 mt-6">
                   <TouchableOpacity
                     onPress={handleBack}
                     disabled={isSubmitting}
-                    className="flex-1 border border-border dark:border-border-dark rounded-xl py-3.5 items-center flex-row justify-center"
+                    className="flex-1 border border-border dark:border-border-dark rounded-xl h-11 items-center flex-row justify-center"
                   >
                     <ChevronLeft size={18} color="#9ca3af" className="mr-2" />
                     <Text className="text-muted dark:text-muted-dark text-base font-bold">Back</Text>
@@ -261,7 +295,7 @@ export default function OnboardingScreen() {
                   <TouchableOpacity
                     onPress={handleSubmit}
                     disabled={!isValid || isSubmitting}
-                    className="flex-1 bg-primary rounded-xl py-3.5 items-center flex-row justify-center shadow-lg shadow-primary/20"
+                    className="flex-1 bg-primary rounded-xl h-11 items-center flex-row justify-center shadow-lg shadow-primary/20"
                   >
                     {isSubmitting ? (
                       <ActivityIndicator color="#ffffff" size="small" />

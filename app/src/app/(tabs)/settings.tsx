@@ -4,7 +4,7 @@ import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import useTheme from "@/hooks/use-theme"
-import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, Clock, AlertTriangle, RefreshCw } from "lucide-react-native"
+import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, AlertTriangle, RefreshCw, CreditCard, Link } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import Animated, { FadeIn } from "react-native-reanimated"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
@@ -22,8 +22,11 @@ export default function SettingsScreen() {
   }, [])
 
   const rentDueDayInput = useKeyboardAwareInput()
-  const gracePeriodDaysInput = useKeyboardAwareInput()
   const lateFeePerDayInput = useKeyboardAwareInput()
+  const upiIdInput = useKeyboardAwareInput()
+  const upiNameInput = useKeyboardAwareInput()
+  const whatsappInviteLinkInput = useKeyboardAwareInput()
+  const paymentInstructionsInput = useKeyboardAwareInput()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -33,8 +36,13 @@ export default function SettingsScreen() {
 
   // Settings values
   const [rentDueDay, setRentDueDay] = useState("5")
-  const [gracePeriodDays, setGracePeriodDays] = useState("3")
   const [lateFeePerDay, setLateFeePerDay] = useState("100")
+  const [upiId, setUpiId] = useState("")
+  const [upiName, setUpiName] = useState("")
+  const [whatsappInviteLink, setWhatsappInviteLink] = useState("")
+  const [screenshotRequired, setScreenshotRequired] = useState(true)
+  const [utrRequired, setUtrRequired] = useState(true)
+  const [paymentInstructions, setPaymentInstructions] = useState("")
   const [settingsId, setSettingsId] = useState<number | null>(null)
   
   const successTimeoutRef = useRef<any>(null)
@@ -60,13 +68,23 @@ export default function SettingsScreen() {
       if (data) {
         setSettingsId(data.id)
         setRentDueDay(String(data.rent_due_day ?? 5))
-        setGracePeriodDays(String(data.grace_period_days ?? 3))
         setLateFeePerDay(String(data.late_fee_per_day ?? 100))
+        setUpiId(data.upi_id ?? "")
+        setUpiName(data.upi_name ?? "")
+        setWhatsappInviteLink(data.whatsapp_invite_link ?? "")
+        setScreenshotRequired(data.screenshot_required ?? true)
+        setUtrRequired(data.utr_required ?? true)
+        setPaymentInstructions(data.payment_instructions ?? "")
       } else {
         // No settings found, prepare to insert defaults on first save
         setRentDueDay("5")
-        setGracePeriodDays("3")
         setLateFeePerDay("100")
+        setUpiId("")
+        setUpiName("")
+        setWhatsappInviteLink("")
+        setScreenshotRequired(true)
+        setUtrRequired(true)
+        setPaymentInstructions("")
       }
     } catch (err: any) {
       console.error("Error fetching settings:", err)
@@ -94,7 +112,6 @@ export default function SettingsScreen() {
     
     // Validation
     const dueDayNum = parseInt(rentDueDay, 10)
-    const graceNum = parseInt(gracePeriodDays, 10)
     const lateFeeNum = parseInt(lateFeePerDay, 10)
 
     if (isNaN(dueDayNum) || dueDayNum < 1 || dueDayNum > 31) {
@@ -103,15 +120,23 @@ export default function SettingsScreen() {
       return
     }
 
-    if (isNaN(graceNum) || graceNum < 0 || graceNum > 30) {
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      setError("Grace period must be a valid number of days between 0 and 30.")
-      return
-    }
-
     if (isNaN(lateFeeNum) || lateFeeNum < 0) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
       setError("Late fee per day must be a valid positive amount.")
+      return
+    }
+
+    // Validate UPI ID if provided
+    if (upiId.trim() && !upiId.includes("@")) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      setError("Please enter a valid UPI ID (must contain '@').")
+      return
+    }
+
+    // Validate WhatsApp Link if provided
+    if (whatsappInviteLink.trim() && !whatsappInviteLink.includes("whatsapp.com") && !whatsappInviteLink.startsWith("http")) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      setError("Please enter a valid WhatsApp invite link.")
       return
     }
 
@@ -124,9 +149,14 @@ export default function SettingsScreen() {
 
       const payload = {
         rent_due_day: dueDayNum,
-        grace_period_days: graceNum,
         late_fee_per_day: lateFeeNum,
         owner_id: user.id,
+        upi_id: upiId.trim() || null,
+        upi_name: upiName.trim() || null,
+        whatsapp_invite_link: whatsappInviteLink.trim() || null,
+        screenshot_required: screenshotRequired,
+        utr_required: utrRequired,
+        payment_instructions: paymentInstructions.trim() || null,
       }
 
       if (settingsId) {
@@ -316,32 +346,6 @@ export default function SettingsScreen() {
                 </Text>
               </View>
 
-              {/* Grace Period Row */}
-              <View>
-                <View className="flex-row items-center justify-between mb-2">
-                  <View className="flex-row items-center">
-                    <View className="mr-2">
-                      <Clock size={16} color="#9ca3af" />
-                    </View>
-                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Grace Period</Text>
-                  </View>
-                  <Text className="text-xs text-muted font-semibold">Days</Text>
-                </View>
-                <TextInput
-                  ref={gracePeriodDaysInput.ref}
-                  onFocus={gracePeriodDaysInput.onFocus}
-                  value={gracePeriodDays}
-                  onChangeText={setGracePeriodDays}
-                  keyboardType="numeric"
-                  placeholder="e.g. 3"
-                  placeholderTextColor="#9ca3af"
-                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
-                />
-                <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  Additional days allowed to tenants to process rent after the due date before late fees accumulate.
-                </Text>
-              </View>
-
               {/* Late Fee per day Row */}
               <View>
                 <View className="flex-row items-center justify-between mb-2">
@@ -368,27 +372,177 @@ export default function SettingsScreen() {
                 </Text>
               </View>
 
-              {/* Save Button */}
-              <TouchableOpacity
-                key={`save-btn-${saving}`}
-                onPress={handleSaveSettings}
-                disabled={saving}
-                className={`bg-primary rounded-xl h-12 flex-row items-center justify-center mt-3 shadow-lg ${
-                  saving ? "bg-primary/70" : "shadow-primary/20"
-                }`}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
-                  <>
-                    <View className="mr-2">
-                      <Save size={16} color="#ffffff" />
-                    </View>
-                    <Text className="text-white text-base font-bold">Save Rent Policies</Text>
-                  </>
-                )}
-              </TouchableOpacity>
             </View>
+          </View>
+
+          {/* Section 2: UPI & Payment Settings */}
+          <View className="px-6 mt-6">
+            <View className="flex-row items-center mb-3">
+              <View className="mr-2">
+                <CreditCard size={18} color={isDark ? "#0091ff" : "#0071df"} />
+              </View>
+              <Text className="text-sm font-bold text-muted uppercase tracking-wider">UPI & Payment Settings</Text>
+            </View>
+
+            <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
+              {/* UPI ID Row */}
+              <View>
+                <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">UPI ID</Text>
+                <TextInput
+                  ref={upiIdInput.ref}
+                  onFocus={upiIdInput.onFocus}
+                  value={upiId}
+                  onChangeText={setUpiId}
+                  placeholder="e.g. owner@upi"
+                  placeholderTextColor="#9ca3af"
+                  autoCapitalize="none"
+                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
+                />
+                <Text className="text-[10px] text-muted mt-1.5 leading-4">
+                  Your primary VPA/UPI ID where occupants will send their rent payments.
+                </Text>
+              </View>
+
+              {/* UPI Name Row */}
+              <View>
+                <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">UPI Payee Name</Text>
+                <TextInput
+                  ref={upiNameInput.ref}
+                  onFocus={upiNameInput.onFocus}
+                  value={upiName}
+                  onChangeText={setUpiName}
+                  placeholder="e.g. John Doe"
+                  placeholderTextColor="#9ca3af"
+                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
+                />
+                <Text className="text-[10px] text-muted mt-1.5 leading-4">
+                  The official name associated with your UPI ID.
+                </Text>
+              </View>
+
+              {/* Payment Instructions Row */}
+              <View>
+                <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">Payment Instructions</Text>
+                <TextInput
+                  ref={paymentInstructionsInput.ref}
+                  onFocus={paymentInstructionsInput.onFocus}
+                  value={paymentInstructions}
+                  onChangeText={setPaymentInstructions}
+                  placeholder="e.g. Please send payment screenshot and verify UTR."
+                  placeholderTextColor="#9ca3af"
+                  multiline
+                  numberOfLines={2}
+                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold min-h-[60px]"
+                />
+                <Text className="text-[10px] text-muted mt-1.5 leading-4">
+                  Custom messages shown on the tenant payment portal (e.g., bank details or specific steps).
+                </Text>
+              </View>
+
+              {/* Toggle Switches */}
+              <View className="border-t border-border/40 dark:border-border-dark/40 pt-4 gap-4">
+                {/* Screenshot Required Toggle */}
+                <View className="flex-row justify-between items-center">
+                  <View className="flex-1 mr-4">
+                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Require Screenshot</Text>
+                    <Text className="text-[10px] text-muted mt-0.5 leading-4">Occupants must upload a transaction screenshot on the portal.</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      setScreenshotRequired(!screenshotRequired)
+                    }}
+                    className={`w-12 h-7 rounded-full p-1 flex-row items-center justify-end ${
+                      screenshotRequired ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
+                    }`}
+                  >
+                    <View className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                  </TouchableOpacity>
+                </View>
+
+                {/* UTR Required Toggle */}
+                <View className="flex-row justify-between items-center">
+                  <View className="flex-1 mr-4">
+                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Require UTR Number</Text>
+                    <Text className="text-[10px] text-muted mt-0.5 leading-4">Occupants must type their 12-digit transaction UTR reference code.</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      setUtrRequired(!utrRequired)
+                    }}
+                    className={`w-12 h-7 rounded-full p-1 flex-row items-center justify-start ${
+                      utrRequired ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
+                    }`}
+                  >
+                    {utrRequired ? (
+                      <>
+                        <View className="flex-1" />
+                        <View className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                      </>
+                    ) : (
+                      <>
+                        <View className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                        <View className="flex-1" />
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          {/* Section 3: WhatsApp Integration Settings */}
+          <View className="px-6 mt-6">
+            <View className="flex-row items-center mb-3">
+              <View className="mr-2">
+                <Link size={18} color={isDark ? "#0091ff" : "#0071df"} />
+              </View>
+              <Text className="text-sm font-bold text-muted uppercase tracking-wider">WhatsApp Integration</Text>
+            </View>
+
+            <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
+              <View>
+                <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">WhatsApp Group Invite Link</Text>
+                <TextInput
+                  ref={whatsappInviteLinkInput.ref}
+                  onFocus={whatsappInviteLinkInput.onFocus}
+                  value={whatsappInviteLink}
+                  onChangeText={setWhatsappInviteLink}
+                  placeholder="e.g. https://chat.whatsapp.com/..."
+                  placeholderTextColor="#9ca3af"
+                  autoCapitalize="none"
+                  keyboardType="url"
+                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
+                />
+                <Text className="text-[10px] text-muted mt-1.5 leading-4">
+                  Group invite link that will be shared with new occupants right after you add them.
+                </Text>
+              </View>
+            </View>
+          </View>
+
+          {/* Unified Save Configuration Button */}
+          <View className="px-6 mt-6">
+            <TouchableOpacity
+              key={`save-btn-${saving}`}
+              onPress={handleSaveSettings}
+              disabled={saving}
+              className={`bg-primary rounded-xl h-12 flex-row items-center justify-center shadow-lg ${
+                saving ? "bg-primary/70" : "shadow-primary/20"
+              }`}
+            >
+              {saving ? (
+                <ActivityIndicator size="small" color="#ffffff" />
+              ) : (
+                <>
+                  <View className="mr-2">
+                    <Save size={16} color="#ffffff" />
+                  </View>
+                  <Text className="text-white text-base font-bold">Save Configurations</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
 
           {/* Section 2: Preferences (Dark Mode toggles) */}

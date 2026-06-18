@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { stripHtml } from '@/lib/utils/sanitize'
 
 export async function POST(
   request: Request,
@@ -49,9 +50,12 @@ export async function POST(
     const oldStatus = payment.status
     const now = new Date().toISOString()
     
+    // Sanitize notes to prevent XSS
+    const sanitizedNotes = notes ? stripHtml(notes.trim()) : null
+    
     let updateData: any = {
       verified_at: now,
-      verification_notes: notes || null,
+      verification_notes: sanitizedNotes,
     }
 
     let newStatus = ''
@@ -83,7 +87,7 @@ export async function POST(
       action: action === 'approve' ? 'proof_approved' : 'proof_rejected',
       old_status: oldStatus,
       new_status: newStatus,
-      notes: notes || null
+      notes: sanitizedNotes
     })
 
     return NextResponse.json({ success: true })

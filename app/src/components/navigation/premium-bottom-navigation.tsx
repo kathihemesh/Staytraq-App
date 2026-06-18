@@ -283,8 +283,8 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
   useEffect(() => {
     Animated.spring(expandProgress, {
       toValue: expanded ? 1 : 0,
-      damping: 19,
-      stiffness: 190,
+      damping: 24,
+      stiffness: 300,
       mass: 0.82,
       useNativeDriver: false,
     }).start()
@@ -482,7 +482,8 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
                         styles.item,
                         { width: itemWidth },
                         {
-                          transform: [{ scale: pressed ? 0.92 : active ? 1.12 : 0.88 }],
+                          opacity: pressed ? 0.6 : 1,
+                          transform: [{ scale: active ? 1.12 : 0.88 }],
                         },
                       ]}
                     >
