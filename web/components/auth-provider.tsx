@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
+import { Loader2 } from "lucide-react"
 
 
 import type { User, Session } from "@supabase/supabase-js"
@@ -254,6 +255,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isOnboardingKnown = onboardingStatus !== "unknown"
   const isOnboarded = onboardingStatus === "onboarded"
+
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <AuthContext.Provider value={{ isAuthenticated, isOnboarded, isOnboardingKnown, authReady, isLoading, user, session, login, logout, checkOnboardingStatus }}>
