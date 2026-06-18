@@ -131,6 +131,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return
         }
 
+        if (event === "PASSWORD_RECOVERY") {
+          setSession(newSession)
+          setUser(newSession?.user ?? null)
+          setIsAuthenticated(true)
+          router.replace("/reset-password")
+          return
+        }
+
         // SIGNED_IN / TOKEN_REFRESHED / USER_UPDATED with a valid session:
         if (newSession) {
           setSession(newSession)
