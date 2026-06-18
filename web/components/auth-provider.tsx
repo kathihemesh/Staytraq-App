@@ -162,12 +162,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Data freshness is handled via Supabase Realtime subscriptions (Rooms/Dashboard),
   // and auth changes are handled via `onAuthStateChange`.
 
+  // Redirect to reset-password if landing on another page with recovery hash/query
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const hash = window.location.hash
+      const search = window.location.search
+      const hasRecovery = hash.includes("type=recovery") || search.includes("type=recovery")
+      
+      if (hasRecovery && !window.location.pathname.startsWith("/reset-password")) {
+        router.replace(`/reset-password${hash}${search}`)
+      }
+    }
+  }, [pathname, router])
+
   // Redirect based on auth status
   useEffect(() => {
     // Wait for the initial auth check to complete; otherwise redirects can flap on refresh/focus.
     if (!authReady || isLoading) return
 
-    const isPublicRoute = PUBLIC_ROUTES.includes(pathname) || pathname.startsWith("/pay/") || pathname.startsWith("/complaint-submit/")
+    const normalizedPath = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname
+    const isPublicRoute = PUBLIC_ROUTES.includes(normalizedPath) || normalizedPath.startsWith("/pay/") || normalizedPath.startsWith("/complaint-submit/")
     const isOnboardingKnown = onboardingStatus !== "unknown"
     const isOnboarded = onboardingStatus === "onboarded"
 
@@ -178,10 +192,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Avoid redirecting until we know onboarding status to prevent flicker.
       if (!isOnboardingKnown) return
 
-      if (!isOnboarded && !["/onboarding", "/signup", "/forgot-password", "/reset-password"].includes(pathname)) {
+      if (!isOnboarded && !["/onboarding", "/signup", "/forgot-password", "/reset-password"].includes(normalizedPath)) {
         // If authenticated but not onboarded, redirect to onboarding 
         router.push("/onboarding")
-      } else if (isOnboarded && (pathname === "/login" || pathname === "/signup" || pathname === "/onboarding")) {
+      } else if (isOnboarded && (normalizedPath === "/login" || normalizedPath === "/signup" || normalizedPath === "/onboarding")) {
         // If authenticated and onboarded, redirect from public/onboarding routes to dashboard
         router.push("/")
       }

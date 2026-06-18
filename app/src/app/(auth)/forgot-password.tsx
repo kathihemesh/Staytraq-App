@@ -146,7 +146,7 @@ export default function ForgotPasswordScreen() {
   // --- EMAIL SUCCESS SCREEN ---
   if (isSuccess) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
+      <View key="forgot-password-success" className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
         <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-8 rounded-3xl items-center shadow-md w-full">
           <View className="h-16 w-16 bg-success/15 rounded-full items-center justify-center mb-6">
             <CheckCircle2 size={36} color="#10b981" />
@@ -180,7 +180,7 @@ export default function ForgotPasswordScreen() {
   }
 
   return (
-    <View className="flex-1 bg-background dark:bg-background-dark">
+    <View key="forgot-password-form" className="flex-1 bg-background dark:bg-background-dark">
       {/* Back Header */}
       <View className="p-4 flex-row items-center border-b border-border/10 dark:border-border-dark/10 bg-card dark:bg-card-dark">
         <TouchableOpacity 
@@ -283,7 +283,7 @@ export default function ForgotPasswordScreen() {
 
             {/* Input steps */}
             {step === "initial" ? (
-              <View className="gap-4">
+              <View key="step-initial" className="gap-4">
                 <View>
                   <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
                     {authType === "phone" ? "Phone Number" : "Email Address"}
@@ -336,7 +336,7 @@ export default function ForgotPasswordScreen() {
                 </TouchableOpacity>
               </View>
             ) : (
-              <View className="items-center">
+              <View key="step-otp" className="items-center">
                 <Text className="text-base font-bold text-foreground dark:text-foreground-dark text-center mb-1">
                   Enter Verification Code
                 </Text>

@@ -208,7 +208,7 @@ export default function ResetPasswordScreen() {
   // --- RENDER CHECKING TOKEN SCREEN ---
   if (isCheckingToken) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark justify-center items-center px-6">
+      <View key="reset-checking" className="flex-1 bg-background dark:bg-background-dark justify-center items-center px-6">
         <ActivityIndicator size="large" color={isDark ? "#0091ff" : "#0071df"} />
         <Text className="text-sm font-semibold text-muted dark:text-muted-dark mt-4">
           Verifying reset session...
@@ -220,7 +220,7 @@ export default function ResetPasswordScreen() {
   // --- RENDER INVALID TOKEN STATE ---
   if (isValidToken === false) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
+      <View key="reset-invalid" className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
         <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-8 rounded-3xl items-center shadow-md w-full">
           <View className="h-16 w-16 bg-destructive/15 rounded-full items-center justify-center mb-6">
             <AlertTriangle size={36} color="#ef4444" />
@@ -248,7 +248,7 @@ export default function ResetPasswordScreen() {
   // --- RENDER SUCCESS REDIRECT STATE ---
   if (isSuccess) {
     return (
-      <View className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
+      <View key="reset-success" className="flex-1 bg-background dark:bg-background-dark justify-center px-6 py-12">
         <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-8 rounded-3xl items-center shadow-md w-full">
           <View className="h-16 w-16 bg-success/15 rounded-full items-center justify-center mb-6">
             <CheckCircle2 size={36} color="#10b981" />
@@ -275,6 +275,7 @@ export default function ResetPasswordScreen() {
 
   return (
     <KeyboardAwareScrollView
+      key="reset-form"
       className="flex-1 bg-background dark:bg-background-dark"
       contentContainerStyle={{ flexGrow: 1, justifyContent: "center" }}
     >
