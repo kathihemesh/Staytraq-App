@@ -39,6 +39,7 @@ interface PaymentData {
     payment_instructions: string
     screenshot_required: boolean
     utr_required: boolean
+    is_merchant: boolean
   } | null
 }
 
@@ -304,14 +305,19 @@ export default function TenantPaymentPage() {
   // Generates unique prefilled QR string using payment_code
   const generateUpiString = () => {
     if (!data?.settings || !selectedPayment || !data?.tenant) return ''
-    const { upi_id, upi_name } = data.settings
+    const { upi_id, upi_name, is_merchant } = data.settings
     const payCode = selectedPayment.payment_code || 'PAY-XXXXXX'
+    const amount = selectedPayment.amount
     
     // Unique txn reference and note to identify payment
     const txnRef = payCode
     const note = payCode
 
-    return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&tr=${encodeURIComponent(txnRef)}&tn=${encodeURIComponent(note)}&cu=INR`
+    if (is_merchant) {
+      return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&tr=${encodeURIComponent(txnRef)}&tn=${encodeURIComponent(note)}&am=${amount}&cu=INR`
+    } else {
+      return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&tn=${encodeURIComponent(note)}&am=${amount}&cu=INR`
+    }
   }
 
   return (

@@ -30,11 +30,36 @@ export default function SettingsPage() {
   const [paymentInstructions, setPaymentInstructions] = useState("")
   const [screenshotRequired, setScreenshotRequired] = useState(true)
   const [utrRequired, setUtrRequired] = useState(true)
+  const [isMerchant, setIsMerchant] = useState(false)
 
   // Notification Settings State (Mocked for now as per original)
   const [emailNotifications, setEmailNotifications] = useState(true)
   const [smsNotifications, setSmsNotifications] = useState(false)
   const [autoReminders, setAutoReminders] = useState(true)
+
+  const detectMerchantUpi = (vpa: string): boolean => {
+    if (!vpa) return false
+    const lower = vpa.trim().toLowerCase()
+    const merchantHandles = [
+      "okbiz", "okbizaxis", "okbizsbi", "okbizicici", "okbizhdfc",
+      "merchant", "business", "store", "shop", "paytmmerchant", 
+      "hdfcmerchant", "icicimerchant", "axismap", "okhdfcbank"
+    ]
+    const parts = lower.split("@")
+    if (parts.length === 2) {
+      const handle = parts[1]
+      if (merchantHandles.some(mh => handle.startsWith(mh))) return true
+    }
+    return (
+      lower.includes("merchant") || lower.includes("biz") ||
+      lower.includes("business") || lower.includes("store") || lower.includes("shop")
+    )
+  }
+
+  const handleUpiIdChange = (val: string) => {
+    setUpiId(val)
+    setIsMerchant(detectMerchantUpi(val))
+  }
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -69,6 +94,7 @@ export default function SettingsPage() {
         setPaymentInstructions(data.payment_instructions || "")
         setScreenshotRequired(data.screenshot_required ?? true)
         setUtrRequired(data.utr_required ?? true)
+        setIsMerchant(data.is_merchant ?? false)
       }
     } catch (error) {
       console.error("Error fetching settings:", error)
@@ -98,7 +124,8 @@ export default function SettingsPage() {
           upi_name: upiName,
           payment_instructions: paymentInstructions,
           screenshot_required: screenshotRequired,
-          utr_required: utrRequired
+          utr_required: utrRequired,
+          is_merchant: isMerchant
         })
         .eq('owner_id', userId)
 
@@ -190,9 +217,19 @@ export default function SettingsPage() {
                     id="upiId" 
                     placeholder="e.g., yourname@bank" 
                     value={upiId} 
-                    onChange={(e) => setUpiId(e.target.value)} 
+                    onChange={(e) => handleUpiIdChange(e.target.value)} 
                     className="bg-muted/50 focus:bg-background" 
                   />
+                  <div className="flex items-center space-x-2 pt-1">
+                    <Switch
+                      id="isMerchant"
+                      checked={isMerchant}
+                      onCheckedChange={setIsMerchant}
+                    />
+                    <Label htmlFor="isMerchant" className="text-xs font-normal text-muted-foreground cursor-pointer">
+                      This is a verified business merchant account (enable transaction tracking)
+                    </Label>
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="upiName" className="text-sm font-medium">Payee Name</Label>

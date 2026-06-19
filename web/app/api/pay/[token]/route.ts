@@ -34,7 +34,7 @@ export async function GET(
     // 2. Fetch settings for the owner
     const { data: settings, error: settingsError } = await supabase
       .from('settings')
-      .select('upi_id, upi_name, payment_instructions, screenshot_required, utr_required')
+      .select('upi_id, upi_name, payment_instructions, screenshot_required, utr_required, is_merchant')
       .eq('owner_id', linkRecord.owner_id)
       .single()
 
