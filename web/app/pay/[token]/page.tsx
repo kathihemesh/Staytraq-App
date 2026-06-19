@@ -626,26 +626,35 @@ export default function TenantPaymentPage() {
                 <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-xl">
                   <CardHeader>
                     <CardTitle className="text-lg">Pay via UPI</CardTitle>
-                    <CardDescription>Tap the QR code to pay using any UPI app, or scan it</CardDescription>
+                    <CardDescription>
+                      {data.settings.is_merchant 
+                        ? "Tap the QR code to pay using any UPI app, or scan it" 
+                        : "Copy details below to pay manually using any UPI app"
+                      }
+                    </CardDescription>
                   </CardHeader>
                   <CardContent className="flex flex-col items-center">
-                    <a 
-                      href={generateUpiString()}
-                      className="bg-white p-4 rounded-xl shadow-inner mb-4 cursor-pointer block hover:scale-105 active:scale-95 transition-all duration-200 border-2 border-transparent hover:border-primary/50 relative group"
-                      title="Tap to pay via UPI app"
-                    >
-                      <QRCodeSVG 
-                        value={generateUpiString()} 
-                        size={200}
-                        level="M"
-                        includeMargin={false}
-                      />
-                    </a>
+                    {data.settings.is_merchant && (
+                      <>
+                        <a 
+                          href={generateUpiString()}
+                          className="bg-white p-4 rounded-xl shadow-inner mb-4 cursor-pointer block hover:scale-105 active:scale-95 transition-all duration-200 border-2 border-transparent hover:border-primary/50 relative group"
+                          title="Tap to pay via UPI app"
+                        >
+                          <QRCodeSVG 
+                            value={generateUpiString()} 
+                            size={200}
+                            level="M"
+                            includeMargin={false}
+                          />
+                        </a>
 
-                    <span className="text-xs text-primary mb-6 animate-pulse flex items-center gap-1.5 font-medium">
-                      <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block animate-ping"></span>
-                      Tap or scan the QR code to pay
-                    </span>
+                        <span className="text-xs text-primary mb-6 animate-pulse flex items-center gap-1.5 font-medium">
+                          <span className="h-1.5 w-1.5 rounded-full bg-primary inline-block animate-ping"></span>
+                          Tap or scan the QR code to pay
+                        </span>
+                      </>
+                    )}
                     
                     <div className="w-full text-center space-y-1 mb-6">
                       <p className="text-sm text-neutral-400">Paying to</p>
@@ -657,7 +666,7 @@ export default function TenantPaymentPage() {
                         </p>
                       ) : (
                         <p className="text-[10px] text-amber-500 bg-amber-500/10 border border-amber-500/20 py-1.5 px-3.5 rounded-full inline-block mt-2 font-medium">
-                          Scan to pay & enter payment details manually
+                          Enter payment details manually in your UPI app
                         </p>
                       )}
                     </div>
