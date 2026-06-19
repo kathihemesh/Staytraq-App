@@ -305,14 +305,13 @@ export default function TenantPaymentPage() {
   const generateUpiString = () => {
     if (!data?.settings || !selectedPayment || !data?.tenant) return ''
     const { upi_id, upi_name } = data.settings
-    const { amount } = selectedPayment
     const payCode = selectedPayment.payment_code || 'PAY-XXXXXX'
     
     // Unique txn reference and note to identify payment
     const txnRef = payCode
     const note = payCode
 
-    return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&am=${amount}&tr=${encodeURIComponent(txnRef)}&tn=${encodeURIComponent(note)}&cu=INR`
+    return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&tr=${encodeURIComponent(txnRef)}&tn=${encodeURIComponent(note)}&cu=INR`
   }
 
   return (

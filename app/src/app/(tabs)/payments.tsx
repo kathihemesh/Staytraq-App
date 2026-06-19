@@ -47,7 +47,8 @@ import {
   Trash2,
   MessageSquare,
   Eye,
-  Link
+  Link,
+  Phone
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
@@ -1886,6 +1887,48 @@ export default function PaymentsScreen() {
                       <Text className="text-xs text-muted font-bold">Occupant Name</Text>
                       <Text className="text-xs font-black text-foreground dark:text-foreground-dark">{selectedPayment.tenants_table?.name || "Occupant"}</Text>
                     </View>
+                    
+                    {selectedPayment.tenants_table?.mobile_number && (
+                      <View className="flex-row justify-between items-center py-1.5 border-b border-border/20 dark:border-border-dark/20">
+                        <Text className="text-xs text-muted font-bold">Phone Number</Text>
+                        <View className="flex-row items-center gap-2">
+                          <TouchableOpacity 
+                            onPress={async () => {
+                              const mobile = selectedPayment.tenants_table?.mobile_number
+                              if (mobile) {
+                                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                const telUrl = `tel:${mobile}`
+                                try {
+                                  await Linking.openURL(telUrl)
+                                } catch (error) {
+                                  Alert.alert(
+                                    "Call Not Supported",
+                                    `Calling is not available on this device/browser. Number: ${mobile}`
+                                  )
+                                }
+                              }
+                            }} 
+                            className="flex-row items-center bg-primary/10 px-2.5 py-1.5 rounded-xl active:scale-95"
+                          >
+                            <Text className="text-xs font-black text-primary mr-1.5">{selectedPayment.tenants_table.mobile_number}</Text>
+                            <Phone size={12} color={isDark ? "#0091ff" : "#0071df"} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            onPress={() => {
+                              const mobile = selectedPayment.tenants_table?.mobile_number
+                              if (mobile) {
+                                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                Clipboard.setString(mobile)
+                                showToast("Copied", "Phone number copied to clipboard.", "success")
+                              }
+                            }}
+                            className="bg-primary/10 p-2 rounded-xl active:scale-95 items-center justify-center animate-none"
+                          >
+                            <Copy size={12} color={isDark ? "#0091ff" : "#0071df"} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    )}
                     
                     <View className="flex-row justify-between py-1.5 border-b border-border/20 dark:border-border-dark/20">
                       <Text className="text-xs text-muted font-bold">Room Reference</Text>
