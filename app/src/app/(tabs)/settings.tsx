@@ -43,9 +43,36 @@ export default function SettingsScreen() {
   const [screenshotRequired, setScreenshotRequired] = useState(true)
   const [utrRequired, setUtrRequired] = useState(true)
   const [paymentInstructions, setPaymentInstructions] = useState("")
+  const [isMerchant, setIsMerchant] = useState(false)
   const [settingsId, setSettingsId] = useState<number | null>(null)
   
   const successTimeoutRef = useRef<any>(null)
+
+  const detectMerchantUpi = (vpa: string): boolean => {
+    if (!vpa) return false
+    const lower = vpa.trim().toLowerCase()
+    const merchantHandles = [
+      "okbiz", "okbizaxis", "okbizsbi", "okbizicici", "okbizhdfc",
+      "merchant", "business", "store", "shop", "paytmmerchant", 
+      "hdfcmerchant", "icicimerchant", "axismap", "okhdfcbank",
+      "vyapar"
+    ]
+    const parts = lower.split("@")
+    if (parts.length === 2) {
+      const handle = parts[1]
+      if (merchantHandles.some(mh => handle.startsWith(mh))) return true
+    }
+    return (
+      lower.includes("merchant") || lower.includes("biz") ||
+      lower.includes("business") || lower.includes("store") ||
+      lower.includes("shop") || lower.includes("vyapar")
+    )
+  }
+
+  const handleUpiIdChange = (val: string) => {
+    setUpiId(val)
+    setIsMerchant(detectMerchantUpi(val))
+  }
 
   // Fetch settings from database
   const fetchSettings = useCallback(async (silent = false) => {
@@ -75,6 +102,7 @@ export default function SettingsScreen() {
         setScreenshotRequired(data.screenshot_required ?? true)
         setUtrRequired(data.utr_required ?? true)
         setPaymentInstructions(data.payment_instructions ?? "")
+        setIsMerchant(data.is_merchant ?? false)
       } else {
         // No settings found, prepare to insert defaults on first save
         setRentDueDay("5")
@@ -85,6 +113,7 @@ export default function SettingsScreen() {
         setScreenshotRequired(true)
         setUtrRequired(true)
         setPaymentInstructions("")
+        setIsMerchant(false)
       }
     } catch (err: any) {
       console.error("Error fetching settings:", err)
@@ -157,6 +186,7 @@ export default function SettingsScreen() {
         screenshot_required: screenshotRequired,
         utr_required: utrRequired,
         payment_instructions: paymentInstructions.trim() || null,
+        is_merchant: isMerchant,
       }
 
       if (settingsId) {
@@ -392,12 +422,32 @@ export default function SettingsScreen() {
                   ref={upiIdInput.ref}
                   onFocus={upiIdInput.onFocus}
                   value={upiId}
-                  onChangeText={setUpiId}
+                  onChangeText={handleUpiIdChange}
                   placeholder="e.g. owner@upi"
                   placeholderTextColor="#9ca3af"
                   autoCapitalize="none"
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
                 />
+                
+                {/* Verified Merchant Switch */}
+                <View className="flex-row justify-between items-center mt-2.5 bg-muted/5 dark:bg-muted-dark/5 p-3 rounded-2xl border border-border/10 dark:border-border-dark/10">
+                  <View className="flex-1 mr-4">
+                    <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Verified Merchant Account</Text>
+                    <Text className="text-[9px] text-muted mt-0.5 leading-3.5">Enable Transaction Reference tracking for business accounts.</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      setIsMerchant(!isMerchant)
+                    }}
+                    className={`w-12 h-7 rounded-full p-1 flex-row items-center ${
+                      isMerchant ? "bg-primary justify-end" : "bg-slate-200 dark:bg-slate-800 justify-start"
+                    }`}
+                  >
+                    <View className="w-5 h-5 rounded-full bg-white shadow-sm" />
+                  </TouchableOpacity>
+                </View>
+
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
                   Your primary VPA/UPI ID where occupants will send their rent payments.
                 </Text>

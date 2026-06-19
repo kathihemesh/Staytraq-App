@@ -43,7 +43,8 @@ export default function SettingsPage() {
     const merchantHandles = [
       "okbiz", "okbizaxis", "okbizsbi", "okbizicici", "okbizhdfc",
       "merchant", "business", "store", "shop", "paytmmerchant", 
-      "hdfcmerchant", "icicimerchant", "axismap", "okhdfcbank"
+      "hdfcmerchant", "icicimerchant", "axismap", "okhdfcbank",
+      "vyapar"
     ]
     const parts = lower.split("@")
     if (parts.length === 2) {
@@ -52,7 +53,8 @@ export default function SettingsPage() {
     }
     return (
       lower.includes("merchant") || lower.includes("biz") ||
-      lower.includes("business") || lower.includes("store") || lower.includes("shop")
+      lower.includes("business") || lower.includes("store") ||
+      lower.includes("shop") || lower.includes("vyapar")
     )
   }
 

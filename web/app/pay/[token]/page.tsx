@@ -316,7 +316,8 @@ export default function TenantPaymentPage() {
     if (is_merchant) {
       return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&tr=${encodeURIComponent(txnRef)}&tn=${encodeURIComponent(note)}&am=${amount}&cu=INR`
     } else {
-      return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&tn=${encodeURIComponent(note)}&am=${amount}&cu=INR`
+      // Completely plain P2P deep link/QR (no amount, no notes/references) to ensure zero security declines
+      return `upi://pay?pa=${encodeURIComponent(upi_id)}&pn=${encodeURIComponent(upi_name || 'Owner')}&cu=INR`
     }
   }
 
@@ -650,10 +651,74 @@ export default function TenantPaymentPage() {
                       <p className="text-sm text-neutral-400">Paying to</p>
                       <p className="font-semibold text-white text-lg">{data.settings.upi_name || 'Owner'}</p>
                       <p className="text-sm text-neutral-500 font-mono">{data.settings.upi_id}</p>
-                      <p className="text-[10px] text-neutral-500 bg-neutral-950 py-1 px-3 rounded-full inline-block mt-2">
-                        Prefilled transaction details will appear on scan
-                      </p>
+                      {data.settings.is_merchant ? (
+                        <p className="text-[10px] text-neutral-500 bg-neutral-950 py-1 px-3 rounded-full inline-block mt-2">
+                          Prefilled transaction details will appear on scan
+                        </p>
+                      ) : (
+                        <p className="text-[10px] text-amber-500 bg-amber-500/10 border border-amber-500/20 py-1.5 px-3.5 rounded-full inline-block mt-2 font-medium">
+                          Scan to pay & enter payment details manually
+                        </p>
+                      )}
                     </div>
+
+                    {!data.settings.is_merchant && (
+                      <div className="w-full space-y-4 border-t border-neutral-800 pt-5 mt-2">
+                        {/* Highlighting UPI Section */}
+                        <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl space-y-1.5">
+                          <Label className="text-[10px] uppercase font-bold tracking-wider text-primary">UPI ID / VPA</Label>
+                          <div className="flex gap-2">
+                            <Input 
+                              readOnly 
+                              value={data.settings.upi_id || ''} 
+                              className="bg-neutral-950 border-neutral-850 text-xs font-mono select-all flex-1 text-white text-center h-9" 
+                            />
+                            <Button 
+                              type="button" 
+                              size="sm"
+                              className="bg-primary text-primary-foreground text-xs hover:bg-primary/90 h-9 font-bold px-4"
+                              onClick={() => {
+                                navigator.clipboard.writeText(data.settings?.upi_id || '')
+                                toast.success("UPI ID copied!")
+                              }}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Highlighting Payment Code Section */}
+                        <div className="bg-primary/5 border border-primary/20 p-4 rounded-xl space-y-1.5">
+                          <Label className="text-[10px] uppercase font-bold tracking-wider text-primary">Payment Code (Note)</Label>
+                          <div className="flex gap-2">
+                            <Input 
+                              readOnly 
+                              value={selectedPayment.payment_code || ''} 
+                              className="bg-neutral-950 border-neutral-850 text-xs font-bold select-all flex-1 text-white text-center h-9" 
+                            />
+                            <Button 
+                              type="button" 
+                              size="sm"
+                              className="bg-primary text-primary-foreground text-xs hover:bg-primary/90 h-9 font-bold px-4"
+                              onClick={() => {
+                                navigator.clipboard.writeText(selectedPayment.payment_code || '')
+                                toast.success("Payment Code copied!")
+                              }}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Highlighted Warning Note */}
+                        <div className="bg-amber-500/10 border border-amber-500/30 p-4 rounded-xl flex items-start gap-3">
+                          <AlertCircle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                          <p className="text-xs text-amber-400 font-semibold leading-5 text-left">
+                            Important: Don't forget to add the <span className="underline font-black text-white">{selectedPayment.payment_code || ''}</span> as the note/remark in your payment app. If you do not include it, your payment may be declined or verification will fail.
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     {data.settings.payment_instructions && (
                       <div className="w-full bg-neutral-950/50 rounded-lg p-4 border border-neutral-800">
