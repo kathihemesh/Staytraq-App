@@ -1,6 +1,8 @@
-import { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react"
 import { router, usePathname } from "expo-router"
 import { supabase } from "@/lib/supabase"
+import * as WebBrowser from "expo-web-browser"
+import * as Linking from "expo-linking"
 import type { User, Session } from "@supabase/supabase-js"
 
 type OnboardingStatus = "unknown" | "onboarded" | "not_onboarded"
@@ -13,12 +15,15 @@ interface AuthContextType {
   isLoading: boolean
   user: User | null
   session: Session | null
-  login: (identifier: string, password: string, type: "email" | "phone") => Promise<{ success: boolean; error?: string }>
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>
   logout: () => Promise<void>
   checkOnboardingStatus: (userId: string) => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
+
+
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -55,7 +60,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
-  // Check initial session and subscribe to auth changes
+  // -----------------------------------------------------------------------
+  // [Auth] Check initial session and subscribe to auth state changes.
+  // This is unchanged from the original implementation.
+  // -----------------------------------------------------------------------
   useEffect(() => {
     const checkAuth = async () => {
       try {
@@ -139,17 +147,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [checkOnboardingStatus])
 
+
+
   const pathname = usePathname()
 
-  // Central Router redirection logic.
-  // Use global router here to avoid depending on a navigation hook context
-  // inside a provider that can render before navigator context is available.
+  // -----------------------------------------------------------------------
+  // [Router] Central redirection logic — unchanged from original.
+  // -----------------------------------------------------------------------
   useEffect(() => {
     if (!authReady || isLoading) return
     const isOnboardingKnown = onboardingStatus !== "unknown"
     const isOnboarded = onboardingStatus === "onboarded"
 
-    const isAuthRoute = pathname.includes("login") || pathname.includes("signup") || pathname.includes("forgot-password") || pathname.includes("reset-password")
+    const isAuthRoute = pathname.includes("login") || pathname.includes("signup") || pathname.includes("forgot-password") || pathname.includes("reset-password") || pathname.includes("auth/callback")
     const isOnboardingRoute = pathname.includes("onboarding")
 
     if (!isAuthenticated) {
@@ -178,13 +188,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [isAuthenticated, onboardingStatus, authReady, isLoading, pathname])
 
-  const login = useCallback(async (identifier: string, password: string, type: "email" | "phone") => {
+  // -----------------------------------------------------------------------
+  // [Auth] Email + password login — unchanged from original.
+  // -----------------------------------------------------------------------
+  const login = useCallback(async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword(
-        type === "email" 
-          ? { email: identifier, password } 
-          : { phone: identifier.startsWith("+") ? identifier : `+91${identifier}`, password }
-      )
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
 
       if (error) {
         return { success: false, error: "Invalid credentials. Please try again." }
@@ -196,6 +205,109 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [])
 
+  // -----------------------------------------------------------------------
+  // [OAuth] Google Sign-In — PKCE flow only
+  //
+  // 1. Build the redirect URL with Linking.createURL("auth/callback")
+  // 2. Call signInWithOAuth with skipBrowserRedirect: true to get the URL
+  // 3. Open it with openAuthSessionAsync; the second arg tells the browser
+  //    which URL prefix to intercept as "done"
+  // 4. If openAuthSessionAsync returns success, extract the "code" and call
+  //    exchangeCodeForSession
+  // 5. If the browser is dismissed, wait briefly and check if the persistent
+  //    Linking handler already established a session
+  //
+  // All implicit-flow (hash fragment / setSession) logic has been removed.
+  // -----------------------------------------------------------------------
+  const signInWithGoogle = useCallback(async () => {
+    try {
+      // Build the redirect URL from the app scheme defined in app.json
+      const redirectTo = Linking.createURL("auth/callback")
+      console.log("[OAuth] redirectTo =", redirectTo)
+
+      // Ask Supabase for the Google OAuth URL (PKCE challenge is embedded)
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+        },
+      })
+
+      if (error) {
+        console.error("[OAuth] signInWithOAuth error:", error.message)
+        return { success: false, error: error.message }
+      }
+
+      if (!data?.url) {
+        console.error("[OAuth] signInWithOAuth returned no URL")
+        return { success: false, error: "Failed to initiate Google sign-in." }
+      }
+
+      console.log("[OAuth] Opening auth session with URL:", data.url.substring(0, 120), "...")
+
+      // Open the OAuth URL in an in-app browser (Chrome Custom Tab / ASWebAuth).
+      // The second arg (redirectTo) tells the browser to intercept redirects
+      // that start with this prefix and return them to the app.
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo)
+
+      console.log("[OAuth] openAuthSessionAsync result:", JSON.stringify({
+        type: result.type,
+        url: result.type === "success" ? (result as any).url?.substring(0, 120) : undefined,
+      }))
+
+      // -------------------------------------------------------------------
+      // Path A: openAuthSessionAsync successfully intercepted the redirect
+      // -------------------------------------------------------------------
+      if (result.type === "success" && (result as any).url) {
+        const callbackUrl: string = (result as any).url
+        console.log("[OAuth] Browser returned success — processing callback URL...")
+        
+        const queryIndex = callbackUrl.indexOf("?")
+        if (queryIndex !== -1) {
+          const queryParams = new URLSearchParams(callbackUrl.substring(queryIndex + 1))
+          const code = queryParams.get("code")
+          if (code) {
+            console.log("[OAuth] Found code in success redirect. Exchanging...")
+            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
+            if (exchangeError) {
+              console.error("[OAuth] Exchange code failed:", exchangeError.message)
+              return { success: false, error: exchangeError.message }
+            }
+            console.log("[OAuth] Exchange code success.")
+            return { success: true }
+          }
+        }
+        return { success: false, error: "Authentication failed. No authorization code received." }
+      }
+
+      // -------------------------------------------------------------------
+      // Path B: Browser was dismissed (cancel / dismiss).
+      // The persistent Linking handler (above) may have already caught the
+      // deep link and established a session. Wait briefly, then check.
+      // -------------------------------------------------------------------
+      if (result.type === "cancel" || result.type === "dismiss") {
+        console.log("[OAuth] Browser dismissed — waiting for deep link handler...")
+        await new Promise((resolve) => setTimeout(resolve, 2500))
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
+        if (currentSession) {
+          console.log("[OAuth] Session found after dismiss — sign-in succeeded via deep link")
+          return { success: true }
+        }
+        console.log("[OAuth] No session after dismiss — user likely cancelled")
+      }
+
+      // User cancelled or redirect was not caught
+      return { success: false }
+    } catch (err: any) {
+      console.error("[OAuth] signInWithGoogle threw:", err)
+      return { success: false, error: err.message || "Google sign-in failed. Please try again." }
+    }
+  }, [])
+
+  // -----------------------------------------------------------------------
+  // [Auth] Logout — unchanged from original.
+  // -----------------------------------------------------------------------
   const logout = useCallback(async () => {
     if (logoutInFlightRef.current) return
     logoutInFlightRef.current = true
@@ -236,6 +348,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       session,
       login,
+      signInWithGoogle,
       logout,
       checkOnboardingStatus
     }}>

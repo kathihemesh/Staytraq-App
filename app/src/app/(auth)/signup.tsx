@@ -1,26 +1,45 @@
-import { useState, useRef } from "react"
-import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Platform, Image } from "react-native"
+import { useState } from "react"
+import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, Image } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useRouter } from "expo-router"
 import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/context/auth"
-import { Eye, EyeOff, Mail, Lock, Phone, ChevronRight, Hotel, AlertTriangle, ArrowLeft, CheckCircle2 } from "lucide-react-native"
+import { Eye, EyeOff, Mail, Lock, ChevronRight, AlertTriangle, CheckCircle2 } from "lucide-react-native"
+import Svg, { Path } from "react-native-svg"
 import * as Haptics from "expo-haptics"
 import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
 
+function GoogleIcon({ size = 20 }: { size?: number }) {
+  return (
+    <Svg viewBox="0 0 24 24" width={size} height={size}>
+      <Path
+        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"
+        fill="#4285F4"
+      />
+      <Path
+        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+        fill="#34A853"
+      />
+      <Path
+        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+        fill="#FBBC05"
+      />
+      <Path
+        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+        fill="#EA4335"
+      />
+    </Svg>
+  )
+}
+
 export default function SignUpScreen() {
-  const { authReady, isLoading: isAuthLoading } = useAuth()
+  const { authReady, isLoading: isAuthLoading, signInWithGoogle } = useAuth()
   const router = useRouter()
   const { isDark } = useTheme()
-  const otpInputRef = useRef<TextInput>(null)
 
-  const identifierInput = useKeyboardAwareInput()
+  const emailInput = useKeyboardAwareInput()
   const passwordInput = useKeyboardAwareInput()
-  const confirmPasswordInput = useKeyboardAwareInput()
-
-  const [authType, setAuthType] = useState<"phone" | "email">("phone")
-  const [step, setStep] = useState<"initial" | "otp" | "password">("initial")
 
   if (!authReady || isAuthLoading) {
     return (
@@ -35,19 +54,28 @@ export default function SignUpScreen() {
 
         {/* Premium Card Skeleton */}
         <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-6 rounded-3xl shadow-md animate-pulse">
-          {/* Tabs Skeleton */}
-          <View className="flex-row bg-background dark:bg-background-dark p-1 rounded-xl mb-6 border border-border/40 dark:border-border-dark/40 gap-2">
-            <View className="flex-1 h-9 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
-            <View className="flex-1 h-9 bg-muted/15 dark:bg-muted-dark/15 rounded-lg" />
-          </View>
-
           {/* Label Skeleton */}
           <View className="h-4 w-28 bg-muted/20 dark:bg-muted-dark/20 rounded-md mb-2" />
           {/* Input Skeleton */}
           <View className="h-12 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-xl mb-4" />
 
+          {/* Label Skeleton */}
+          <View className="h-4 w-20 bg-muted/20 dark:bg-muted-dark/20 rounded-md mb-2" />
+          {/* Input Skeleton */}
+          <View className="h-12 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-xl mb-4" />
+
           {/* Button Skeleton */}
           <View className="h-11 bg-muted/20 dark:bg-muted-dark/20 rounded-xl mt-6" />
+
+          {/* Divider Skeleton */}
+          <View className="flex-row items-center my-5">
+            <View className="flex-1 h-px bg-muted/15 dark:bg-muted-dark/15" />
+            <View className="h-3 w-6 bg-muted/15 dark:bg-muted-dark/15 rounded mx-4" />
+            <View className="flex-1 h-px bg-muted/15 dark:bg-muted-dark/15" />
+          </View>
+
+          {/* Google Button Skeleton */}
+          <View className="h-11 bg-muted/15 dark:bg-muted-dark/15 rounded-xl" />
         </View>
 
         {/* Footer Skeleton */}
@@ -58,14 +86,12 @@ export default function SignUpScreen() {
     )
   }
   
-  const [identifier, setIdentifier] = useState("") // Phone or email
-  const [otp, setOtp] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   const [loading, setLoading] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [validationError, setValidationError] = useState<Record<string, string>>({})
   const [isSuccess, setIsSuccess] = useState(false)
@@ -87,143 +113,12 @@ export default function SignUpScreen() {
     }
   }
 
-  // --- PHONE FLOW HANDLERS ---
-  const handleSendOTP = async () => {
-    setError(null)
-    setValidationError({})
-
-    if (!identifier || identifier.length < 10) {
-      setValidationError({ identifier: "Please enter a valid 10-digit phone number" })
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      return
-    }
-
-    try {
-      setLoading(true)
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-
-      // 1. Check if the mobile number is already registered in auth.users via RPC
-      const { data: exists, error: fetchError } = await supabase
-        .rpc("check_user_exists", {
-          p_email: null,
-          p_phone: identifier.trim()
-        })
-
-      if (fetchError) {
-        throw new Error("Server error while checking registration")
-      }
-
-      if (exists) {
-        setError("This mobile number is already registered.")
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-        setLoading(false)
-        return
-      }
-
-      // 2. Request OTP via Supabase
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        phone: identifier.startsWith("+") ? identifier : `+91${identifier}`,
-      })
-
-      if (otpError) {
-        setError(otpError.message)
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      } else {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-        setStep("otp")
-        // Automatically focus the OTP input after transition
-        setTimeout(() => otpInputRef.current?.focus(), 150)
-      }
-    } catch (err: any) {
-      setError(err.message || "Failed to send OTP. Please try again.")
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleVerifyOTP = async () => {
-    setError(null)
-    setValidationError({})
-
-    if (otp.length < 6) {
-      setValidationError({ otp: "Please enter a valid 6-digit OTP" })
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      return
-    }
-
-    try {
-      setLoading(true)
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-
-      const { data, error: verifyError } = await supabase.auth.verifyOtp({
-        phone: identifier.startsWith("+") ? identifier : `+91${identifier}`,
-        token: otp,
-        type: "sms",
-      })
-
-      if (verifyError) {
-        setError(verifyError.message)
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      } else if (data.session) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-        setStep("password")
-      }
-    } catch (err: any) {
-      setError("Verification failed. Please try again.")
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleSetPassword = async () => {
-    setError(null)
-    setValidationError({})
-
-    const passVal = validatePassword(password)
-    if (!passVal.isValid) {
-      setValidationError({ password: `Password must contain ${passVal.errors.join(", ")}` })
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      return
-    }
-
-    if (password !== confirmPassword) {
-      setValidationError({ confirmPassword: "Passwords do not match" })
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      return
-    }
-
-    try {
-      setLoading(true)
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: password
-      })
-
-      if (updateError) {
-        setError(updateError.message)
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      } else {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-        router.replace("/onboarding")
-      }
-    } catch (err) {
-      setError("Failed to set password. Please try again.")
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // --- EMAIL FLOW HANDLERS ---
   const handleEmailSignUp = async () => {
     setError(null)
     setValidationError({})
     const errors: Record<string, string> = {}
 
-    if (!identifier.trim() || !validateEmail(identifier)) {
+    if (!email.trim() || !validateEmail(email)) {
       errors.identifier = "Please enter a valid email address"
     }
 
@@ -245,7 +140,7 @@ export default function SignUpScreen() {
       // 1. Check if the email is already registered in auth.users via RPC
       const { data: exists, error: fetchError } = await supabase
         .rpc("check_user_exists", {
-          p_email: identifier.trim(),
+          p_email: email.trim(),
           p_phone: null
         })
 
@@ -262,7 +157,7 @@ export default function SignUpScreen() {
 
       // 2. Perform Supabase Sign Up
       const { data, error: signUpError } = await supabase.auth.signUp({
-        email: identifier.trim(),
+        email: email.trim(),
         password,
         options: {
           emailRedirectTo: "https://staytraq.vercel.app/verified",
@@ -284,16 +179,29 @@ export default function SignUpScreen() {
     }
   }
 
-  const handleTabChange = (type: "phone" | "email") => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    setAuthType(type)
-    setIdentifier("")
-    setOtp("")
-    setPassword("")
-    setConfirmPassword("")
-    setStep("initial")
+  const handleGoogleSignIn = async () => {
     setError(null)
     setValidationError({})
+
+    try {
+      setGoogleLoading(true)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+
+      const result = await signInWithGoogle()
+
+      if (!result.success && result.error) {
+        setError(result.error)
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      } else if (result.success) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      }
+    } catch (err) {
+      setError("Google sign-in failed. Please try again.")
+      console.error(err)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+    } finally {
+      setGoogleLoading(false)
+    }
   }
 
   // --- RENDER SUCCESS STATE ---
@@ -306,29 +214,18 @@ export default function SignUpScreen() {
           </View>
           
           <Text className="text-2xl font-extrabold text-foreground dark:text-foreground-dark text-center mb-2">
-            {authType === "email" ? "Check Your Email" : "Account Created!"}
+            Check Your Email
           </Text>
           
           <Text className="text-sm text-muted dark:text-muted-dark text-center mb-6 leading-relaxed">
-            {authType === "email" 
-              ? "We've sent a verification link to your email." 
-              : "Your account has been successfully verified and set up."}
+            We've sent a verification link to your email.
           </Text>
 
           <View className="rounded-2xl border border-border/60 dark:border-border-dark/60 bg-background/50 dark:bg-background-dark/50 px-4 py-3.5 w-full mb-8">
             <Text className="text-center text-sm text-foreground/80 dark:text-foreground-dark/80 font-medium">
-              {authType === "email" ? (
-                <>
-                  A verification email has been sent to{" "}
-                  <Text className="font-bold text-primary">{identifier}</Text>. 
-                  Please click the link in the email to confirm your account.
-                </>
-              ) : (
-                <>
-                  You can now sign in using your phone number{" "}
-                  <Text className="font-bold text-primary">+91 {identifier}</Text>.
-                </>
-              )}
+              A verification email has been sent to{" "}
+              <Text className="font-bold text-primary">{email}</Text>. 
+              Please click the link in the email to confirm your account.
             </Text>
           </View>
 
@@ -375,390 +272,131 @@ export default function SignUpScreen() {
               </View>
             )}
 
-            {/* Tab list (only shown on initial state) */}
-            {step === "initial" && (
-              <View className="flex-row bg-background dark:bg-background-dark p-1 rounded-xl mb-6 border border-border/40 dark:border-border-dark/40">
-                <TouchableOpacity
-                  onPress={() => handleTabChange("phone")}
-                  className="flex-1 py-2.5 rounded-lg items-center flex-row justify-center gap-1.5"
-                  style={
-                    authType === "phone"
-                      ? {
-                          backgroundColor: isDark ? "#262936" : "#ffffff",
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 1 },
-                          shadowOpacity: 0.1,
-                          shadowRadius: 1.5,
-                          elevation: 1,
-                        }
-                      : undefined
-                  }
+            {/* Email Registration Form */}
+            <View className="gap-4">
+              {/* Email Address */}
+              <View>
+                <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
+                  Email Address
+                </Text>
+                <View 
+                  className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
+                  style={{ borderColor: validationError.identifier ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
                 >
-                  <Phone size={15} color={authType === "phone" ? (isDark ? "#0091ff" : "#0071df") : (isDark ? "#6b7280" : "#9ca3af")} />
-                  <Text
-                    className="text-sm font-bold"
-                    style={{
-                      color: authType === "phone"
-                        ? (isDark ? "#0091ff" : "#0071df")
-                        : (isDark ? "#6b7280" : "#9ca3af"),
+                  <Mail size={18} color="#9ca3af" className="mr-3" />
+                  <TextInput
+                    ref={emailInput.ref}
+                    onFocus={emailInput.onFocus}
+                    value={email}
+                    onChangeText={(val) => {
+                      setEmail(val)
+                      setError(null)
+                      setValidationError(prev => ({ ...prev, identifier: "" }))
                     }}
-                  >
-                    Phone
-                  </Text>
-                </TouchableOpacity>
+                    placeholder="name@example.com"
+                    placeholderTextColor="#9ca3af"
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="flex-1 text-base text-foreground dark:text-foreground-dark font-medium h-full"
+                  />
+                </View>
+                {validationError.identifier && (
+                  <Text className="text-xs text-destructive mt-1.5 font-semibold">{validationError.identifier}</Text>
+                )}
+              </View>
 
-                <TouchableOpacity
-                  onPress={() => handleTabChange("email")}
-                  className="flex-1 py-2.5 rounded-lg items-center flex-row justify-center gap-1.5"
-                  style={
-                    authType === "email"
-                      ? {
-                          backgroundColor: isDark ? "#262936" : "#ffffff",
-                          shadowColor: "#000",
-                          shadowOffset: { width: 0, height: 1 },
-                          shadowOpacity: 0.1,
-                          shadowRadius: 1.5,
-                          elevation: 1,
-                        }
-                      : undefined
-                  }
+              {/* Password Input */}
+              <View className="mt-2">
+                <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
+                  Password
+                </Text>
+                <View 
+                  className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
+                  style={{ borderColor: validationError.password ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
                 >
-                  <Mail size={15} color={authType === "email" ? (isDark ? "#0091ff" : "#0071df") : (isDark ? "#6b7280" : "#9ca3af")} />
-                  <Text
-                    className="text-sm font-bold"
-                    style={{
-                      color: authType === "email"
-                        ? (isDark ? "#0091ff" : "#0071df")
-                        : (isDark ? "#6b7280" : "#9ca3af"),
+                  <Lock size={18} color="#9ca3af" className="mr-3" />
+                  <TextInput
+                    ref={passwordInput.ref}
+                    onFocus={passwordInput.onFocus}
+                    value={password}
+                    onChangeText={(val) => {
+                      setPassword(val)
+                      setError(null)
+                      setValidationError(prev => ({ ...prev, password: "" }))
                     }}
-                  >
-                    Email
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Step Content */}
-            {authType === "phone" ? (
-              <View key="phone-register-tree" className="gap-4">
-                {step === "initial" && (
-                  <View key="phone-initial">
-                    <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
-                      Phone Number
-                    </Text>
-                    <View 
-                      className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
-                      style={{ borderColor: validationError.identifier ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
-                    >
-                      <View className="flex-row items-center mr-2">
-                        <Phone size={18} color="#9ca3af" className="mr-1.5" />
-                        <Text className="text-base font-semibold text-foreground/80 dark:text-foreground-dark/80 mr-1">+91</Text>
-                      </View>
-                      <TextInput
-                        ref={identifierInput.ref}
-                        onFocus={identifierInput.onFocus}
-                        value={identifier}
-                        onChangeText={(val) => {
-                          setIdentifier(val.replace(/\D/g, "").slice(0, 10))
-                          setError(null)
-                          setValidationError({})
-                        }}
-                        placeholder="00000 00000"
-                        placeholderTextColor="#9ca3af"
-                        keyboardType="phone-pad"
-                        className="flex-1 text-base text-foreground dark:text-foreground-dark font-medium h-full"
-                      />
-                    </View>
-                    {validationError.identifier && (
-                      <Text className="text-xs text-destructive mt-1.5 font-semibold">{validationError.identifier}</Text>
+                    placeholder="Create a strong password"
+                    placeholderTextColor="#9ca3af"
+                    secureTextEntry={!showPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    className="flex-1 text-base text-foreground dark:text-foreground-dark font-medium h-full"
+                  />
+                  <TouchableOpacity onPress={() => setShowPassword(!showPassword)} className="pl-3">
+                    {showPassword ? (
+                      <EyeOff size={18} color="#9ca3af" />
+                    ) : (
+                      <Eye size={18} color="#9ca3af" />
                     )}
-
-                    <TouchableOpacity
-                      onPress={handleSendOTP}
-                      disabled={loading}
-                      className="bg-primary rounded-xl py-3.5 mt-6 items-center flex-row justify-center shadow-lg shadow-primary/20 active:scale-[0.98]"
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <>
-                          <Text className="text-white text-base font-bold mr-2">Send OTP</Text>
-                          <ChevronRight size={18} color="#ffffff" />
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {step === "otp" && (
-                  <View key="phone-otp" className="items-center">
-                    <Text className="text-base font-bold text-foreground dark:text-foreground-dark text-center mb-1">
-                      Enter Verification Code
-                    </Text>
-                    <Text className="text-xs text-muted dark:text-muted-dark text-center mb-6">
-                      OTP sent to +91 {identifier}
-                    </Text>
-
-                    {/* Custom Premium OTP Row with Focus Alignment & Overlay Input */}
-                    <View className="relative w-full max-w-[280px] h-12 mb-4">
-                      {/* Visual slots rendered underneath */}
-                      <View className="flex-row justify-between w-full h-full" pointerEvents="none">
-                        {Array.from({ length: 6 }).map((_, index) => {
-                          const isFocused = otp.length === index
-                          return (
-                            <View
-                              key={index}
-                              className="w-10 h-full rounded-xl border-2 items-center justify-center bg-background dark:bg-background-dark"
-                              style={{
-                                borderColor: isFocused 
-                                  ? (isDark ? "#0091ff" : "#0071df")
-                                  : (validationError.otp ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb"))
-                              }}
-                            >
-                              <Text className="text-xl font-bold text-foreground dark:text-foreground-dark">
-                                {otp[index] || ""}
-                              </Text>
-                            </View>
-                          )
-                        })}
-                      </View>
-
-                      {/* Transparent TextInput overlaying the slots to capture touches natively */}
-                      <TextInput
-                        ref={otpInputRef}
-                        value={otp}
-                        onChangeText={(val) => {
-                          setOtp(val.replace(/\D/g, "").slice(0, 6))
-                          setValidationError({})
-                        }}
-                        maxLength={6}
-                        keyboardType="number-pad"
-                        textContentType="oneTimeCode"
-                        autoComplete="sms-otp"
-                        className="absolute inset-0 opacity-[0.01] bg-transparent text-transparent"
-                        caretHidden
-                      />
-                    </View>
-
-                    {validationError.otp && (
-                      <Text className="text-xs text-destructive mt-1 font-semibold text-center mb-4">{validationError.otp}</Text>
-                    )}
-
-                    <TouchableOpacity
-                      onPress={handleVerifyOTP}
-                      disabled={loading}
-                      className="bg-primary rounded-xl py-3.5 w-full mt-4 items-center flex-row justify-center shadow-lg shadow-primary/20 active:scale-[0.98]"
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <>
-                          <Text className="text-white text-base font-bold mr-2">Verify OTP</Text>
-                          <ChevronRight size={18} color="#ffffff" />
-                        </>
-                      )}
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      onPress={() => {
-                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                        setStep("initial")
-                        setOtp("")
-                        setValidationError({})
-                      }}
-                      className="mt-5 flex-row items-center justify-center gap-1.5"
-                    >
-                      <ArrowLeft size={14} color={isDark ? "#0091ff" : "#0071df"} />
-                      <Text className="text-xs text-primary dark:text-primary-foreground/90 font-bold">Change number</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {step === "password" && (
-                  <View key="phone-password" className="gap-4">
-                    {/* Create Password */}
-                    <View>
-                      <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
-                        Create Password
-                      </Text>
-                      <View 
-                        className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
-                        style={{ borderColor: validationError.password ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
-                      >
-                        <Lock size={18} color="#9ca3af" className="mr-3" />
-                        <TextInput
-                          ref={passwordInput.ref}
-                          onFocus={passwordInput.onFocus}
-                          value={password}
-                          onChangeText={(val) => {
-                            setPassword(val)
-                            setValidationError({})
-                          }}
-                          placeholder="Create strong password"
-                          placeholderTextColor="#9ca3af"
-                          secureTextEntry={!showPassword}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          className="flex-1 text-base text-foreground dark:text-foreground-dark font-medium h-full"
-                        />
-                        <TouchableOpacity onPress={() => setShowPassword(!showPassword)} className="pl-3">
-                          {showPassword ? (
-                            <EyeOff size={18} color="#9ca3af" />
-                          ) : (
-                            <Eye size={18} color="#9ca3af" />
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                      {validationError.password && (
-                        <Text className="text-xs text-destructive mt-1.5 font-semibold leading-relaxed">{validationError.password}</Text>
-                      )}
-                    </View>
-
-                    {/* Confirm Password */}
-                    <View className="mt-2">
-                      <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
-                        Confirm Password
-                      </Text>
-                      <View 
-                        className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
-                        style={{ borderColor: validationError.confirmPassword ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
-                      >
-                        <Lock size={18} color="#9ca3af" className="mr-3" />
-                        <TextInput
-                          ref={confirmPasswordInput.ref}
-                          onFocus={confirmPasswordInput.onFocus}
-                          value={confirmPassword}
-                          onChangeText={(val) => {
-                            setConfirmPassword(val)
-                            setValidationError({})
-                          }}
-                          placeholder="Confirm password"
-                          placeholderTextColor="#9ca3af"
-                          secureTextEntry={!showConfirmPassword}
-                          autoCapitalize="none"
-                          autoCorrect={false}
-                          className="flex-1 text-base text-foreground dark:text-foreground-dark font-medium h-full"
-                        />
-                        <TouchableOpacity onPress={() => setShowConfirmPassword(!showConfirmPassword)} className="pl-3">
-                          {showConfirmPassword ? (
-                            <EyeOff size={18} color="#9ca3af" />
-                          ) : (
-                            <Eye size={18} color="#9ca3af" />
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                      {validationError.confirmPassword && (
-                        <Text className="text-xs text-destructive mt-1.5 font-semibold">{validationError.confirmPassword}</Text>
-                      )}
-                    </View>
-
-                    <TouchableOpacity
-                      onPress={handleSetPassword}
-                      disabled={loading}
-                      className="bg-primary rounded-xl py-3.5 w-full mt-4 items-center flex-row justify-center shadow-lg shadow-primary/20 active:scale-[0.98]"
-                    >
-                      {loading ? (
-                        <ActivityIndicator color="#ffffff" size="small" />
-                      ) : (
-                        <>
-                          <Text className="text-white text-base font-bold mr-2">Complete Setup</Text>
-                          <ChevronRight size={18} color="#ffffff" />
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
+                  </TouchableOpacity>
+                </View>
+                {validationError.password && (
+                  <Text className="text-xs text-destructive mt-1.5 font-semibold leading-relaxed">{validationError.password}</Text>
                 )}
               </View>
-            ) : (
-              <View key="email-register-tree" className="gap-4">
-                {/* Email Address */}
-                <View>
-                  <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
-                    Email Address
-                  </Text>
-                  <View 
-                    className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
-                    style={{ borderColor: validationError.identifier ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
-                  >
-                    <Mail size={18} color="#9ca3af" className="mr-3" />
-                    <TextInput
-                      ref={identifierInput.ref}
-                      onFocus={identifierInput.onFocus}
-                      value={identifier}
-                      onChangeText={(val) => {
-                        setIdentifier(val)
-                        setError(null)
-                        setValidationError(prev => ({ ...prev, identifier: "" }))
-                      }}
-                      placeholder="name@example.com"
-                      placeholderTextColor="#9ca3af"
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      className="flex-1 text-base text-foreground dark:text-foreground-dark font-medium h-full"
-                    />
-                  </View>
-                  {validationError.identifier && (
-                    <Text className="text-xs text-destructive mt-1.5 font-semibold">{validationError.identifier}</Text>
-                  )}
-                </View>
 
-                {/* Password Input */}
-                <View className="mt-2">
-                  <Text className="text-xs font-bold text-foreground/70 dark:text-foreground-dark/70 uppercase tracking-wider mb-2">
-                    Password
-                  </Text>
-                  <View 
-                    className="flex-row items-center border rounded-xl px-3 bg-background dark:bg-background-dark h-12"
-                    style={{ borderColor: validationError.password ? "#ef4444" : (isDark ? "#262936" : "#e5e7eb") }}
-                  >
-                    <Lock size={18} color="#9ca3af" className="mr-3" />
-                    <TextInput
-                      ref={passwordInput.ref}
-                      onFocus={passwordInput.onFocus}
-                      value={password}
-                      onChangeText={(val) => {
-                        setPassword(val)
-                        setError(null)
-                        setValidationError(prev => ({ ...prev, password: "" }))
-                      }}
-                      placeholder="Create a strong password"
-                      placeholderTextColor="#9ca3af"
-                      secureTextEntry={!showPassword}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      className="flex-1 text-base text-foreground dark:text-foreground-dark font-medium h-full"
-                    />
-                    <TouchableOpacity onPress={() => setShowPassword(!showPassword)} className="pl-3">
-                      {showPassword ? (
-                        <EyeOff size={18} color="#9ca3af" />
-                      ) : (
-                        <Eye size={18} color="#9ca3af" />
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                  {validationError.password && (
-                    <Text className="text-xs text-destructive mt-1.5 font-semibold leading-relaxed">{validationError.password}</Text>
-                  )}
-                </View>
+              {/* Sign Up Button */}
+              <TouchableOpacity
+                onPress={handleEmailSignUp}
+                disabled={loading || googleLoading}
+                className="bg-primary rounded-xl py-3.5 mt-4 items-center flex-row justify-center shadow-lg shadow-primary/20 active:scale-[0.98]"
+                style={{ opacity: loading || googleLoading ? 0.7 : 1 }}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#ffffff" size="small" />
+                ) : (
+                  <>
+                    <Text className="text-white text-base font-bold mr-2">Sign Up</Text>
+                    <ChevronRight size={18} color="#ffffff" />
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
 
-                {/* Submit Email Registration */}
-                <TouchableOpacity
-                  onPress={handleEmailSignUp}
-                  disabled={loading}
-                  className="bg-primary rounded-xl py-3.5 mt-6 items-center flex-row justify-center shadow-lg shadow-primary/20 active:scale-[0.98]"
-                >
-                  {loading ? (
-                    <ActivityIndicator color="#ffffff" size="small" />
-                  ) : (
-                    <>
-                      <Text className="text-white text-base font-bold mr-2">Sign Up</Text>
-                      <ChevronRight size={18} color="#ffffff" />
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-            )}
+            {/* Divider */}
+            <View className="flex-row items-center my-5">
+              <View className="flex-1 h-px bg-border dark:bg-border-dark" />
+              <Text className="mx-4 text-xs text-muted dark:text-muted-dark font-medium uppercase tracking-wider">or</Text>
+              <View className="flex-1 h-px bg-border dark:bg-border-dark" />
+            </View>
+
+            {/* Continue with Google */}
+            <TouchableOpacity
+              onPress={handleGoogleSignIn}
+              disabled={loading || googleLoading}
+              className="flex-row items-center justify-center border rounded-xl py-3.5 active:scale-[0.98]"
+              style={{
+                borderColor: isDark ? "#262936" : "#dadce0",
+                backgroundColor: isDark ? "#1a1d2e" : "#ffffff",
+                opacity: loading || googleLoading ? 0.7 : 1,
+              }}
+            >
+              {googleLoading ? (
+                <ActivityIndicator color={isDark ? "#ffffff" : "#3c4043"} size="small" />
+              ) : (
+                <>
+                  <View style={{ marginRight: 12 }}>
+                    <GoogleIcon size={20} />
+                  </View>
+                  <Text
+                    className="text-base font-semibold"
+                    style={{ color: isDark ? "#e8eaed" : "#3c4043" }}
+                  >
+                    Continue with Google
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
 
           {/* Footer Navigation */}

@@ -382,11 +382,28 @@ export default function DashboardScreen() {
   const overduePayments = useMemo(() => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
+    
+    const now = new Date()
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+    const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+
     const unpaid = rawPayments.filter(p => {
       const isUnpaid = p.status !== "paid" && p.status !== "success" && p.status !== "completed"
       if (!p.due_date) return false
       const dueDate = new Date(p.due_date)
-      return isUnpaid && dueDate < today
+      
+      if (!isUnpaid || dueDate >= today) return false
+      
+      if (selectedFilter === "Last Month") {
+        const lastMonthRange = getDateRangeForFilter("Last Month")
+        return dueDate >= lastMonthRange.startDate && dueDate <= lastMonthRange.endDate
+      } else if (selectedFilter === "Custom Range") {
+        const customRange = getDateRangeForFilter("Custom Range", customStartDate, customEndDate)
+        return dueDate >= customRange.startDate && dueDate <= customRange.endDate
+      } else {
+        // "Today", "This Week", "This Month": show all overdues of the current month
+        return dueDate >= currentMonthStart && dueDate <= currentMonthEnd
+      }
     })
     const uniqueTenants = new Set(unpaid.map(p => p.tenant_id))
     const totalAmount = unpaid.reduce((sum, p) => sum + Number(p.total_amount || 0), 0)
@@ -394,7 +411,7 @@ export default function DashboardScreen() {
       count: uniqueTenants.size,
       amount: totalAmount
     }
-  }, [rawPayments])
+  }, [rawPayments, selectedFilter, customStartDate, customEndDate, getDateRangeForFilter])
 
   // Priority Card 3 & Occupancy Overview: Vacant Beds
   const bedStats = useMemo(() => {
@@ -440,11 +457,28 @@ export default function DashboardScreen() {
   const followUpPayments = useMemo(() => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
+    
+    const now = new Date()
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+    const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+
     const unpaid = rawPayments.filter(p => {
       const isUnpaid = p.status !== "paid" && p.status !== "success" && p.status !== "completed"
       if (!p.due_date) return false
       const dueDate = new Date(p.due_date)
-      return isUnpaid && (isDateInRange(p.due_date, dateRange.startDate, dateRange.endDate) || dueDate < today)
+      if (!isUnpaid) return false
+      
+      if (selectedFilter === "Last Month") {
+        const lastMonthRange = getDateRangeForFilter("Last Month")
+        return dueDate >= lastMonthRange.startDate && dueDate <= lastMonthRange.endDate
+      } else if (selectedFilter === "Custom Range") {
+        const customRange = getDateRangeForFilter("Custom Range", customStartDate, customEndDate)
+        return dueDate >= customRange.startDate && dueDate <= customRange.endDate
+      } else {
+        const inFilterRange = isDateInRange(p.due_date, dateRange.startDate, dateRange.endDate)
+        const isCurrentMonthOverdue = (dueDate >= currentMonthStart && dueDate <= currentMonthEnd && dueDate < today)
+        return inFilterRange || isCurrentMonthOverdue
+      }
     })
 
     return unpaid.map(p => {
@@ -458,7 +492,7 @@ export default function DashboardScreen() {
         payment: p
       }
     }).sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime())
-  }, [rawPayments, dateRange, tenantMap, isDateInRange])
+  }, [rawPayments, selectedFilter, customStartDate, customEndDate, dateRange, tenantMap, isDateInRange, getDateRangeForFilter])
 
   const maintenanceTasks = useMemo(() => {
     const active = rawComplaints.filter(c => c.status === "Under Working")
@@ -741,8 +775,26 @@ export default function DashboardScreen() {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
     
+    const now = new Date()
+    const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+    const currentMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+
     const unpaid = rawPayments.filter(p => {
-      return p.status !== "paid" && p.status !== "success" && p.status !== "completed"
+      const isUnpaid = p.status !== "paid" && p.status !== "success" && p.status !== "completed"
+      if (!p.due_date) return false
+      const dueDate = new Date(p.due_date)
+      if (!isUnpaid || dueDate >= today) return false
+      
+      if (selectedFilter === "Last Month") {
+        const lastMonthRange = getDateRangeForFilter("Last Month")
+        return dueDate >= lastMonthRange.startDate && dueDate <= lastMonthRange.endDate
+      } else if (selectedFilter === "Custom Range") {
+        const customRange = getDateRangeForFilter("Custom Range", customStartDate, customEndDate)
+        return dueDate >= customRange.startDate && dueDate <= customRange.endDate
+      } else {
+        // "Today", "This Week", "This Month": show all overdues of the current month
+        return dueDate >= currentMonthStart && dueDate <= currentMonthEnd
+      }
     })
     
     const tenantDuesMap = new Map<number, { totalAmount: number; oldestDueDate: Date }>()
@@ -784,7 +836,7 @@ export default function DashboardScreen() {
         hasLate
       }
     }).sort((a, b) => b.priorityScore - a.priorityScore).slice(0, 5)
-  }, [rawPayments, tenantMap])
+  }, [rawPayments, selectedFilter, customStartDate, customEndDate, tenantMap, getDateRangeForFilter])
 
   // UTR Copy, screenshot fetch and database mutations
   const fetchScreenshotUrl = async (path: string | null) => {
