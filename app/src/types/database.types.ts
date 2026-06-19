@@ -390,6 +390,7 @@ export type Database = {
           created_at: string
           grace_period_days: number | null
           id: number
+          is_merchant: boolean | null
           late_fee_per_day: number | null
           owner_id: string
           payment_instructions: string | null
@@ -405,6 +406,7 @@ export type Database = {
           created_at?: string
           grace_period_days?: number | null
           id?: number
+          is_merchant?: boolean | null
           late_fee_per_day?: number | null
           owner_id: string
           payment_instructions?: string | null
@@ -420,6 +422,7 @@ export type Database = {
           created_at?: string
           grace_period_days?: number | null
           id?: number
+          is_merchant?: boolean | null
           late_fee_per_day?: number | null
           owner_id?: string
           payment_instructions?: string | null

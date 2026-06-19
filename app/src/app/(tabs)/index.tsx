@@ -214,7 +214,7 @@ export default function DashboardScreen() {
           .eq("owner_id", user.id),
         supabase
           .from("payments")
-          .select("*")
+          .select("*, tenants_table(name, mobile_number, rooms_table(room_number, rent_amount))")
           .eq("owner_id", user.id),
         supabase
           .from("complaints")
@@ -483,7 +483,7 @@ export default function DashboardScreen() {
     })
 
     return unpaid.map(p => {
-      const tenant = tenantMap.get(p.tenant_id)
+      const tenant = p.tenants_table || tenantMap.get(p.tenant_id)
       return {
         id: p.id,
         tenantName: tenant?.name || "Unknown",
@@ -576,7 +576,7 @@ export default function DashboardScreen() {
         const dateStr = payment.submitted_at || payment.created_at
         if (!dateStr) return
         const pDate = new Date(dateStr)
-        const tenant = tenantMap.get(payment.tenant_id)
+        const tenant = payment.tenants_table || tenantMap.get(payment.tenant_id)
         
         activityList.push({
           id: `pay-${payment.id}`,
