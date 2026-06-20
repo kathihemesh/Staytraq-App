@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Alert, Platform, LayoutAnimation, UIManager } from "react-native"
+import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Platform, LayoutAnimation, UIManager } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
@@ -9,7 +9,6 @@ import * as Haptics from "expo-haptics"
 import Animated, { FadeIn } from "react-native-reanimated"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
-
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth()
@@ -22,7 +21,8 @@ export default function SettingsScreen() {
   }, [])
 
   const rentDueDayInput = useKeyboardAwareInput()
-  const lateFeePerDayInput = useKeyboardAwareInput()
+  const defaultMaintenanceFeeInput = useKeyboardAwareInput()
+  const refundDepositInput = useKeyboardAwareInput()
   const upiIdInput = useKeyboardAwareInput()
   const upiNameInput = useKeyboardAwareInput()
   const whatsappInviteLinkInput = useKeyboardAwareInput()
@@ -36,12 +36,11 @@ export default function SettingsScreen() {
 
   // Settings values
   const [rentDueDay, setRentDueDay] = useState("5")
-  const [lateFeePerDay, setLateFeePerDay] = useState("100")
+  const [defaultMaintenanceFee, setDefaultMaintenanceFee] = useState("0")
+  const [refundDeposit, setRefundDeposit] = useState("0")
   const [upiId, setUpiId] = useState("")
   const [upiName, setUpiName] = useState("")
   const [whatsappInviteLink, setWhatsappInviteLink] = useState("")
-  const [screenshotRequired, setScreenshotRequired] = useState(true)
-  const [utrRequired, setUtrRequired] = useState(true)
   const [paymentInstructions, setPaymentInstructions] = useState("")
   const [isMerchant, setIsMerchant] = useState(false)
   const [settingsId, setSettingsId] = useState<number | null>(null)
@@ -74,6 +73,16 @@ export default function SettingsScreen() {
     setIsMerchant(detectMerchantUpi(val))
   }
 
+  const handleMaintenanceFeeChange = (val: string) => {
+    setDefaultMaintenanceFee(val)
+    const num = parseFloat(val)
+    if (!isNaN(num)) {
+      setRefundDeposit(String(Math.round(num * 0.5)))
+    } else {
+      setRefundDeposit("")
+    }
+  }
+
   // Fetch settings from database
   const fetchSettings = useCallback(async (silent = false) => {
     if (!user?.id) {
@@ -95,23 +104,20 @@ export default function SettingsScreen() {
       if (data) {
         setSettingsId(data.id)
         setRentDueDay(String(data.rent_due_day ?? 5))
-        setLateFeePerDay(String(data.late_fee_per_day ?? 100))
+        setDefaultMaintenanceFee(String(data.default_maintenance_fee ?? 0))
+        setRefundDeposit(String(data.refund_deposit ?? 0))
         setUpiId(data.upi_id ?? "")
         setUpiName(data.upi_name ?? "")
         setWhatsappInviteLink(data.whatsapp_invite_link ?? "")
-        setScreenshotRequired(data.screenshot_required ?? true)
-        setUtrRequired(data.utr_required ?? true)
         setPaymentInstructions(data.payment_instructions ?? "")
         setIsMerchant(data.is_merchant ?? false)
       } else {
-        // No settings found, prepare to insert defaults on first save
         setRentDueDay("5")
-        setLateFeePerDay("100")
+        setDefaultMaintenanceFee("0")
+        setRefundDeposit("0")
         setUpiId("")
         setUpiName("")
         setWhatsappInviteLink("")
-        setScreenshotRequired(true)
-        setUtrRequired(true)
         setPaymentInstructions("")
         setIsMerchant(false)
       }
@@ -141,7 +147,8 @@ export default function SettingsScreen() {
     
     // Validation
     const dueDayNum = parseInt(rentDueDay, 10)
-    const lateFeeNum = parseInt(lateFeePerDay, 10)
+    const maintenanceFeeNum = parseInt(defaultMaintenanceFee, 10)
+    const refundDepositNum = parseInt(refundDeposit, 10)
 
     if (isNaN(dueDayNum) || dueDayNum < 1 || dueDayNum > 31) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
@@ -149,9 +156,15 @@ export default function SettingsScreen() {
       return
     }
 
-    if (isNaN(lateFeeNum) || lateFeeNum < 0) {
+    if (isNaN(maintenanceFeeNum) || maintenanceFeeNum < 0) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      setError("Late fee per day must be a valid positive amount.")
+      setError("Default maintenance fee must be a valid positive amount.")
+      return
+    }
+
+    if (isNaN(refundDepositNum) || refundDepositNum < 0) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      setError("Refund deposit must be a valid positive amount.")
       return
     }
 
@@ -178,19 +191,17 @@ export default function SettingsScreen() {
 
       const payload = {
         rent_due_day: dueDayNum,
-        late_fee_per_day: lateFeeNum,
+        default_maintenance_fee: maintenanceFeeNum,
+        refund_deposit: refundDepositNum,
         owner_id: user.id,
         upi_id: upiId.trim() || null,
         upi_name: upiName.trim() || null,
         whatsapp_invite_link: whatsappInviteLink.trim() || null,
-        screenshot_required: screenshotRequired,
-        utr_required: utrRequired,
         payment_instructions: paymentInstructions.trim() || null,
         is_merchant: isMerchant,
       }
 
       if (settingsId) {
-        // Update existing row
         const { error } = await supabase
           .from("settings")
           .update(payload)
@@ -198,7 +209,6 @@ export default function SettingsScreen() {
 
         if (error) throw error
       } else {
-        // Insert new row
         const { data, error } = await supabase
           .from("settings")
           .insert(payload)
@@ -216,7 +226,6 @@ export default function SettingsScreen() {
       }
       setSuccess(true)
       
-      // Clear success indicator after 3 seconds
       successTimeoutRef.current = setTimeout(() => {
         setSuccess(false)
       }, 3000)
@@ -229,7 +238,6 @@ export default function SettingsScreen() {
     }
   }
 
-  // Logout trigger
   const handleLogout = () => {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
     setConfirmModalVisible(true)
@@ -244,7 +252,6 @@ export default function SettingsScreen() {
   if (loading) {
     return (
       <SafeAreaView className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
-        {/* Header Skeleton */}
         <View className="px-6 pt-4 pb-3 flex-row justify-between items-center border-b border-border/40 dark:border-border-dark/40 bg-card dark:bg-card-dark">
           <View className="gap-2">
             <View className="h-7 w-28 bg-muted/20 dark:bg-muted-dark/20 rounded-xl" />
@@ -254,7 +261,6 @@ export default function SettingsScreen() {
         </View>
 
         <View className="px-6 mt-6 gap-6">
-          {/* Section 1 Skeleton */}
           <View>
             <View className="h-4 w-36 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-3" />
             <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-5">
@@ -272,18 +278,6 @@ export default function SettingsScreen() {
               </View>
               <View className="h-12 w-full bg-muted/20 dark:bg-muted-dark/20 rounded-xl mt-2" />
             </View>
-          </View>
-
-          {/* Section 2 Skeleton */}
-          <View>
-            <View className="h-4 w-32 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-3" />
-            <View className="h-16 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl" />
-          </View>
-
-          {/* Section 3 Skeleton */}
-          <View>
-            <View className="h-4 w-36 bg-muted/15 dark:bg-muted-dark/15 rounded-md mb-3" />
-            <View className="h-24 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl" />
           </View>
         </View>
       </SafeAreaView>
@@ -317,7 +311,6 @@ export default function SettingsScreen() {
         contentContainerStyle={{ paddingBottom: 110 }}
         showsVerticalScrollIndicator={false}
       >
-          {/* Status Alerts */}
           {error && (
             <View className="mx-6 mt-4 bg-destructive/10 border border-destructive/20 p-4 rounded-2xl flex-row items-center">
               <View className="mr-3">
@@ -339,7 +332,7 @@ export default function SettingsScreen() {
             </Animated.View>
           )}
 
-          {/* Section 1: Billing & Rent System Configurations */}
+          {/* Section 1: Rental Policy Rules */}
           <View className="px-6 mt-6">
             <View className="flex-row items-center mb-3">
               <View className="mr-2">
@@ -372,33 +365,49 @@ export default function SettingsScreen() {
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
                 />
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  The standard day of the month when rent is considered expected and generated (typically the 5th).
+                  The standard day of the month when rent is generated (typically the 5th).
                 </Text>
               </View>
 
-              {/* Late Fee per day Row */}
+              {/* Default Maintenance Fee */}
               <View>
                 <View className="flex-row items-center justify-between mb-2">
-                  <View className="flex-row items-center">
-                    <View className="mr-2">
-                      <AlertTriangle size={16} color="#9ca3af" />
-                    </View>
-                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Late Fee per Day</Text>
-                  </View>
+                  <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Default Maintenance Fee</Text>
                   <Text className="text-xs text-muted font-semibold">Rupees (₹)</Text>
                 </View>
                 <TextInput
-                  ref={lateFeePerDayInput.ref}
-                  onFocus={lateFeePerDayInput.onFocus}
-                  value={lateFeePerDay}
-                  onChangeText={setLateFeePerDay}
+                  ref={defaultMaintenanceFeeInput.ref}
+                  onFocus={defaultMaintenanceFeeInput.onFocus}
+                  value={defaultMaintenanceFee}
+                  onChangeText={handleMaintenanceFeeChange}
                   keyboardType="numeric"
-                  placeholder="e.g. 100"
+                  placeholder="e.g. 1000"
                   placeholderTextColor="#9ca3af"
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
                 />
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  Daily penalty amount applied to rent invoices once the grace period expires.
+                  Standard monthly maintenance fee applied automatically to new rooms.
+                </Text>
+              </View>
+
+              {/* Refund Deposit */}
+              <View>
+                <View className="flex-row items-center justify-between mb-2">
+                  <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Refund Deposit</Text>
+                  <Text className="text-xs text-muted font-semibold">Rupees (₹)</Text>
+                </View>
+                <TextInput
+                  ref={refundDepositInput.ref}
+                  onFocus={refundDepositInput.onFocus}
+                  value={refundDeposit}
+                  onChangeText={setRefundDeposit}
+                  keyboardType="numeric"
+                  placeholder="e.g. 500"
+                  placeholderTextColor="#9ca3af"
+                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
+                />
+                <Text className="text-[10px] text-muted mt-1.5 leading-4">
+                  Expected refund deposit amount auto-filled during move out checklist (defaults to 50% of maintenance fee).
                 </Text>
               </View>
 
@@ -415,7 +424,6 @@ export default function SettingsScreen() {
             </View>
 
             <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
-              {/* UPI ID Row */}
               <View>
                 <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">UPI ID</Text>
                 <TextInput
@@ -429,7 +437,6 @@ export default function SettingsScreen() {
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
                 />
                 
-                {/* Verified Merchant Switch */}
                 <View className="flex-row justify-between items-center mt-2.5 bg-muted/5 dark:bg-muted-dark/5 p-3 rounded-2xl border border-border/10 dark:border-border-dark/10">
                   <View className="flex-1 mr-4">
                     <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Verified Merchant Account</Text>
@@ -449,11 +456,10 @@ export default function SettingsScreen() {
                 </View>
 
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  Your primary VPA/UPI ID where occupants will send their rent payments.
+                  Your primary UPI ID where occupants will send their rent payments.
                 </Text>
               </View>
 
-              {/* UPI Name Row */}
               <View>
                 <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">UPI Payee Name</Text>
                 <TextInput
@@ -470,7 +476,6 @@ export default function SettingsScreen() {
                 </Text>
               </View>
 
-              {/* Payment Instructions Row */}
               <View>
                 <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">Payment Instructions</Text>
                 <TextInput
@@ -485,59 +490,8 @@ export default function SettingsScreen() {
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold min-h-[60px]"
                 />
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  Custom messages shown on the tenant payment portal (e.g., bank details or specific steps).
+                  Custom messages shown on the tenant payment portal.
                 </Text>
-              </View>
-
-              {/* Toggle Switches */}
-              <View className="border-t border-border/40 dark:border-border-dark/40 pt-4 gap-4">
-                {/* Screenshot Required Toggle */}
-                <View className="flex-row justify-between items-center">
-                  <View className="flex-1 mr-4">
-                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Require Screenshot</Text>
-                    <Text className="text-[10px] text-muted mt-0.5 leading-4">Occupants must upload a transaction screenshot on the portal.</Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                      setScreenshotRequired(!screenshotRequired)
-                    }}
-                    className={`w-12 h-7 rounded-full p-1 flex-row items-center justify-end ${
-                      screenshotRequired ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
-                    }`}
-                  >
-                    <View className="w-5 h-5 rounded-full bg-white shadow-sm" />
-                  </TouchableOpacity>
-                </View>
-
-                {/* UTR Required Toggle */}
-                <View className="flex-row justify-between items-center">
-                  <View className="flex-1 mr-4">
-                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Require UTR Number</Text>
-                    <Text className="text-[10px] text-muted mt-0.5 leading-4">Occupants must type their 12-digit transaction UTR reference code.</Text>
-                  </View>
-                  <TouchableOpacity
-                    onPress={() => {
-                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                      setUtrRequired(!utrRequired)
-                    }}
-                    className={`w-12 h-7 rounded-full p-1 flex-row items-center justify-start ${
-                      utrRequired ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
-                    }`}
-                  >
-                    {utrRequired ? (
-                      <>
-                        <View className="flex-1" />
-                        <View className="w-5 h-5 rounded-full bg-white shadow-sm" />
-                      </>
-                    ) : (
-                      <>
-                        <View className="w-5 h-5 rounded-full bg-white shadow-sm" />
-                        <View className="flex-1" />
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
               </View>
             </View>
           </View>
@@ -566,7 +520,7 @@ export default function SettingsScreen() {
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
                 />
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  Group invite link that will be shared with new occupants right after you add them.
+                  Group invite link shared with new occupants right after adding them.
                 </Text>
               </View>
             </View>
@@ -595,7 +549,7 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Section 2: Preferences (Dark Mode toggles) */}
+          {/* Section 2: Preferences (Appearance) */}
           <View className="px-6 mt-6">
             <View className="flex-row items-center mb-3">
               <View className="mr-2">
@@ -622,13 +576,11 @@ export default function SettingsScreen() {
                   </View>
                 </View>
 
-                {/* Custom toggler */}
                 <TouchableOpacity
                   key={`theme-toggle-${isDark}`}
                   onPress={() => {
                     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                     
-                    // Smooth native layout animation on toggling theme
                     LayoutAnimation.configureNext({
                       duration: 400,
                       create: {
@@ -672,7 +624,6 @@ export default function SettingsScreen() {
             </View>
 
             <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
-              {/* Account details read-only fields */}
               <View className="flex-row justify-between py-1 border-b border-border/40 dark:border-border-dark/40 pb-3">
                 <Text className="text-sm font-bold text-muted">Account ID</Text>
                 <Text className="text-sm font-semibold text-foreground dark:text-foreground-dark font-mono text-right" numberOfLines={1}>
@@ -694,7 +645,6 @@ export default function SettingsScreen() {
                 </View>
               )}
 
-              {/* Log out */}
               <TouchableOpacity
                 onPress={handleLogout}
                 className="border border-destructive/20 bg-destructive/5 rounded-xl h-12 flex-row items-center justify-center mt-2"
@@ -707,7 +657,6 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {/* Footer branding details */}
           <View className="items-center mt-8 px-6">
             <Text className="text-[10px] font-black uppercase text-muted tracking-widest text-center">
               Staytraq Mobile App v1.0.0
@@ -718,7 +667,6 @@ export default function SettingsScreen() {
           </View>
         </KeyboardAwareScrollView>
 
-      {/* Confirm Logout Modal */}
       <ConfirmModal
         visible={confirmModalVisible}
         title="Confirm Logout"

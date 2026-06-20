@@ -37,8 +37,8 @@ interface PaymentData {
     upi_id: string
     upi_name: string
     payment_instructions: string
-    screenshot_required: boolean
-    utr_required: boolean
+    screenshot_required?: boolean
+    utr_required?: boolean
     is_merchant: boolean
   } | null
 }

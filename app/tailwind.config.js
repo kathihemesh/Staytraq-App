@@ -16,6 +16,7 @@ module.exports = {
         },
         success: {
           DEFAULT: "#10b981", // Emerald green
+          dark: "#34d399",    // Brighter green for dark mode
           foreground: "#ffffff",
         },
         warning: {

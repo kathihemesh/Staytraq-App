@@ -55,6 +55,50 @@ export type Database = {
           },
         ]
       }
+      leads: {
+        Row: {
+          created_at: string
+          id: number
+          move_in_date: string | null
+          name: string
+          owner_id: string
+          phone: string
+          room_type: string
+          sharing_preference: string
+          room_no: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: number
+          move_in_date?: string | null
+          name: string
+          owner_id: string
+          phone: string
+          room_type: string
+          sharing_preference: string
+          room_no?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: number
+          move_in_date?: string | null
+          name?: string
+          owner_id?: string
+          phone?: string
+          room_type?: string
+          sharing_preference?: string
+          room_no?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_owner_id_fkey"
+            columns: ["owner_id"]
+            isOneToOne: false
+            referencedRelation: "pg_owners"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       monthly_payment_links: {
         Row: {
           created_at: string
@@ -257,6 +301,7 @@ export type Database = {
       }
       pg_owners: {
         Row: {
+          chatbot_enabled: boolean | null
           complaint_token: string
           created_at: string
           email: string | null
@@ -267,6 +312,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          chatbot_enabled?: boolean | null
           complaint_token?: string
           created_at?: string
           email?: string | null
@@ -277,6 +323,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          chatbot_enabled?: boolean | null
           complaint_token?: string
           created_at?: string
           email?: string | null
@@ -388,50 +435,47 @@ export type Database = {
       settings: {
         Row: {
           created_at: string
+          default_maintenance_fee: number | null
           grace_period_days: number | null
           id: number
           is_merchant: boolean | null
-          late_fee_per_day: number | null
           owner_id: string
           payment_instructions: string | null
+          refund_deposit: number | null
           rent_due_day: number | null
-          screenshot_required: boolean | null
           updated_at: string | null
           upi_id: string | null
           upi_name: string | null
-          utr_required: boolean | null
           whatsapp_invite_link: string | null
         }
         Insert: {
           created_at?: string
+          default_maintenance_fee?: number | null
           grace_period_days?: number | null
           id?: number
           is_merchant?: boolean | null
-          late_fee_per_day?: number | null
           owner_id: string
           payment_instructions?: string | null
+          refund_deposit?: number | null
           rent_due_day?: number | null
-          screenshot_required?: boolean | null
           updated_at?: string | null
           upi_id?: string | null
           upi_name?: string | null
-          utr_required?: boolean | null
           whatsapp_invite_link?: string | null
         }
         Update: {
           created_at?: string
+          default_maintenance_fee?: number | null
           grace_period_days?: number | null
           id?: number
           is_merchant?: boolean | null
-          late_fee_per_day?: number | null
           owner_id?: string
           payment_instructions?: string | null
+          refund_deposit?: number | null
           rent_due_day?: number | null
-          screenshot_required?: boolean | null
           updated_at?: string | null
           upi_id?: string | null
           upi_name?: string | null
-          utr_required?: boolean | null
           whatsapp_invite_link?: string | null
         }
         Relationships: [

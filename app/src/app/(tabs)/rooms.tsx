@@ -1240,7 +1240,9 @@ export default function RoomsScreen() {
       <View className="flex-1 flex-row-reverse bg-black/45">
         <Pressable className="w-[min(92px,12%)]" onPress={() => setIsSidebarOpen(false)} />
 
-        <View
+        <KeyboardAvoidingView
+          behavior="padding"
+          keyboardVerticalOffset={0}
           style={{ width: Math.min(width * 0.9, 420), flex: 1 }}
           className="border-l border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
         >
@@ -1627,7 +1629,7 @@ export default function RoomsScreen() {
               </View>
             </View>
           ) : null}
-        </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   ) : null
@@ -1691,7 +1693,7 @@ export default function RoomsScreen() {
             }}
           />
           <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior="padding"
             keyboardVerticalOffset={0}
             className="w-full"
           >

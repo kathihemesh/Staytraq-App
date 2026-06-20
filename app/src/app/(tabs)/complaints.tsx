@@ -17,7 +17,8 @@ import {
   Animated,
   StyleSheet,
   Share,
-  KeyboardAvoidingView
+  KeyboardAvoidingView,
+  InteractionManager
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useFocusEffect } from "expo-router"
@@ -157,7 +158,7 @@ export default function ComplaintsScreen() {
     }
     try {
       if (!silent) {
-        if (complaints.length === 0) setLoading(true)
+        if (!hasLoadedOnce.current) setLoading(true)
         else setIsRefreshing(true)
       }
 
@@ -204,12 +205,15 @@ export default function ComplaintsScreen() {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id, complaints.length])
+  }, [user?.id])
 
   useFocusEffect(
     useCallback(() => {
       if (user?.id) {
-        void fetchComplaintsData(hasLoadedOnce.current)
+        const task = InteractionManager.runAfterInteractions(() => {
+          void fetchComplaintsData(hasLoadedOnce.current)
+        })
+        return () => task.cancel()
       }
     }, [user?.id, fetchComplaintsData])
   )
@@ -835,7 +839,8 @@ export default function ComplaintsScreen() {
       >
         <View className="flex-1 bg-black/60 backdrop-blur-sm justify-end">
           <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior="padding"
+            keyboardVerticalOffset={0}
             style={{ width: "100%", maxWidth: 448, marginLeft: "auto", marginRight: "auto" }}
           >
             <View className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 rounded-t-[32px] p-6 shadow-2xl">

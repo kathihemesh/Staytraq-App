@@ -242,14 +242,9 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
   const [localSelectedIndex, setLocalSelectedIndex] = useState(selectedIndex)
   useEffect(() => {
     setLocalSelectedIndex(selectedIndex)
-  }, [selectedIndex])
-
-  const [prevSelectedIndex, setPrevSelectedIndex] = useState(-1)
-  if (selectedIndex !== prevSelectedIndex) {
-    setPrevSelectedIndex(selectedIndex)
     const targetSection = Math.floor(selectedIndex / VISIBLE_SLOTS)
     setSectionIndex(targetSection)
-  }
+  }, [selectedIndex])
 
   const collapsedWidth = Math.min(width - 48, 340)
   const collapsedShellWidth = collapsedWidth + 12
@@ -318,7 +313,6 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
       const route = routes[index]
       if (!route) return
 
-      setLocalSelectedIndex(index)
       triggerHaptic("select")
 
       const event = navigation.emit({
@@ -328,14 +322,14 @@ export default function PremiumBottomNavigation({ state, descriptors, navigation
       })
 
       if (!event.defaultPrevented) {
-        requestAnimationFrame(() => {
-          navigation.navigate(route.name, route.params)
-        })
+        navigation.navigate(route.name, route.params)
       }
 
-      setExpanded(false)
+      if (expanded) {
+        setExpanded(false)
+      }
     },
-    [navigation, routes],
+    [expanded, navigation, routes],
   )
 
   const goToSection = useCallback(

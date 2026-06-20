@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Staytraq Chatbot Diagnostics Console</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --panel-bg: rgba(17, 25, 40, 0.75);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-color: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.15);
+            --text-main: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --bot-bubble: linear-gradient(135deg, #4f46e5, #3730a3);
+            --user-bubble: #1f2937;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: radial-gradient(circle at top right, #1e1b4b, var(--bg-color) 60%);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        header {
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(11, 15, 25, 0.8);
+            backdrop-filter: blur(12px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            background: linear-gradient(to right, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            background: rgba(16, 185, 129, 0.1);
+            color: #10b981;
+            padding: 0.35rem 0.75rem;
+            border-radius: 9999px;
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 8px #10b981;
+        }
+
+        main {
+            flex: 1;
+            display: flex;
+            gap: 1.5rem;
+            padding: 1.5rem;
+            max-width: 1400px;
+            margin: 0 auto;
+            width: 100%;
+            height: calc(100vh - 80px);
+        }
+
+        .col-left {
+            flex: 1.2;
+            display: flex;
+            flex-direction: column;
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            backdrop-filter: blur(16px);
+            overflow: hidden;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        .col-right {
+            flex: 0.8;
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .panel-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(255, 255, 255, 0.02);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-header h2 {
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: var(--text-main);
+        }
+
+        .chat-area {
+            flex: 1;
+            padding: 1.5rem;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            background: rgba(0, 0, 0, 0.15);
+        }
+
+        .message-bubble {
+            max-width: 75%;
+            padding: 0.85rem 1.2rem;
+            border-radius: 14px;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            word-wrap: break-word;
+        }
+
+        .message-bubble.bot {
+            align-self: flex-start;
+            background: var(--bot-bubble);
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 4px 15px var(--accent-glow);
+        }
+
+        .message-bubble.user {
+            align-self: flex-end;
+            background: var(--user-bubble);
+            border-bottom-right-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        .chat-input-area {
+            padding: 1.25rem 1.5rem;
+            border-top: 1px solid var(--border-color);
+            background: rgba(0, 0, 0, 0.1);
+        }
+
+        .chat-input-form {
+            display: flex;
+            gap: 0.75rem;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: rgba(17, 25, 40, 0.5);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 0.75rem 1rem;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 0.95rem;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .chat-input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 10px var(--accent-glow);
+        }
+
+        .send-btn {
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            padding: 0.75rem 1.5rem;
+            font-family: inherit;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .send-btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px var(--accent-glow);
+        }
+
+        .card {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            backdrop-filter: blur(16px);
+            padding: 1.5rem;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+
+        .config-group {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .form-field {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .form-field label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        select, input[type="text"] {
+            width: 100%;
+            background: rgba(17, 25, 40, 0.5);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.65rem 0.85rem;
+            color: var(--text-main);
+            font-family: inherit;
+            font-size: 0.9rem;
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        select:focus, input[type="text"]:focus {
+            border-color: var(--accent-color);
+        }
+
+        .session-inspector {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .json-viewer {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1rem;
+            font-family: 'Space Grotesk', monospace;
+            font-size: 0.825rem;
+            color: #34d399;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            margin-top: 0.75rem;
+        }
+
+        .test-chips {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-top: 0.5rem;
+        }
+
+        .chip {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.35rem 0.65rem;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .chip:hover {
+            background: rgba(99, 102, 241, 0.15);
+            border-color: var(--accent-color);
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Staytraq Chatbot Simulator</h1>
+        <div class="status-badge">
+            <div class="status-dot"></div>
+            Diagnostics Active (OpenAI gpt-4o-mini)
+        </div>
+    </header>
+
+    <main>
+        <div class="col-left">
+            <div class="panel-header">
+                <h2>Chat Session</h2>
+                <button onclick="clearChat()" class="chip" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2)">Reset Chat Session</button>
+            </div>
+            <div class="chat-area" id="chatArea">
+                <div class="message-bubble bot">
+                    👋 Hello! I am the Staytraq AI assistant. How can I help you today?
+                </div>
+            </div>
+            <div class="chat-input-area">
+                <form class="chat-input-form" id="chatForm">
+                    <input type="text" id="userInput" class="chat-input" placeholder="Type a message to simulate..." autocomplete="off">
+                    <button type="submit" class="send-btn" id="sendBtn">Send</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="col-right">
+            <div class="card">
+                <h2 style="font-size: 1.1rem; margin-bottom: 1rem; font-weight: 500;">Simulation Settings</h2>
+                <div class="config-group">
+                    <div class="form-field">
+                        <label for="simulationType">Simulator Persona</label>
+                        <select id="simulationType" onchange="applyPersona()">
+                            <option value="tenant">Mock Active Tenant (Aditya Sen: +919876543210)</option>
+                            <option value="customer">Mock New Customer (John: +919999988888)</option>
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label for="senderJid">Sender Phone JID</label>
+                        <input type="text" id="senderJid" value="9876543210@s.whatsapp.net">
+                    </div>
+                    <div class="form-field">
+                        <label for="instanceEmail">Instance Name (Owner Email)</label>
+                        <input type="text" id="instanceEmail" value="hemeshreddy77@gmail.com">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card session-inspector">
+                <h2 style="font-size: 1.1rem; font-weight: 500;">Redis Session Inspector</h2>
+                <p style="font-size: 0.8rem; color: var(--text-secondary)">Displays the conversation state & extracted AI parameters.</p>
+                <div class="json-viewer" id="jsonViewer">{ "loading": "Send a message to view state..." }</div>
+                
+                <h3 style="font-size: 0.9rem; font-weight: 500; margin-top: 1rem;">Quick Test Queries</h3>
+                <div class="test-chips" id="quickChips">
+                    <!-- Loaded dynamically -->
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const chatArea = document.getElementById('chatArea');
+        const chatForm = document.getElementById('chatForm');
+        const userInput = document.getElementById('userInput');
+        const jsonViewer = document.getElementById('jsonViewer');
+        const senderJidInput = document.getElementById('senderJid');
+        const instanceEmailInput = document.getElementById('instanceEmail');
+        const simulationTypeSelect = document.getElementById('simulationType');
+        const sendBtn = document.getElementById('sendBtn');
+        const quickChips = document.getElementById('quickChips');
+
+        const tenantQueries = [
+            "What is my rent status and due date?",
+            "WiFi not working in Room 101.",
+            "Can I get the PG rules?",
+            "What is the food menu today?"
+        ];
+
+        const customerQueries = [
+            "Hi, do you have any room available?",
+            "I am looking for a single AC room. My budget is 12000.",
+            "I want to move in from 2026-07-01",
+            "What amenities do you offer?"
+        ];
+
+        function applyPersona() {
+            const persona = simulationTypeSelect.value;
+            if (persona === 'tenant') {
+                senderJidInput.value = '9876543210@s.whatsapp.net';
+            } else {
+                senderJidInput.value = '9999988888@s.whatsapp.net';
+            }
+            renderChips();
+        }
+
+        function renderChips() {
+            const queries = simulationTypeSelect.value === 'tenant' ? tenantQueries : customerQueries;
+            quickChips.innerHTML = '';
+            queries.forEach(q => {
+                const btn = document.createElement('button');
+                btn.className = 'chip';
+                btn.innerText = q;
+                btn.type = 'button';
+                btn.onclick = () => {
+                    userInput.value = q;
+                    chatForm.dispatchEvent(new Event('submit'));
+                };
+                quickChips.appendChild(btn);
+            });
+        }
+
+        async function clearChat() {
+            const senderJid = senderJidInput.value;
+            try {
+                const response = await fetch(`/api/v1/debug-reset?sender_jid=${encodeURIComponent(senderJid)}`, {
+                    method: 'POST'
+                });
+                if (response.ok) {
+                    chatArea.innerHTML = '<div class="message-bubble bot">👋 Chat session reset. Send a message to start over.</div>';
+                    jsonViewer.innerText = '{ "message": "Session reset successfully" }';
+                }
+            } catch (err) {
+                console.error("Error resetting session", err);
+            }
+        }
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const text = userInput.value.trim();
+            if (!text) return;
+
+            // Append User bubble
+            appendBubble(text, 'user');
+            userInput.value = '';
+            sendBtn.disabled = true;
+
+            const senderJid = senderJidInput.value;
+            const instanceName = instanceEmailInput.value;
+
+            try {
+                const response = await fetch('/api/v1/debug-chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        sender_jid: senderJid,
+                        text: text,
+                        instance_name: instanceName
+                    })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    appendBubble(data.reply, 'bot');
+                    jsonViewer.innerText = JSON.stringify(data.session_state, null, 2);
+                } else {
+                    appendBubble("⚠️ Service returned error. Make sure your server is running and API keys are set.", "bot");
+                }
+            } catch (error) {
+                console.error(error);
+                appendBubble("⚠️ Failed to connect to server.", "bot");
+            } finally {
+                sendBtn.disabled = false;
+            }
+        });
+
+        function appendBubble(text, sender) {
+            const bubble = document.createElement('div');
+            bubble.className = `message-bubble ${sender}`;
+            bubble.innerText = text;
+            chatArea.appendChild(bubble);
+            chatArea.scrollTop = chatArea.scrollHeight;
+        }
+
+        // Init
+        applyPersona();
+    </script>
+</body>
+</html>

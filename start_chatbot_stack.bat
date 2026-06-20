@@ -26,7 +26,7 @@ echo.
 :: 3. Start FastAPI Server in a separate window
 echo [3/3] Launching FastAPI Backend Server in a new window...
 cd /d "c:\Staytraq App\backend"
-start "FastAPI Backend Server Logs" cmd /k "python -m uvicorn app.main:app --reload --port 8000"
+start "FastAPI Backend Server Logs" cmd /k "python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 echo.
 echo =======================================================

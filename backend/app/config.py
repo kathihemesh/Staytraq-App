@@ -7,6 +7,16 @@ class Settings(BaseSettings):
     EVOLUTION_API_KEY: str = "staytraq_chatbot_secret_key"
     REDIS_URL: str = "redis://localhost:6379/0"
     
+    # Supabase Settings
+    SUPABASE_URL: str = ""
+    SUPABASE_KEY: str = ""
+    
+    # LLM Settings
+    AI_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    AI_MODEL: str = "gemini-2.5-flash"
+    
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
 settings = Settings()

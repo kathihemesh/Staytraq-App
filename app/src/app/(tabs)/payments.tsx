@@ -51,6 +51,36 @@ import {
   Phone
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
+import Constants from "expo-constants"
+
+const getFallbackApiUrl = () => {
+  const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
+  if (hostUri) {
+    const ip = hostUri.split(":")[0]
+    if (ip) {
+      return `http://${ip}:3000`
+    }
+  }
+  return "http://10.0.2.2:3000"
+}
+
+const getChatbotApiUrl = () => {
+  if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
+    return process.env.EXPO_PUBLIC_CHATBOT_API_URL
+  }
+  const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
+  if (hostUri) {
+    const ip = hostUri.split(":")[0]
+    if (ip && ip !== "localhost" && ip !== "127.0.0.1") {
+      return `http://${ip}:8000`
+    }
+  }
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL
+  if (apiUrl) {
+    return `${apiUrl.replace(/\/$/, "").replace(/:\d+$/, "")}:8000`
+  }
+  return "http://10.0.2.2:8000"
+}
 import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"
 import { LinearGradient } from "expo-linear-gradient"
@@ -247,6 +277,8 @@ export default function PaymentsScreen() {
   const [loadingImage, setLoadingImage] = useState(false)
   const [rejectingMode, setRejectingMode] = useState(false)
   const [rejectNotes, setRejectNotes] = useState("")
+  const [chatbotEnabled, setChatbotEnabled] = useState(false)
+  const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false)
 
   // Form Fields
   const [formTenantId, setFormTenantId] = useState("")
@@ -329,8 +361,8 @@ export default function PaymentsScreen() {
       const monthVal = getMonthNumber(monthName)
       const yearVal = parseInt(yearStr, 10) || new Date().getFullYear()
 
-      // Fetch payments, occupants, portal token, and PG details concurrently
-      const [payResult, tenantResult, linkResult, pgResult] = await Promise.all([
+      // Fetch payments, occupants, portal token, PG details, and owner (for chatbot_enabled) concurrently
+      const [payResult, tenantResult, linkResult, pgResult, ownerResult] = await Promise.all([
         supabase
           .from("payments")
           .select("*, tenants_table(name, mobile_number, rooms_table(room_number, rent_amount))")
@@ -353,7 +385,12 @@ export default function PaymentsScreen() {
           .from("pg_details")
           .select("pg_name")
           .eq("owner_id", user.id)
-          .maybeSingle()
+          .maybeSingle(),
+        supabase
+          .from("pg_owners")
+          .select("chatbot_enabled")
+          .eq("id", user.id)
+          .single()
       ])
 
       if (payResult.error) throw payResult.error
@@ -361,6 +398,9 @@ export default function PaymentsScreen() {
 
       if (tenantResult.error) throw tenantResult.error
       setOccupants((tenantResult.data || []) as any)
+
+      if (ownerResult.error && ownerResult.error.code !== "PGRST116") throw ownerResult.error
+      setChatbotEnabled(!!ownerResult.data?.chatbot_enabled)
 
       let activePortalToken = linkResult.data?.portal_token
       if (!activePortalToken) {
@@ -684,14 +724,53 @@ export default function PaymentsScreen() {
 
     const formattedPhone = formatWhatsAppNumber(phone)
     const message = getWhatsAppMessage(selectedPayment, selectedPaymentPortalToken)
-    const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
 
+    setIsSendingWhatsApp(true)
     try {
-      await Linking.openURL(url)
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-    } catch (err) {
-      console.error("Error opening WhatsApp:", err)
-      Alert.alert("Error", "Could not launch WhatsApp or open the link.")
+      if (chatbotEnabled) {
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
+        const token = currentSession?.access_token
+        if (!token) {
+          throw new Error("User session not found. Please log in again.")
+        }
+        
+        const chatbotApiUrl = getChatbotApiUrl()
+        
+        console.log("[WhatsApp Reminder Debug - Payments] Initiating direct send:")
+        console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-whatsapp-notice`)
+        console.log("  - Phone:", formattedPhone)
+        console.log("  - Token present:", !!token)
+        
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "bypass-tunnel-reminder": "true"
+          },
+          body: JSON.stringify({
+            phone: formattedPhone,
+            message: message
+          })
+        })
+        
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to send message via chatbot server.")
+        }
+        
+        showToast("Success", "Reminder sent successfully via WhatsApp.", "success")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      } else {
+        const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
+        await Linking.openURL(url)
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      }
+    } catch (err: any) {
+      console.error("[WhatsApp Reminder Debug - Payments] Error details:", err)
+      Alert.alert("Error", err.message || "Could not generate reminder link or open WhatsApp.")
+    } finally {
+      setIsSendingWhatsApp(false)
     }
   }
 
@@ -1642,6 +1721,8 @@ export default function PaymentsScreen() {
       <Modal
         animationType="none"
         transparent={true}
+        statusBarTranslucent={true}
+        navigationBarTranslucent={true}
         visible={detailModalVisible}
         onRequestClose={() => setDetailModalVisible(false)}
       >
@@ -1652,11 +1733,18 @@ export default function PaymentsScreen() {
             onPress={() => setDetailModalVisible(false)}
             className="absolute inset-0 bg-black/60"
           />
+          {/* Bottom edge fill to cover nav bar gap */}
+          <View className="absolute bottom-0 left-0 right-0 h-12 bg-card dark:bg-card-dark" />
           
-          <View 
-            className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[96%] border-t border-border dark:border-border-dark px-6 pt-6 flex-col" 
-            style={{ paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom - 10, 8) : 8 }}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={0}
+            className="w-full"
           >
+            <View 
+              className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[96%] border-t border-border dark:border-border-dark px-6 pt-6 flex-col" 
+              style={{ paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 4) : 4 }}
+            >
             {selectedPayment && (
               <View className="flex-col max-h-full">
                 {/* Header */}
@@ -1703,7 +1791,7 @@ export default function PaymentsScreen() {
                 <ScrollView 
                   showsVerticalScrollIndicator={false} 
                   contentContainerStyle={{ gap: 16, paddingBottom: 16 }} 
-                  className="flex-shrink flex-grow-0 mb-4"
+                  className="flex-shrink flex-grow-0 mb-2"
                 >
                   {/* Timeline Tracker */}
                   <View className="bg-muted/10 border border-border dark:border-border-dark p-4 rounded-3xl">
@@ -1961,7 +2049,7 @@ export default function PaymentsScreen() {
                 </ScrollView>
 
                 {/* Primary Actions Drawer Footer */}
-                <View className="flex-row gap-3 border-t border-border/40 pt-4 flex-wrap pb-0">
+                <View className="flex-row gap-3 border-t border-border/40 pt-2 flex-wrap pb-0">
                   {/* Delete Button */}
                   <TouchableOpacity
                     onPress={() => handleDeletePayment(selectedPayment.id)}
@@ -1974,9 +2062,18 @@ export default function PaymentsScreen() {
                   {(selectedPayment.status === "pending" || selectedPayment.status === "late") && (
                     <TouchableOpacity
                       onPress={handleWhatsAppReminder}
-                      className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                      disabled={isSendingWhatsApp}
+                      className={`h-12 w-12 border rounded-xl items-center justify-center active:scale-95 ${
+                        isSendingWhatsApp 
+                          ? "border-slate-300 bg-slate-100 dark:bg-slate-800 opacity-60" 
+                          : "border-success/20 bg-success/5"
+                      }`}
                     >
-                      <WhatsAppIcon size={18} color="#10b981" />
+                      {isSendingWhatsApp ? (
+                        <ActivityIndicator size="small" color="#10b981" />
+                      ) : (
+                        <WhatsAppIcon size={18} color="#10b981" />
+                      )}
                     </TouchableOpacity>
                   )}
 
@@ -2019,7 +2116,8 @@ export default function PaymentsScreen() {
                 </View>
               </View>
             )}
-          </View>
+            </View>
+          </KeyboardAvoidingView>
           {detailModalVisible && renderToast()}
         </View>
       </Modal>
@@ -2114,7 +2212,7 @@ export default function PaymentsScreen() {
       >
         <View className="flex-1 bg-black/60 justify-end">
           <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior="padding"
             keyboardVerticalOffset={0}
             className="w-full"
           >

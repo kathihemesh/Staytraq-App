@@ -22,15 +22,23 @@ export default function SettingsPage() {
   // Payment Settings State
   const [rentDueDay, setRentDueDay] = useState(1)
   const [gracePeriodDays, setGracePeriodDays] = useState(3)
-  const [lateFee, setLateFee] = useState(0)
+  const [defaultMaintenanceFee, setDefaultMaintenanceFee] = useState(0)
+  const [refundDeposit, setRefundDeposit] = useState(0)
   
   // UPI Settings State
   const [upiId, setUpiId] = useState("")
   const [upiName, setUpiName] = useState("")
   const [paymentInstructions, setPaymentInstructions] = useState("")
-  const [screenshotRequired, setScreenshotRequired] = useState(true)
-  const [utrRequired, setUtrRequired] = useState(true)
   const [isMerchant, setIsMerchant] = useState(false)
+
+  const handleMaintenanceFeeChange = (val: number) => {
+    setDefaultMaintenanceFee(val)
+    if (!isNaN(val)) {
+      setRefundDeposit(Math.round(val * 0.5))
+    } else {
+      setRefundDeposit(0)
+    }
+  }
 
   // Notification Settings State (Mocked for now as per original)
   const [emailNotifications, setEmailNotifications] = useState(true)
@@ -90,12 +98,11 @@ export default function SettingsPage() {
       } else if (data) {
         setRentDueDay(data.rent_due_day || 1)
         setGracePeriodDays(data.grace_period_days || 3)
-        setLateFee(data.late_fee_per_day || 0)
+        setDefaultMaintenanceFee(data.default_maintenance_fee || 0)
+        setRefundDeposit(data.refund_deposit || 0)
         setUpiId(data.upi_id || "")
         setUpiName(data.upi_name || "")
         setPaymentInstructions(data.payment_instructions || "")
-        setScreenshotRequired(data.screenshot_required ?? true)
-        setUtrRequired(data.utr_required ?? true)
         setIsMerchant(data.is_merchant ?? false)
       }
     } catch (error) {
@@ -121,12 +128,11 @@ export default function SettingsPage() {
         .update({
           rent_due_day: rentDueDay,
           grace_period_days: gracePeriodDays,
-          late_fee_per_day: lateFee,
+          default_maintenance_fee: defaultMaintenanceFee,
+          refund_deposit: refundDeposit,
           upi_id: upiId,
           upi_name: upiName,
           payment_instructions: paymentInstructions,
-          screenshot_required: screenshotRequired,
-          utr_required: utrRequired,
           is_merchant: isMerchant
         })
         .eq('owner_id', userId)
@@ -171,7 +177,7 @@ export default function SettingsPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid gap-4 sm:grid-cols-4">
               <div className="space-y-2">
                 <Label htmlFor="defaultDueDate" className="text-sm font-medium">Default Due Day</Label>
                 <Input 
@@ -196,13 +202,24 @@ export default function SettingsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="lateFee" className="text-sm font-medium">Late Payment Fee</Label>
+                <Label htmlFor="defaultMaintenanceFee" className="text-sm font-medium">Default Maintenance Fee</Label>
                 <Input 
-                  id="lateFee" 
+                  id="defaultMaintenanceFee" 
                   type="number" 
                   min="0"
-                  value={lateFee} 
-                  onChange={(e) => setLateFee(parseInt(e.target.value) || 0)} 
+                  value={defaultMaintenanceFee} 
+                  onChange={(e) => handleMaintenanceFeeChange(parseInt(e.target.value) || 0)} 
+                  className="bg-muted/50 focus:bg-background" 
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="refundDeposit" className="text-sm font-medium">Refund Deposit</Label>
+                <Input 
+                  id="refundDeposit" 
+                  type="number" 
+                  min="0"
+                  value={refundDeposit} 
+                  onChange={(e) => setRefundDeposit(parseInt(e.target.value) || 0)} 
                   className="bg-muted/50 focus:bg-background" 
                 />
               </div>
@@ -256,35 +273,7 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <Separator />
 
-            <div className="space-y-4">
-              <h3 className="text-sm font-medium text-muted-foreground">Verification Requirements</h3>
-              <div className="flex items-center justify-between py-2">
-                <div className="space-y-0.5">
-                  <Label className="text-sm font-medium">Require Payment Screenshot</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Tenants must upload a screenshot of the payment receipt
-                  </p>
-                </div>
-                <Switch
-                  checked={screenshotRequired}
-                  onCheckedChange={setScreenshotRequired}
-                />
-              </div>
-              <div className="flex items-center justify-between py-2">
-                <div className="space-y-0.5">
-                  <Label className="text-sm font-medium">Require UTR/Reference Number</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Tenants must provide the transaction reference number
-                  </p>
-                </div>
-                <Switch
-                  checked={utrRequired}
-                  onCheckedChange={setUtrRequired}
-                />
-              </div>
-            </div>
           </CardContent>
         </Card>
 

@@ -8,6 +8,36 @@ import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User,
 import { LinearGradient } from "expo-linear-gradient"
 import Svg, { Path } from "react-native-svg"
 import * as Haptics from "expo-haptics"
+import Constants from "expo-constants"
+
+const getFallbackApiUrl = () => {
+  const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
+  if (hostUri) {
+    const ip = hostUri.split(":")[0]
+    if (ip) {
+      return `http://${ip}:3000`
+    }
+  }
+  return "http://10.0.2.2:3000"
+}
+
+const getChatbotApiUrl = () => {
+  if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
+    return process.env.EXPO_PUBLIC_CHATBOT_API_URL
+  }
+  const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
+  if (hostUri) {
+    const ip = hostUri.split(":")[0]
+    if (ip && ip !== "localhost" && ip !== "127.0.0.1") {
+      return `http://${ip}:8000`
+    }
+  }
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL
+  if (apiUrl) {
+    return `${apiUrl.replace(/\/$/, "").replace(/:\d+$/, "")}:8000`
+  }
+  return "http://10.0.2.2:8000"
+}
 import useTheme from "@/hooks/use-theme"
 import { FlashList } from "@shopify/flash-list"
 import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"
@@ -156,6 +186,7 @@ export default function TenantsScreen() {
   const [ownerSettings, setOwnerSettings] = useState<any>(null)
   const [portalToken, setPortalToken] = useState<string>("")
   const [pgName, setPgName] = useState<string>("")
+  const [chatbotEnabled, setChatbotEnabled] = useState(false)
 
   // Form fields
   const [name, setName] = useState("")
@@ -210,6 +241,8 @@ export default function TenantsScreen() {
   const [markingPaidPaymentId, setMarkingPaidPaymentId] = useState<number | null>(null)
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"UPI" | "Cash">("UPI")
   const [paymentMethodDropdownOpen, setPaymentMethodDropdownOpen] = useState(false)
+  const [isSendingWhatsAppTenant, setIsSendingWhatsAppTenant] = useState(false)
+  const [isSendingWhatsAppPayment, setIsSendingWhatsAppPayment] = useState(false)
 
   useEffect(() => {
     if (!paymentDetailVisible) {
@@ -403,8 +436,8 @@ export default function TenantsScreen() {
       const currentMonth = new Date().getMonth() + 1
       const currentYear = new Date().getFullYear()
 
-      // Fetch pg_details, tenants, settings, and monthly_payment_links in parallel
-      const [pgResult, tenantsResult, settingsResult, linkResult] = await Promise.all([
+      // Fetch pg_details, tenants, settings, monthly_payment_links, and pg_owners in parallel
+      const [pgResult, tenantsResult, settingsResult, linkResult, ownerResult] = await Promise.all([
         supabase
           .from("pg_details")
           .select("id, pg_name")
@@ -418,7 +451,7 @@ export default function TenantsScreen() {
           .order("name", { ascending: true }),
         supabase
           .from("settings")
-          .select("whatsapp_invite_link, upi_id, upi_name, rent_due_day")
+          .select("whatsapp_invite_link, upi_id, upi_name, rent_due_day, refund_deposit")
           .eq("owner_id", user.id)
           .maybeSingle(),
         supabase
@@ -427,7 +460,12 @@ export default function TenantsScreen() {
           .eq("owner_id", user.id)
           .eq("month", currentMonth)
           .eq("year", currentYear)
-          .maybeSingle()
+          .maybeSingle(),
+        supabase
+          .from("pg_owners")
+          .select("chatbot_enabled")
+          .eq("id", user.id)
+          .single()
       ])
 
       const pgDetails = pgResult.data
@@ -440,6 +478,9 @@ export default function TenantsScreen() {
       setPgName(pgDetails.pg_name || "")
       setTenants(tenantsResult.data || [])
       setOwnerSettings(settingsResult.data || null)
+
+      if (ownerResult.error && ownerResult.error.code !== "PGRST116") throw ownerResult.error
+      setChatbotEnabled(!!ownerResult.data?.chatbot_enabled)
 
       // Fetch rooms once we have pgDetails.id
       const { data: roomsData, error: roomsErr } = await supabase
@@ -1485,14 +1526,111 @@ export default function TenantsScreen() {
 
     const formattedPhone = formatWhatsAppNumber(phone)
     const message = getWhatsAppMessage(selectedPaymentDetail, selectedPaymentPortalToken)
-    const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
 
+    setIsSendingWhatsAppPayment(true)
     try {
-      await Linking.openURL(url)
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-    } catch (err) {
-      console.error("Error opening WhatsApp:", err)
-      Alert.alert("Error", "Could not launch WhatsApp or open the link.")
+      if (chatbotEnabled) {
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
+        const token = currentSession?.access_token
+        if (!token) {
+          throw new Error("User session not found. Please log in again.")
+        }
+        
+        const chatbotApiUrl = getChatbotApiUrl()
+        
+        console.log("[WhatsApp Reminder Debug - Tenants] Initiating direct send:")
+        console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-whatsapp-notice`)
+        console.log("  - Phone:", formattedPhone)
+        console.log("  - Token present:", !!token)
+        
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "bypass-tunnel-reminder": "true"
+          },
+          body: JSON.stringify({
+            phone: formattedPhone,
+            message: message
+          })
+        })
+        
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to send message via chatbot server.")
+        }
+        
+        showToast("Success", "Reminder sent successfully via WhatsApp.", "success")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      } else {
+        const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(message)}`
+        await Linking.openURL(url)
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      }
+    } catch (err: any) {
+      console.error("[WhatsApp Reminder Debug - Tenants] Error details:", err)
+      Alert.alert("Error", err.message || "Could not generate reminder link or open WhatsApp.")
+    } finally {
+      setIsSendingWhatsAppPayment(false)
+    }
+  }
+
+  const handleDirectWhatsAppChat = async (phone: string | null | undefined, tenantName: string) => {
+    if (!phone) {
+      Alert.alert("Missing Phone Number", "This tenant does not have a registered mobile number.")
+      return
+    }
+
+    const formattedPhone = formatWhatsAppNumber(phone)
+    const message = `Hi ${tenantName}, hope you are doing well! This is a message from the property management team regarding your tenancy. Please let us know if you have any questions or need assistance.`
+
+    setIsSendingWhatsAppTenant(true)
+    try {
+      if (chatbotEnabled) {
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
+        const token = currentSession?.access_token
+        if (!token) {
+          throw new Error("User session not found. Please log in again.")
+        }
+
+        const chatbotApiUrl = getChatbotApiUrl()
+
+        console.log("[WhatsApp Direct Chat Debug - Tenants] Initiating direct send:")
+        console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-whatsapp-notice`)
+        console.log("  - Phone:", formattedPhone)
+        console.log("  - Token present:", !!token)
+
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "bypass-tunnel-reminder": "true"
+          },
+          body: JSON.stringify({
+            phone: formattedPhone,
+            message: message
+          })
+        })
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to send message via chatbot server.")
+        }
+
+        showToast("Success", "Message sent successfully via WhatsApp.", "success")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      } else {
+        const url = `https://wa.me/${formattedPhone}`
+        await Linking.openURL(url)
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      }
+    } catch (err: any) {
+      console.error("[WhatsApp Direct Chat Debug - Tenants] Error details:", err)
+      Alert.alert("Error", err.message || "Could not send message or open WhatsApp.")
+    } finally {
+      setIsSendingWhatsAppTenant(false)
     }
   }
 
@@ -2388,21 +2526,21 @@ export default function TenantsScreen() {
                       <TouchableOpacity
                         onPress={() => {
                           const phone = selectedTenant?.mobile_number
-                          if (!phone) {
-                            Alert.alert("Missing Phone Number", "This tenant does not have a registered mobile number.")
-                            return
-                          }
-                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                          const formattedPhone = formatWhatsAppNumber(phone)
-                          const url = `https://wa.me/${formattedPhone}`
-                          void Linking.openURL(url).catch(err => {
-                            console.error("Error opening WhatsApp:", err)
-                            Alert.alert("Error", "Could not launch WhatsApp.")
-                          })
+                          const tenantName = selectedTenant?.name || "Tenant"
+                          void handleDirectWhatsAppChat(phone, tenantName)
                         }}
-                        className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                        disabled={isSendingWhatsAppTenant}
+                        className={`h-12 w-12 border rounded-xl items-center justify-center active:scale-95 ${
+                          isSendingWhatsAppTenant 
+                            ? "border-slate-300 bg-slate-100 dark:bg-slate-800 opacity-60" 
+                            : "border-success/20 bg-success/5"
+                        }`}
                       >
-                        <WhatsAppIcon size={20} color="#10b981" />
+                        {isSendingWhatsAppTenant ? (
+                          <ActivityIndicator size="small" color="#10b981" />
+                        ) : (
+                          <WhatsAppIcon size={20} color="#10b981" />
+                        )}
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -2421,21 +2559,21 @@ export default function TenantsScreen() {
                       <TouchableOpacity
                         onPress={() => {
                           const phone = selectedTenant?.mobile_number
-                          if (!phone) {
-                            Alert.alert("Missing Phone Number", "This tenant does not have a registered mobile number.")
-                            return
-                          }
-                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                          const formattedPhone = formatWhatsAppNumber(phone)
-                          const url = `https://wa.me/${formattedPhone}`
-                          void Linking.openURL(url).catch(err => {
-                            console.error("Error opening WhatsApp:", err)
-                            Alert.alert("Error", "Could not launch WhatsApp.")
-                          })
+                          const tenantName = selectedTenant?.name || "Tenant"
+                          void handleDirectWhatsAppChat(phone, tenantName)
                         }}
-                        className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                        disabled={isSendingWhatsAppTenant}
+                        className={`h-12 w-12 border rounded-xl items-center justify-center active:scale-95 ${
+                          isSendingWhatsAppTenant 
+                            ? "border-slate-300 bg-slate-100 dark:bg-slate-800 opacity-60" 
+                            : "border-success/20 bg-success/5"
+                        }`}
                       >
-                        <WhatsAppIcon size={20} color="#10b981" />
+                        {isSendingWhatsAppTenant ? (
+                          <ActivityIndicator size="small" color="#10b981" />
+                        ) : (
+                          <WhatsAppIcon size={20} color="#10b981" />
+                        )}
                       </TouchableOpacity>
 
                       <TouchableOpacity
@@ -2514,7 +2652,7 @@ export default function TenantsScreen() {
       >
         <View className="flex-1 bg-black/60 justify-end">
           <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior="padding"
             keyboardVerticalOffset={0}
             className="w-full"
           >
@@ -2972,7 +3110,8 @@ export default function TenantsScreen() {
       >
         <View className="flex-1 bg-black/60 justify-end">
           <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior="padding"
+            keyboardVerticalOffset={0}
             className="w-full"
           >
             {selectedTenant && (() => {
@@ -3240,6 +3379,8 @@ export default function TenantsScreen() {
       <Modal
         animationType="none"
         transparent={true}
+        statusBarTranslucent={true}
+        navigationBarTranslucent={true}
         visible={paymentDetailVisible}
         onRequestClose={() => setPaymentDetailVisible(false)}
       >
@@ -3250,10 +3391,17 @@ export default function TenantsScreen() {
             onPress={() => setPaymentDetailVisible(false)}
             className="absolute inset-0 bg-black/60"
           />
-          <View 
-            className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[96%] border-t border-border dark:border-border-dark px-6 pt-6 flex-col" 
-            style={{ paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom - 10, 8) : 8 }}
+          {/* Bottom edge fill to cover nav bar gap */}
+          <View className="absolute bottom-0 left-0 right-0 h-12 bg-card dark:bg-card-dark" />
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={0}
+            className="w-full"
           >
+            <View 
+              className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[96%] border-t border-border dark:border-border-dark px-6 pt-6 flex-col" 
+              style={{ paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 4) : 4 }}
+            >
             {selectedPaymentDetail && (() => {
               const payment = selectedPaymentDetail
               const total = (payment.rent_amount || 0) + (payment.extra_charges || 0)
@@ -3310,7 +3458,7 @@ export default function TenantsScreen() {
                   <ScrollView 
                     showsVerticalScrollIndicator={false} 
                     contentContainerStyle={{ gap: 14, paddingBottom: 24 }} 
-                    className="flex-shrink flex-grow-0 mb-4"
+                    className="flex-shrink flex-grow-0 mb-2"
                   >
                     {/* Timeline Tracker */}
                     <View className="bg-muted/10 border border-border dark:border-border-dark p-4 rounded-3xl">
@@ -3540,7 +3688,7 @@ export default function TenantsScreen() {
                   </ScrollView>
 
                   {/* Primary Actions Drawer Footer */}
-                  <View className="flex-row gap-3 border-t border-border/40 pt-4 flex-wrap pb-0">
+                  <View className="flex-row gap-3 border-t border-border/40 pt-2 flex-wrap pb-0">
                     {/* Delete Button */}
                     <TouchableOpacity
                       onPress={() => requestDeletePayment(payment.id)}
@@ -3553,9 +3701,18 @@ export default function TenantsScreen() {
                     {(payment.status === "pending" || payment.status === "late") && (
                       <TouchableOpacity
                         onPress={handleWhatsAppReminder}
-                        className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                        disabled={isSendingWhatsAppPayment}
+                        className={`h-12 w-12 border rounded-xl items-center justify-center active:scale-95 ${
+                          isSendingWhatsAppPayment 
+                            ? "border-slate-300 bg-slate-100 dark:bg-slate-800 opacity-60" 
+                            : "border-success/20 bg-success/5"
+                        }`}
                       >
-                        <WhatsAppIcon size={18} color="#10b981" />
+                        {isSendingWhatsAppPayment ? (
+                          <ActivityIndicator size="small" color="#10b981" />
+                        ) : (
+                          <WhatsAppIcon size={18} color="#10b981" />
+                        )}
                       </TouchableOpacity>
                     )}
 
@@ -3593,7 +3750,8 @@ export default function TenantsScreen() {
                 </View>
               )
             })()}
-          </View>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 

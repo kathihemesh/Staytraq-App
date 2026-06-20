@@ -16,7 +16,8 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Linking,
-  Alert
+  Alert,
+  InteractionManager
 } from "react-native"
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useRouter, useFocusEffect } from "expo-router"
@@ -47,6 +48,36 @@ import {
   Phone
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
+import Constants from "expo-constants"
+
+const getFallbackApiUrl = () => {
+  const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
+  if (hostUri) {
+    const ip = hostUri.split(":")[0]
+    if (ip) {
+      return `http://${ip}:3000`
+    }
+  }
+  return "http://10.0.2.2:3000"
+}
+
+const getChatbotApiUrl = () => {
+  if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
+    return process.env.EXPO_PUBLIC_CHATBOT_API_URL
+  }
+  const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
+  if (hostUri) {
+    const ip = hostUri.split(":")[0]
+    if (ip && ip !== "localhost" && ip !== "127.0.0.1") {
+      return `http://${ip}:8000`
+    }
+  }
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL
+  if (apiUrl) {
+    return `${apiUrl.replace(/\/$/, "").replace(/:\d+$/, "")}:8000`
+  }
+  return "http://10.0.2.2:8000"
+}
 import useTheme from "@/hooks/use-theme"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { SafeText } from "@/components/ui/safe-text"
@@ -85,6 +116,20 @@ export default function DashboardScreen() {
   const [rawRooms, setRawRooms] = useState<any[]>([])
   const [rawComplaints, setRawComplaints] = useState<any[]>([])
   const [pgId, setPgId] = useState<number | null>(null)
+  const [chatbotEnabled, setChatbotEnabled] = useState<boolean>(false)
+  const [leads, setLeads] = useState<any[]>([])
+  const [selectedLeadForModal, setSelectedLeadForModal] = useState<any | null>(null)
+  const [copiedPhoneLeadId, setCopiedPhoneLeadId] = useState<number | null>(null)
+
+  // Bulk Notice States
+  const [isSendingNotices, setIsSendingNotices] = useState(false)
+  const [successNoticesCount, setSuccessNoticesCount] = useState(0)
+  const [failedNoticesCount, setFailedNoticesCount] = useState(0)
+  const [failedNotices, setFailedNotices] = useState<any[]>([])
+  const [noticesSentState, setNoticesSentState] = useState(false)
+  const [failedNoticesModalVisible, setFailedNoticesModalVisible] = useState(false)
+  const [copiedPhoneTenantId, setCopiedPhoneTenantId] = useState<any | null>(null)
+  const [isSendingSingleWhatsApp, setIsSendingSingleWhatsApp] = useState(false)
 
   // Filters State
   const [selectedFilter, setSelectedFilter] = useState<string>("This Month")
@@ -202,8 +247,8 @@ export default function DashboardScreen() {
         else setDataLoading(true)
       }
 
-      // Concurrently fetch pg_details, tenants, payments, and complaints
-      const [pgRes, tenantsRes, paymentsRes, complaintsRes] = await Promise.all([
+      // Concurrently fetch pg_details, tenants, payments, complaints, pg_owners (for chatbot_enabled) and leads
+      const [pgRes, tenantsRes, paymentsRes, complaintsRes, ownerRes, leadsRes] = await Promise.all([
         supabase
           .from("pg_details")
           .select("id")
@@ -219,13 +264,25 @@ export default function DashboardScreen() {
         supabase
           .from("complaints")
           .select("id, owner_id, complaint_message, status, owner_response, created_at, updated_at, tenant_phone")
+          .eq("owner_id", user.id),
+        supabase
+          .from("pg_owners")
+          .select("chatbot_enabled")
+          .eq("id", user.id)
+          .single(),
+        supabase
+          .from("leads")
+          .select("*")
           .eq("owner_id", user.id)
+          .order("created_at", { ascending: false })
       ])
 
       if (pgRes.error) throw pgRes.error
       if (tenantsRes.error) throw tenantsRes.error
       if (paymentsRes.error) throw paymentsRes.error
       if (complaintsRes.error) throw complaintsRes.error
+      if (ownerRes.error && ownerRes.error.code !== "PGRST116") throw ownerRes.error
+      if (leadsRes.error) throw leadsRes.error
 
       const pgs = pgRes.data || []
       const pgIds = pgs.map(p => p.id)
@@ -245,6 +302,8 @@ export default function DashboardScreen() {
       setRawPayments(paymentsRes.data || [])
       setRawRooms(roomsData)
       setRawComplaints(complaintsRes.data || [])
+      setChatbotEnabled(!!ownerRes.data?.chatbot_enabled)
+      setLeads(leadsRes.data || [])
       if (pgs.length > 0) {
         setPgId(pgs[0].id)
       }
@@ -262,7 +321,10 @@ export default function DashboardScreen() {
   useFocusEffect(
     useCallback(() => {
       if (isAuthenticated && user?.id) {
-        void fetchDashboardData(hasLoadedOnce.current)
+        const task = InteractionManager.runAfterInteractions(() => {
+          void fetchDashboardData(hasLoadedOnce.current)
+        })
+        return () => task.cancel()
       }
     }, [isAuthenticated, user?.id, fetchDashboardData])
   )
@@ -290,6 +352,20 @@ export default function DashboardScreen() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "complaints", filter: `owner_id=eq.${user.id}` },
+        () => {
+          void fetchDashboardData(true)
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pg_owners", filter: `id=eq.${user.id}` },
+        () => {
+          void fetchDashboardData(true)
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leads", filter: `owner_id=eq.${user.id}` },
         () => {
           void fetchDashboardData(true)
         }
@@ -1000,6 +1076,7 @@ export default function DashboardScreen() {
       return
     }
 
+    setIsSendingSingleWhatsApp(true)
     try {
       const { data: linkData, error: linkError } = await supabase
         .from("monthly_payment_links")
@@ -1050,12 +1127,196 @@ export default function DashboardScreen() {
         cleanPhone = "91" + cleanPhone
       }
       
-      const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
-      await Linking.openURL(url)
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-    } catch (err) {
-      console.error("Error generating WhatsApp reminder:", err)
-      Alert.alert("Error", "Could not generate reminder link or open WhatsApp.")
+      if (chatbotEnabled) {
+        // Direct Evolution API message sending via our FastAPI backend
+        const { data: { session: currentSession } } = await supabase.auth.getSession()
+        const token = currentSession?.access_token
+        if (!token) {
+          throw new Error("User session not found. Please log in again.")
+        }
+        
+        const chatbotApiUrl = getChatbotApiUrl()
+        
+        console.log("[WhatsApp Reminder Debug] Initiating direct send:")
+        console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-whatsapp-notice`)
+        console.log("  - Phone:", cleanPhone)
+        console.log("  - Token present:", !!token)
+
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "bypass-tunnel-reminder": "true"
+          },
+          body: JSON.stringify({
+            phone: cleanPhone,
+            message: message
+          })
+        })
+        
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}))
+          throw new Error(errData.detail || "Failed to send message via chatbot server.")
+        }
+        
+        Alert.alert("Success", "Reminder sent successfully via WhatsApp.")
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      } else {
+        // Fallback to manual WhatsApp deep link opening
+        const url = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
+        await Linking.openURL(url)
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      }
+    } catch (err: any) {
+      console.error("[WhatsApp Reminder Debug] Error details:", err)
+      Alert.alert("Error", err.message || "Could not generate reminder link or open WhatsApp.")
+    } finally {
+      setIsSendingSingleWhatsApp(false)
+    }
+  }
+
+  const handleSendAllLateNotices = async () => {
+    // Filter late payments that have mobile numbers
+    const latePays = rawPayments.filter(p => p.status === "late" && p.tenants_table?.mobile_number)
+    if (latePays.length === 0) {
+      Alert.alert("No Late Payments", "There are no overdue payments to send notices to.")
+      return
+    }
+
+    setIsSendingNotices(true)
+    setSuccessNoticesCount(0)
+    setFailedNoticesCount(0)
+    setFailedNotices([])
+    setNoticesSentState(false)
+
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+      const token = currentSession?.access_token
+      if (!token) {
+        throw new Error("User session not found. Please log in again.")
+      }
+
+      const chatbotApiUrl = getChatbotApiUrl()
+
+      const localFailed: any[] = []
+      let localSuccess = 0
+      let localFail = 0
+
+      for (let i = 0; i < latePays.length; i++) {
+        const payment = latePays[i]
+        const phone = payment.tenants_table.mobile_number
+        const tenantName = payment.tenants_table?.name || "Tenant"
+
+        try {
+          // Get or create portal link token
+          const { data: linkData, error: linkError } = await supabase
+            .from("monthly_payment_links")
+            .select("portal_token")
+            .eq("owner_id", user!.id)
+            .eq("month", payment.month)
+            .eq("year", payment.year)
+            .maybeSingle()
+
+          if (linkError) throw linkError
+
+          let activePortalToken = linkData?.portal_token
+          if (!activePortalToken) {
+            activePortalToken = Math.random().toString(36).substring(2, 14)
+            await supabase
+              .from("monthly_payment_links")
+              .upsert({
+                owner_id: user!.id,
+                month: payment.month,
+                year: payment.year,
+                portal_token: activePortalToken
+              }, { onConflict: "owner_id,month,year" })
+          }
+
+          const MONTH_NAMES = [
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+          ]
+
+          const amount = payment.total_amount || payment.amount
+          const monthName = MONTH_NAMES[payment.month - 1] || "Current Month"
+          const year = payment.year
+          
+          let formattedDueDate = "—"
+          if (payment.due_date) {
+            const d = new Date(payment.due_date)
+            formattedDueDate = d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+          }
+          
+          const paymentLink = `https://staytraq.vercel.app/pay/${activePortalToken}`
+          const message = `Hi ${tenantName},\n\nThis is a reminder that your rent payment of ₹${amount} for ${monthName} ${year} was due on ${formattedDueDate} and is currently overdue.\n\nPlease clear the outstanding amount as soon as possible and submit the payment proof here: ${paymentLink}\n\nIf you have already paid, please ignore this message. Thank you!`
+
+          let cleanPhone = phone.replace(/[^0-9]/g, "")
+          if (cleanPhone.length === 10) {
+            cleanPhone = "91" + cleanPhone
+          }
+
+          console.log("[Bulk Notice Debug] Sending to:", cleanPhone)
+          console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-whatsapp-notice`)
+
+          // Call backend REST endpoint
+          const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`,
+              "bypass-tunnel-reminder": "true"
+            },
+            body: JSON.stringify({
+              phone: cleanPhone,
+              message: message
+            })
+          })
+
+          if (response.ok) {
+            localSuccess++
+          } else {
+            localFail++
+            const errData = await response.json().catch(() => ({}))
+            localFailed.push({
+              id: payment.id,
+              name: tenantName,
+              phone: phone,
+              message: message,
+              reason: errData.detail || "Failed to deliver via Evolution Gateway"
+            })
+          }
+        } catch (err: any) {
+          console.error("[Bulk Notice Debug] Error sending to tenant:", tenantName, err)
+          localFail++
+          localFailed.push({
+            id: payment.id,
+            name: payment.tenants_table?.name || "Tenant",
+            phone: phone,
+            message: "Failed to generate reminder",
+            reason: err.message || "Failed to process portal link"
+          })
+        }
+
+        // Update live counts
+        setSuccessNoticesCount(localSuccess)
+        setFailedNoticesCount(localFail)
+        setFailedNotices([...localFailed])
+      }
+
+      setIsSendingNotices(false)
+      setNoticesSentState(true)
+      
+      // Show summary alert/toast
+      Alert.alert(
+        "Notice Sending Finished",
+        `${localSuccess} notices sent successfully, ${localFail} notices failed to send.`
+      )
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    } catch (err: any) {
+      console.error(err)
+      setIsSendingNotices(false)
+      Alert.alert("Bulk Notice Error", err.message || "Failed to run bulk notices task.")
     }
   }
 
@@ -1510,6 +1771,70 @@ export default function DashboardScreen() {
           </View>
         </View>
 
+        {chatbotEnabled && (
+          <View className="px-6 mb-4">
+            {!noticesSentState && !isSendingNotices ? (
+              <TouchableOpacity
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                  void handleSendAllLateNotices()
+                }}
+                className="bg-destructive py-3.5 rounded-xl items-center justify-center shadow-md active:opacity-90"
+              >
+                <Text className="text-white text-xs font-bold uppercase tracking-wider">
+                  Send notices to all late payments
+                </Text>
+              </TouchableOpacity>
+            ) : isSendingNotices ? (
+              <View className="bg-destructive/10 border border-destructive/20 p-3.5 rounded-xl flex-row items-center justify-center gap-2">
+                <ActivityIndicator size="small" color="#ef4444" />
+                <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                  Sending {successNoticesCount + failedNoticesCount} notices (
+                  <Text className="text-success font-black">{successNoticesCount}</Text>
+                  {" / "}
+                  <Text className="text-destructive font-black">{failedNoticesCount}</Text>
+                  )
+                </Text>
+              </View>
+            ) : (
+              <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-3.5 rounded-xl gap-2 shadow-sm">
+                <View className="flex-row justify-between items-center">
+                  <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                    Sent {successNoticesCount + failedNoticesCount} notices (
+                    <Text className="text-success font-black">{successNoticesCount}</Text>
+                    {" / "}
+                    <Text className="text-destructive font-black">{failedNoticesCount}</Text>
+                    )
+                  </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      void handleSendAllLateNotices()
+                    }}
+                    className="px-2.5 py-1 bg-primary/10 rounded-md border border-primary/20"
+                  >
+                    <Text className="text-[10px] font-bold text-primary">Retry All</Text>
+                  </TouchableOpacity>
+                </View>
+                {failedNoticesCount > 0 && (
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      setFailedNoticesModalVisible(true)
+                    }}
+                    className="bg-destructive/5 border border-destructive/10 p-2.5 rounded-lg active:opacity-80 flex-row items-center justify-between"
+                  >
+                    <Text className="text-[11px] font-bold text-destructive">
+                      Click to view failed notices
+                    </Text>
+                    <ChevronRight size={14} color="#ef4444" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            )}
+          </View>
+        )}
+
         {/* Today's Actionable Tasks */}
         <View className="px-6 mb-4">
           <Text className="text-[10px] font-black text-foreground dark:text-foreground-dark uppercase tracking-widest mb-2">{tasksHeading}</Text>
@@ -1959,7 +2284,341 @@ export default function DashboardScreen() {
           )}
         </View>
 
+        {/* Available Leads Widget */}
+        {chatbotEnabled && (
+          <View className="px-6 mb-6">
+            <Text className="text-[10px] font-black text-foreground dark:text-foreground-dark uppercase tracking-widest mb-2">Available Leads</Text>
+            
+            {leads.length === 0 ? (
+              <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-4 rounded-2xl items-center justify-center">
+                <Text className="text-xs text-muted dark:text-muted-dark font-semibold text-center">No active leads found. 🤖</Text>
+              </View>
+            ) : (
+              <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-4 rounded-2xl gap-3">
+                {leads.map((lead, index) => (
+                  <View 
+                    key={`lead-${lead.id}`} 
+                    className={`py-2 ${
+                      index === leads.length - 1 ? "" : "border-b border-border/10 dark:border-border-dark/10 pb-3"
+                    }`}
+                  >
+                    <View className="flex-row justify-between items-center">
+                      <TouchableOpacity 
+                        onPress={() => {
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          setSelectedLeadForModal(lead)
+                        }}
+                        className="flex-1 pr-2 active:opacity-75"
+                      >
+                        <View className="flex-row items-center gap-2 flex-wrap">
+                          <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">{lead.name}</Text>
+                          {lead.room_no && (
+                            <View className="bg-primary/10 dark:bg-primary-dark/20 px-2 py-0.5 rounded-full border border-primary/20 dark:border-primary-dark/20">
+                              <Text className="text-[10px] font-black text-primary dark:text-primary-dark uppercase">
+                                {lead.room_no}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        
+                        <Text className="text-[11px] text-muted dark:text-muted-dark font-medium mt-1">
+                          {lead.room_type ? lead.room_type.toUpperCase() : "AC/Non-AC"} • {lead.sharing_preference || "Any Sharing"}
+                        </Text>
+                        <Text className="text-[11px] text-muted dark:text-muted-dark font-medium mt-0.5">
+                          Expected Move-in: {lead.move_in_date || "Flexible"}
+                        </Text>
+                      </TouchableOpacity>
+                      
+                      <View className="flex-row items-center gap-2">
+                        <TouchableOpacity
+                          onPress={() => {
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                            if (lead.phone) {
+                              void Linking.openURL(`tel:${lead.phone}`)
+                            }
+                          }}
+                          className="p-2.5 bg-primary/10 dark:bg-primary-dark/15 rounded-full active:opacity-80"
+                        >
+                          <Phone size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                        </TouchableOpacity>
+                        
+                        <TouchableOpacity
+                          onPress={() => {
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                            if (lead.phone) {
+                              const cleanPhoneNum = lead.phone.replace(/\D/g, '')
+                              void Linking.openURL(`https://wa.me/${cleanPhoneNum}`)
+                            }
+                          }}
+                          className="p-2.5 bg-success/10 dark:bg-success-dark/15 rounded-full active:opacity-80"
+                        >
+                          <MessageCircle size={14} color={isDark ? "#34d399" : "#10b981"} />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+
       </ScrollView>
+
+      {/* Lead Details Modal popup */}
+      <Modal
+        visible={selectedLeadForModal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedLeadForModal(null)}
+      >
+        <TouchableOpacity 
+          activeOpacity={1} 
+          onPress={() => setSelectedLeadForModal(null)}
+          className="flex-1 bg-black/60 justify-center items-center p-6"
+        >
+          <TouchableOpacity 
+            activeOpacity={1} 
+            onPress={(e) => e.stopPropagation()}
+            className="w-full max-w-xs bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl overflow-hidden shadow-2xl"
+          >
+            {selectedLeadForModal && (
+              <View>
+                {/* Header */}
+                <View className="px-4 pt-4 pb-3 border-b border-border/10 dark:border-border-dark/10 flex-row justify-between items-center">
+                  <Text className="text-sm font-black text-foreground dark:text-foreground-dark flex-1" numberOfLines={1}>
+                    Lead Details
+                  </Text>
+                  <TouchableOpacity 
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      setSelectedLeadForModal(null)
+                    }}
+                    className="p-1 bg-muted/10 dark:bg-muted-dark/10 rounded-full"
+                  >
+                    <X size={14} color={isDark ? "#9ca3af" : "#6b7280"} />
+                  </TouchableOpacity>
+                </View>
+
+                {/* Details Section */}
+                <View className="p-4 gap-3">
+                  <View className="flex-row justify-between items-center">
+                    <Text className="text-xs text-muted dark:text-muted-dark font-medium">Name</Text>
+                    <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">{selectedLeadForModal.name}</Text>
+                  </View>
+
+                  <View className="flex-row justify-between items-center">
+                    <Text className="text-xs text-muted dark:text-muted-dark font-medium">Room Preference</Text>
+                    {selectedLeadForModal.room_no ? (
+                      <View className="bg-primary/10 dark:bg-primary-dark/20 px-2 py-0.5 rounded-full border border-primary/20 dark:border-primary-dark/20">
+                        <Text className="text-[10px] font-black text-primary dark:text-primary-dark uppercase">
+                          {selectedLeadForModal.room_no}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Not Selected</Text>
+                    )}
+                  </View>
+
+                  <View className="flex-row justify-between items-center">
+                    <Text className="text-xs text-muted dark:text-muted-dark font-medium">Room Type</Text>
+                    <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                      {selectedLeadForModal.room_type ? selectedLeadForModal.room_type.toUpperCase() : "AC/Non-AC"}
+                    </Text>
+                  </View>
+
+                  <View className="flex-row justify-between items-center">
+                    <Text className="text-xs text-muted dark:text-muted-dark font-medium">Sharing</Text>
+                    <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                      {selectedLeadForModal.sharing_preference || "Any Sharing"}
+                    </Text>
+                  </View>
+
+                  <View className="flex-row justify-between items-center">
+                    <Text className="text-xs text-muted dark:text-muted-dark font-medium">Expected Move-in</Text>
+                    <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                      {selectedLeadForModal.move_in_date || "Flexible"}
+                    </Text>
+                  </View>
+
+                  <View className="flex-row justify-between items-center border-t border-border/10 dark:border-border-dark/10 pt-3">
+                    <Text className="text-xs text-muted dark:text-muted-dark font-medium">Phone Number</Text>
+                    <View className="flex-row items-center gap-1.5">
+                      <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">{selectedLeadForModal.phone}</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          Clipboard.setString(selectedLeadForModal.phone)
+                          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+                          setCopiedPhoneLeadId(selectedLeadForModal.id)
+                          setTimeout(() => setCopiedPhoneLeadId(null), 2000)
+                        }}
+                        className="p-1.5 bg-muted/10 dark:bg-muted-dark/10 rounded-md"
+                      >
+                        {copiedPhoneLeadId === selectedLeadForModal.id ? (
+                          <Check size={12} color="#10b981" />
+                        ) : (
+                          <Copy size={12} color={isDark ? "#9ca3af" : "#6b7280"} />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Bottom Action Buttons (50-50 rectangular buttons with rounded corners) */}
+                <View className="flex-row border-t border-border/15 dark:border-border-dark/15 h-12">
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      if (selectedLeadForModal.phone) {
+                        void Linking.openURL(`tel:${selectedLeadForModal.phone}`)
+                      }
+                    }}
+                    className="flex-1 bg-primary/5 dark:bg-primary-dark/5 items-center justify-center border-r border-border/15 dark:border-border-dark/15 active:bg-primary/10 dark:active:bg-primary-dark/10"
+                  >
+                    <View className="flex-row items-center gap-1.5">
+                      <Phone size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                      <Text className="text-xs font-bold text-primary dark:text-primary-dark">Call Now</Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    onPress={() => {
+                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      if (selectedLeadForModal.phone) {
+                        const cleanPhoneNum = selectedLeadForModal.phone.replace(/\D/g, '')
+                        void Linking.openURL(`https://wa.me/${cleanPhoneNum}`)
+                      }
+                    }}
+                    className="flex-1 bg-success/5 dark:bg-success-dark/5 items-center justify-center active:bg-success/10 dark:active:bg-success-dark/10"
+                  >
+                    <View className="flex-row items-center gap-1.5">
+                      <MessageCircle size={14} color={isDark ? "#34d399" : "#10b981"} />
+                      <Text className="text-xs font-bold text-success dark:text-success-dark">Open Chat</Text>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Failed Notices Modal popup */}
+      <Modal
+        visible={failedNoticesModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFailedNoticesModalVisible(false)}
+      >
+        <TouchableOpacity 
+          activeOpacity={1} 
+          onPress={() => setFailedNoticesModalVisible(false)}
+          className="flex-1 bg-black/60 justify-center items-center p-6"
+        >
+          <TouchableOpacity 
+            activeOpacity={1} 
+            onPress={(e) => e.stopPropagation()}
+            className="w-full max-w-sm bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl overflow-hidden shadow-2xl"
+          >
+            <View className="max-h-[80%]">
+              {/* Header */}
+              <View className="px-4 py-3 border-b border-border/10 dark:border-border-dark/10 flex-row justify-between items-center bg-card dark:bg-card-dark">
+                <View>
+                  <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
+                    Failed Reminders
+                  </Text>
+                  <Text className="text-[10px] text-muted dark:text-muted-dark mt-0.5">
+                    {failedNotices.length} notifications failed to send
+                  </Text>
+                </View>
+                <TouchableOpacity 
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    setFailedNoticesModalVisible(false)
+                  }}
+                  className="p-1 bg-muted/10 dark:bg-muted-dark/10 rounded-full"
+                >
+                  <X size={14} color={isDark ? "#9ca3af" : "#6b7280"} />
+                </TouchableOpacity>
+              </View>
+
+              {/* List */}
+              <ScrollView 
+                className="p-4" 
+                contentContainerStyle={{ paddingBottom: 20 }}
+                showsVerticalScrollIndicator={false}
+              >
+                {failedNotices.map((item, index) => (
+                  <View 
+                    key={`failed-notice-${item.id}`}
+                    className={`py-3 ${
+                      index === failedNotices.length - 1 ? "" : "border-b border-border/10 dark:border-border-dark/10"
+                    }`}
+                  >
+                    <View className="flex-row justify-between items-start">
+                      <View className="flex-1 pr-2">
+                        <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                          {item.name}
+                        </Text>
+                        
+                        <View className="flex-row items-center gap-1 mt-1.5 flex-wrap">
+                          <Text className="text-[10px] font-mono text-muted dark:text-muted-dark">{item.phone}</Text>
+                          <TouchableOpacity
+                            onPress={() => {
+                              Clipboard.setString(item.phone)
+                              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+                              setCopiedPhoneTenantId(item.id)
+                              setTimeout(() => setCopiedPhoneTenantId(null), 2000)
+                            }}
+                            className="p-1 bg-muted/10 dark:bg-muted-dark/10 rounded-md"
+                          >
+                            {copiedPhoneTenantId === item.id ? (
+                              <Check size={10} color="#10b981" />
+                            ) : (
+                              <Copy size={10} color={isDark ? "#9ca3af" : "#6b7280"} />
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                        
+                        <Text className="text-[10px] text-destructive dark:text-destructive/85 font-medium mt-1 leading-4">
+                          Reason: {item.reason}
+                        </Text>
+                      </View>
+
+                      {/* Fallback Manual WhatsApp Button */}
+                      <TouchableOpacity
+                        onPress={() => {
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          const cleanPhoneNum = item.phone.replace(/[^0-9]/g, "")
+                          const formattedPhone = cleanPhoneNum.length === 10 ? "91" + cleanPhoneNum : cleanPhoneNum
+                          const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(item.message)}`
+                          void Linking.openURL(url)
+                        }}
+                        className="p-2.5 bg-success/10 dark:bg-success-dark/15 rounded-full active:opacity-80 justify-center items-center"
+                      >
+                        <MessageCircle size={15} color={isDark ? "#34d399" : "#10b981"} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+
+              {/* Close Button */}
+              <TouchableOpacity
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                  setFailedNoticesModalVisible(false)
+                }}
+                className="w-full h-12 bg-primary items-center justify-center active:opacity-90"
+              >
+                <Text className="text-white text-xs font-bold uppercase tracking-wider">
+                  Close Review
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       {/* Custom Range Selection Modal */}
       <Modal
@@ -2028,6 +2687,8 @@ export default function DashboardScreen() {
       <Modal
         animationType="none"
         transparent={true}
+        statusBarTranslucent={true}
+        navigationBarTranslucent={true}
         visible={paymentDetailModalVisible}
         onRequestClose={() => setPaymentDetailModalVisible(false)}
       >
@@ -2038,11 +2699,18 @@ export default function DashboardScreen() {
             onPress={() => setPaymentDetailModalVisible(false)}
             className="absolute inset-0 bg-black/60"
           />
+          {/* Bottom edge fill to cover nav bar gap */}
+          <View className="absolute bottom-0 left-0 right-0 h-12 bg-card dark:bg-card-dark" />
           
-          <View 
-            className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[96%] border-t border-border dark:border-border-dark px-6 pt-6 flex-col" 
-            style={{ paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom - 10, 8) : 8 }}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            keyboardVerticalOffset={0}
+            className="w-full"
           >
+            <View 
+              className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[96%] border-t border-border dark:border-border-dark px-6 pt-6 flex-col" 
+              style={{ paddingBottom: Platform.OS === "ios" ? Math.max(insets.bottom, 4) : 4 }}
+            >
             {selectedPayment && (
               <View className="flex-col max-h-full">
                 {/* Header */}
@@ -2071,7 +2739,7 @@ export default function DashboardScreen() {
                 <ScrollView 
                   showsVerticalScrollIndicator={false} 
                   contentContainerStyle={{ gap: 16, paddingBottom: 16 }} 
-                  className="flex-shrink flex-grow-0 mb-4"
+                  className="flex-shrink flex-grow-0 mb-2"
                 >
                   {/* Timeline Tracker */}
                   <View className="bg-muted/10 border border-border dark:border-border-dark p-4 rounded-3xl">
@@ -2336,7 +3004,7 @@ export default function DashboardScreen() {
                 </ScrollView>
 
                 {/* Primary Actions Footer */}
-                <View className="flex-row gap-3 border-t border-border/40 pt-4 flex-wrap pb-0">
+                <View className="flex-row gap-3 border-t border-border/40 pt-2 flex-wrap pb-0">
                   {/* Delete Button */}
                   <TouchableOpacity
                     onPress={() => handleDeletePayment(selectedPayment.id)}
@@ -2349,9 +3017,18 @@ export default function DashboardScreen() {
                   {(selectedPayment.status === "pending" || selectedPayment.status === "late") && (
                     <TouchableOpacity
                       onPress={() => handleWhatsAppReminder(selectedPayment)}
-                      className="h-12 w-12 border border-success/20 bg-success/5 rounded-xl items-center justify-center active:scale-95"
+                      disabled={isSendingSingleWhatsApp}
+                      className={`h-12 w-12 border rounded-xl items-center justify-center active:scale-95 ${
+                        isSendingSingleWhatsApp 
+                          ? "border-slate-300 bg-slate-100 dark:bg-slate-800 opacity-60" 
+                          : "border-success/20 bg-success/5"
+                      }`}
                     >
-                      <MessageCircle size={18} color="#10b981" />
+                      {isSendingSingleWhatsApp ? (
+                        <ActivityIndicator size="small" color="#10b981" />
+                      ) : (
+                        <MessageCircle size={18} color="#10b981" />
+                      )}
                     </TouchableOpacity>
                   )}
 
@@ -2388,7 +3065,8 @@ export default function DashboardScreen() {
                 </View>
               </View>
             )}
-          </View>
+            </View>
+          </KeyboardAvoidingView>
           {paymentDetailModalVisible && renderToast()}
         </View>
       </Modal>
@@ -2488,7 +3166,8 @@ export default function DashboardScreen() {
             className="absolute inset-0"
           />
           <KeyboardAvoidingView
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior="padding"
+            keyboardVerticalOffset={0}
             style={{ width: "100%", maxWidth: 448, marginLeft: "auto", marginRight: "auto" }}
           >
             <View className="bg-card dark:bg-card-dark border-t border-slate-200 dark:border-slate-800 rounded-t-[32px] p-6 shadow-2xl">

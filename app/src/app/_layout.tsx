@@ -3,6 +3,7 @@ import { Stack } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import * as SystemUI from "expo-system-ui"
 import * as WebBrowser from "expo-web-browser"
+import { enableFreeze } from "react-native-screens"
 import { GestureHandlerRootView } from "react-native-gesture-handler"
 import { QueryClientProvider } from "@tanstack/react-query"
 import { AuthProvider, useAuth } from "@/context/auth"
@@ -15,6 +16,7 @@ import "../global.css"
 // as soon as the JS bundle loads. On web this completes the auth redirect;
 // on native it helps dismiss the in-app browser after the redirect fires.
 WebBrowser.maybeCompleteAuthSession()
+enableFreeze(true)
 
 export default function RootLayout() {
   return (

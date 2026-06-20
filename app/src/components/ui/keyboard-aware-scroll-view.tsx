@@ -123,10 +123,10 @@ export function KeyboardAwareScrollView({
 
       const windowHeight = Dimensions.get("window").height
       const visibleTop = scrollRect.y
-      const visibleBottom =
-        keyboardHeight > 0
-          ? windowHeight - keyboardHeight - extraScrollHeight
-          : scrollRect.y + (viewportHeight.current || scrollRect.height)
+      const visibleBottom = Math.min(
+        scrollRect.y + (viewportHeight.current || scrollRect.height),
+        keyboardHeight > 0 ? windowHeight - keyboardHeight : windowHeight
+      ) - extraScrollHeight
 
       const inputTop = inputRect.y
       const inputBottom = inputRect.y + inputRect.height

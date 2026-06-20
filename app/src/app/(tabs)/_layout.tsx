@@ -10,7 +10,8 @@ export default function TabLayout() {
         tabBar={(props) => <PremiumBottomNavigation {...props} />}
         screenOptions={{
           headerShown: false,
-          lazy: true,
+          lazy: false,
+          freezeOnBlur: true,
           tabBarHideOnKeyboard: true,
         }}
       >

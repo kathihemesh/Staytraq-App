@@ -45,7 +45,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle()
 
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("Onboarding check timeout")), 3500)
+        setTimeout(() => reject(new Error("Onboarding check timeout")), 15000)
       )
 
       const response = await Promise.race([fetchPromise, timeoutPromise]) as any
@@ -54,9 +54,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return onboarded
     } catch (error) {
       console.error("Onboarding status check failed/timed out:", error)
-      // Set status to not_onboarded as safe fallback on errors so app doesn't freeze
-      setOnboardingStatus("not_onboarded")
-      return false
+      // Safe fallback: assume onboarded on transient network errors/timeouts so users aren't locked out
+      setOnboardingStatus("onboarded")
+      return true
     }
   }, [])
 
