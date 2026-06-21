@@ -8,7 +8,7 @@ echo.
 
 :: 1. Start Docker Containers
 echo [1/3] Starting Docker containers (Evolution, Redis, Postgres, Redis Insight)...
-cd /d "c:\Staytraq App\evolution"
+cd /d "c:\Staytraq App\chatbot\evolution"
 docker compose up -d
 if %errorlevel% neq 0 (
     echo.
@@ -25,7 +25,7 @@ timeout /t 5 /nobreak > nul
 echo.
 :: 3. Start FastAPI Server in a separate window
 echo [3/3] Launching FastAPI Backend Server in a new window...
-cd /d "c:\Staytraq App\backend"
+cd /d "c:\Staytraq App\chatbot\backend"
 start "FastAPI Backend Server Logs" cmd /k "python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 echo.

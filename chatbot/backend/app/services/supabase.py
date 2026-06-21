@@ -299,4 +299,77 @@ class SupabaseService:
                 logger.error(f"Error verifying token: {e}")
         return None
 
+    async def get_or_create_payment_link(self, owner_id: str, month: int, year: int) -> str:
+        """Retrieves or creates a monthly payment portal token for the given owner, month, and year."""
+        url = f"{self.url}/rest/v1/monthly_payment_links?owner_id=eq.{owner_id}&month=eq.{month}&year=eq.{year}&select=portal_token"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, headers=self.headers, timeout=10.0)
+                if response.status_code == 200:
+                    records = response.json()
+                    if records:
+                        return records[0].get("portal_token")
+            except Exception as e:
+                logger.error(f"Error fetching monthly payment link: {e}")
+                
+        # If not found, generate and insert a new one
+        import secrets
+        portal_token = secrets.token_urlsafe(9)  # Generates ~12 char alphanumeric token
+        
+        insert_url = f"{self.url}/rest/v1/monthly_payment_links"
+        payload = {
+            "owner_id": owner_id,
+            "month": month,
+            "year": year,
+            "portal_token": portal_token
+        }
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                # Use Prefer: return=representation to get the inserted row back
+                headers = {**self.headers, "Prefer": "return=representation"}
+                response = await client.post(insert_url, json=payload, headers=headers, timeout=10.0)
+                if response.status_code in [200, 201]:
+                    records = response.json()
+                    if records:
+                        return records[0].get("portal_token")
+                elif response.status_code == 409: # Conflict, already created
+                    response_retry = await client.get(url, headers=self.headers, timeout=10.0)
+                    if response_retry.status_code == 200:
+                        records = response_retry.json()
+                        if records:
+                            return records[0].get("portal_token")
+            except Exception as e:
+                logger.error(f"Error inserting monthly payment link: {e}")
+                
+        return None
+
+    async def get_payment_by_id(self, payment_id: int) -> dict:
+        """Retrieves payment details by payment ID."""
+        url = f"{self.url}/rest/v1/payments?id=eq.{payment_id}&select=id,tenant_id,owner_id,month,year,rent_amount,extra_charges,total_amount"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, headers=self.headers, timeout=10.0)
+                if response.status_code == 200:
+                    records = response.json()
+                    if records:
+                        return records[0]
+            except Exception as e:
+                logger.error(f"Error fetching payment by id {payment_id}: {e}")
+        return None
+
+    async def get_tenant_by_id(self, tenant_id: int) -> dict:
+        """Retrieves tenant details by tenant ID."""
+        url = f"{self.url}/rest/v1/tenants_table?id=eq.{tenant_id}&select=id,name,mobile_number"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, headers=self.headers, timeout=10.0)
+                if response.status_code == 200:
+                    records = response.json()
+                    if records:
+                        return records[0]
+            except Exception as e:
+                logger.error(f"Error fetching tenant by id {tenant_id}: {e}")
+        return None
+
 supabase_service = SupabaseService()

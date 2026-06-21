@@ -97,25 +97,35 @@ class ChatbotService:
     def __init__(self):
         self.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         self.session_ttl = 259200  # Sessions expire in 3 days (3 * 24 * 3600)
-        self.pg_info = self._load_pg_info()
-
-    def _load_pg_info(self) -> dict:
-        """Loads static rules and menus from pg_info.json."""
-        try:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            path = os.path.join(current_dir, "..", "pg_info.json")
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading pg_info.json: {e}")
-        return {}
 
     def _get_owner_pg_info(self, owner_email: str) -> dict:
         """Helper to get static info for a specific owner or fallback to default."""
-        if owner_email and owner_email in self.pg_info:
-            return self.pg_info[owner_email]
-        return self.pg_info.get("default", {})
+        email = (owner_email or "").strip().lower()
+        
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        configs_dir = os.path.abspath(os.path.join(current_dir, "..", "pg_configs"))
+        
+        # Build path to owner's JSON file
+        owner_file_path = os.path.join(configs_dir, f"{email}.json")
+        default_file_path = os.path.join(configs_dir, "default.json")
+        
+        # Try loading owner-specific config first
+        if email and os.path.exists(owner_file_path):
+            try:
+                with open(owner_file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading owner pg info from {owner_file_path}: {e}")
+                
+        # Fallback to default.json
+        if os.path.exists(default_file_path):
+            try:
+                with open(default_file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading default pg info from {default_file_path}: {e}")
+                
+        return {}
 
     async def get_session(self, sender_jid: str) -> dict:
         """Retrieves user conversation session from Redis."""
@@ -424,14 +434,27 @@ class ChatbotService:
             owner_settings = await supabase_service.get_owner_settings(owner_id)
 
             # Format rent context
-            rent_context = "Rent payment details not found."
+            rent_context = "No payment records or bills have been generated for you yet. This means you do not have any pending payments at this time."
             if latest_payment:
                 status = latest_payment.get("status", "pending")
                 amount = latest_payment.get("total_amount") or latest_payment.get("rent_amount", 0)
                 due_date = latest_payment.get("due_date", "N/A")
                 month = latest_payment.get("month", 0)
                 year = latest_payment.get("year", 0)
-                rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status}."
+                
+                if status == "paid":
+                    rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: paid. You do not have any pending payments."
+                else:
+                    # Fetch/create payment link
+                    portal_token = await supabase_service.get_or_create_payment_link(owner_id, month, year)
+                    if portal_token:
+                        payment_link = f"https://staytraq.vercel.app/pay/{portal_token}"
+                        rent_context = (
+                            f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status}.\n"
+                            f"Payment Submission Link: {payment_link}"
+                        )
+                    else:
+                        rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status}."
 
             # Format complaints context
             complaints_context = "No recent complaints found."
@@ -486,9 +509,10 @@ class ChatbotService:
                 "Guidelines:\n"
                 "- If the tenant mentions any issue, problem, request for repair, or complaint (e.g. 'fan not working', 'tap leaking'), you MUST immediately register it. Set intents to include 'register_complaint', extract the complaint description into 'complaint_message', and assign the correct category (Electricity, Water, Internet, or Other). Do NOT ask the user for confirmation or permission first. Register it directly and inform them in the reply that you have registered it.\n"
                 "- If the message contains multiple intents (e.g. asking for rent AND registering a complaint), include all matching intents in the 'intents' list.\n"
-                "- If the tenant asks about their rent, payment instructions, UPI details, late fees, or grace periods, set intents to include 'check_rent' and answer based on Rent Info and Owner Settings.\n"
+                "- If the tenant asks about their rent, pending bills, or payment instructions, set intents to include 'check_rent' and answer based on Rent Info and Owner Settings. You MUST prioritize sending the Payment Submission Link from the context for pending/late payments. Do NOT mention direct UPI Details (UPI ID / name) unless the tenant specifically asks for direct bank details or has trouble using the link.\n"
                 "- If the tenant asks about their complaints status, set intents to include 'check_status'.\n"
                 "- For other questions (rules, food menu, WiFi, emergency contacts, maintenance, simple greetings), set intents to include 'general_query'.\n"
+                "- Context is Ground Truth: The information in the static context above (Rent/Payment info, Owner Settings, Rules, Food Menu, WiFi, Emergency Contacts, etc.) is the absolute current ground truth. If the context changes, you MUST immediately adopt the new value from the context and ignore any conflicting older values in the chat history.\n"
                 "- Stay friendly, polite, and professional."
             )
         else:
@@ -629,6 +653,10 @@ class ChatbotService:
                 "- Owner's personal name → never reveal. Only use PG name.\n"
                 "- Maintenance fees / deposits → only share if they explicitly ask. If they ask before picking a room, share the default and say it may vary by room.\n"
                 "- Visiting → ask them to call the PG first to check availability. Hours: 10 AM–6 PM, Mon–Sun.\n"
+                "\n"
+                "Context is Ground Truth:\n"
+                "- The information in the static context above (PG Name, Address, Rooms, Rules, Food Menu, etc.) is the absolute current ground truth.\n"
+                "- If the context changes (e.g., PG Name or Address is updated in the context compared to what you or the user said earlier in the history), you MUST immediately adopt the new value from the context and ignore any conflicting older values in the chat history.\n"
                 "\n"
                 "One question at a time. Never ask two things in one message.\n"
                 "\n"

@@ -1,5 +1,5 @@
 # Environment files
-backend/.env
-backend/.env.example
-evolution/.env
-evolution/.env.example
+chatbot/backend/.env
+chatbot/backend/.env.example
+chatbot/evolution/.env
+chatbot/evolution/.env.example

@@ -111,3 +111,113 @@ async def send_whatsapp_notice(payload: SendNoticeRequest, authorization: str = 
             status_code=500,
             detail="Failed to send message via Evolution API"
         )
+
+class PaymentRejectionRequest(BaseModel):
+    payment_id: int
+    rejection_reason: str = ""
+
+@router.post("/send-payment-rejection")
+async def send_payment_rejection(payload: PaymentRejectionRequest, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid Authorization header"
+        )
+    
+    token = authorization.split(" ")[1]
+    user_data = await supabase_service.verify_token(token)
+    if not user_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Supabase JWT token"
+        )
+        
+    owner_email = user_data.get("email")
+    if not owner_email:
+        raise HTTPException(
+            status_code=400,
+            detail="User email not found in auth token"
+        )
+        
+    # Check if chatbot is enabled for this owner
+    owner = await supabase_service.get_owner_by_email(owner_email)
+    if not owner or not owner.get("chatbot_enabled"):
+        raise HTTPException(
+            status_code=403,
+            detail="Chatbot is not enabled for this owner account."
+        )
+
+    # 1. Fetch payment record
+    payment = await supabase_service.get_payment_by_id(payload.payment_id)
+    if not payment:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Payment record not found for ID: {payload.payment_id}"
+        )
+        
+    tenant_id = payment.get("tenant_id")
+    owner_id = payment.get("owner_id")
+    month = payment.get("month")
+    year = payment.get("year")
+    amount = payment.get("total_amount") or payment.get("rent_amount", 0)
+
+    # 2. Fetch tenant record
+    tenant = await supabase_service.get_tenant_by_id(tenant_id)
+    if not tenant:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tenant not found for ID: {tenant_id}"
+        )
+        
+    tenant_name = tenant.get("name", "Resident")
+    phone = tenant.get("mobile_number")
+    if not phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant does not have a registered mobile number."
+        )
+
+    # 3. Retrieve or create payment link
+    portal_token = await supabase_service.get_or_create_payment_link(owner_id, month, year)
+    if not portal_token:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate resubmission portal link."
+        )
+        
+    payment_link = f"https://staytraq.vercel.app/pay/{portal_token}"
+    
+    # 4. Construct message
+    months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    month_name = months[month - 1] if 1 <= month <= 12 else f"Month {month}"
+    
+    message = (
+        f"Hi {tenant_name},\n\n"
+        f"⚠️ *Your payment submission has been rejected.*\n\n"
+        f"📋 *Bill Details*:\n"
+        f"- Month: {month_name} {year}\n"
+        f"- Amount: ₹{amount}\n"
+    )
+    
+    if payload.rejection_reason and payload.rejection_reason.strip():
+        message += f"- Reason: {payload.rejection_reason.strip()}\n"
+        
+    message += f"\n🔗 Please resubmit your payment and upload correct proof here: {payment_link}\n\nThank you!"
+
+    clean_phone = phone.replace("+", "").replace(" ", "").replace("-", "")
+    if len(clean_phone) == 10:
+        clean_phone = "91" + clean_phone
+        
+    # 5. Send message via Evolution client
+    success = await evolution_client.send_text_message(
+        instance_name=owner_email,
+        number=clean_phone,
+        text=message
+    )
+    if success:
+        return {"status": "success"}
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to deliver WhatsApp rejection message."
+        )
