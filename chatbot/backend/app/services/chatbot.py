@@ -6,6 +6,7 @@ import redis.asyncio as aioredis
 from app.config import settings
 from app.services.supabase import supabase_service
 from app.services.llm import get_llm_provider
+from app.custom_addons import get_addon_for_owner
 
 logger = logging.getLogger("backend.services.chatbot")
 
@@ -384,6 +385,37 @@ class ChatbotService:
         Orchestrates AI chatbot logic. Matches owner email, identifies user type,
         queries database contexts, calls LLM, executes backend intents, and saves state.
         """
+        # 0. Check global blocklist first
+        clean_phone = "".join(c for c in sender_jid.split("@")[0] if c.isdigit())
+        
+        # Normalize clean phone (e.g. prepending 91 to 10-digit Indian numbers)
+        norm_phone = clean_phone
+        if len(clean_phone) == 10:
+            norm_phone = "91" + clean_phone
+
+        global_blocklist = []
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        configs_dir = os.path.abspath(os.path.join(current_dir, "..", "pg_configs"))
+        global_blocklist_path = os.path.join(configs_dir, "blocklist.json")
+        if os.path.exists(global_blocklist_path):
+            try:
+                with open(global_blocklist_path, "r", encoding="utf-8") as f:
+                    global_blocklist = json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading global blocklist: {e}")
+        
+        # Normalize global blocklist numbers for comparison
+        norm_global = []
+        for num in global_blocklist:
+            n = "".join(c for c in str(num) if c.isdigit())
+            if len(n) == 10:
+                n = "91" + n
+            norm_global.append(n)
+        
+        if norm_phone in norm_global:
+            logger.info(f"Ignoring message from globally blocked number: {clean_phone}")
+            return None
+
         # 1. Look up Owner by email (instance_name)
         owner_record = await supabase_service.get_owner_by_email(instance_name)
         if not owner_record:
@@ -399,7 +431,6 @@ class ChatbotService:
         owner_name = owner_record.get("name", "PG Manager")
 
         # 2. Determine User Type (Tenant vs Customer)
-        clean_phone = "".join(c for c in sender_jid.split("@")[0] if c.isdigit())
         tenant_record = await supabase_service.get_active_tenant(clean_phone, owner_id)
         is_tenant = tenant_record is not None
 
@@ -410,6 +441,23 @@ class ChatbotService:
 
         # 4. Fetch DB and Configuration Contexts
         static_info = self._get_owner_pg_info(instance_name)
+        
+        # Check owner-specific blocklist
+        owner_blocklist = static_info.get("blocklist") or []
+        norm_owner = []
+        for num in owner_blocklist:
+            n = "".join(c for c in str(num) if c.isdigit())
+            if len(n) == 10:
+                n = "91" + n
+            norm_owner.append(n)
+
+        if norm_phone in norm_owner:
+            logger.info(f"Ignoring message from owner-blocked number: {clean_phone} for instance: {instance_name}")
+            return None
+
+        # Load custom addon for owner if it exists
+        addon = get_addon_for_owner(instance_name)
+
         pg_rules = static_info.get("rules", "Please follow standard code of conduct.")
         food_menu = static_info.get("food_menu", "Food details not configured yet.")
         amenities = static_info.get("amenities", "WIFI, CCTV, Washing Machine")
@@ -429,6 +477,9 @@ class ChatbotService:
             tenant_id = tenant_record.get("id")
             
             # Fetch context from DB for Tenant
+            pg_details = await supabase_service.get_pg_details(owner_id)
+            pg_name = pg_details[0].get("pg_name", "Staytraq PG") if pg_details else "Staytraq PG"
+            
             latest_payment = await supabase_service.get_latest_payment(tenant_id)
             recent_complaints = await supabase_service.get_complaints(owner_id, clean_phone)
             owner_settings = await supabase_service.get_owner_settings(owner_id)
@@ -442,19 +493,30 @@ class ChatbotService:
                 month = latest_payment.get("month", 0)
                 year = latest_payment.get("year", 0)
                 
+                # Map raw DB statuses to human-friendly descriptions for the LLM
+                status_display = status
+                if status == "submitted":
+                    status_display = "Under Review (payment proof has been submitted and is awaiting verification by the owner)"
+                elif status == "late":
+                    status_display = "Late (overdue and unpaid)"
+                elif status == "pending":
+                    status_display = "Pending (not yet paid)"
+
                 if status == "paid":
-                    rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: paid. You do not have any pending payments."
+                    rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: Paid. You do not have any pending payments."
+                elif status == "submitted":
+                    rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status_display}. The tenant does NOT need to pay again or resubmit — the owner will verify the proof as soon as possible."
                 else:
-                    # Fetch/create payment link
+                    # Fetch/create payment link for pending/late statuses
                     portal_token = await supabase_service.get_or_create_payment_link(owner_id, month, year)
                     if portal_token:
                         payment_link = f"https://staytraq.vercel.app/pay/{portal_token}"
                         rent_context = (
-                            f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status}.\n"
+                            f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status_display}.\n"
                             f"Payment Submission Link: {payment_link}"
                         )
                     else:
-                        rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status}."
+                        rent_context = f"Latest bill: Month {month}/{year}, Amount: {amount}, Due Date: {due_date}, Status: {status_display}."
 
             # Format complaints context
             complaints_context = "No recent complaints found."
@@ -482,6 +544,7 @@ class ChatbotService:
             # Build context string
             context = (
                 f"Tenant Name: {tenant_name}\n"
+                f"PG Name: {pg_name}\n"
                 f"PG Owner: {owner_name}\n"
                 f"Owner Settings:\n{settings_context}\n"
                 f"Rent/Payment Info: {rent_context}\n"
@@ -495,7 +558,7 @@ class ChatbotService:
 
             # System prompt for Tenants
             system_prompt = (
-                "You are an AI assistant for a PG accommodation management system, representing the PG Owner/Manager.\n"
+                f"You are the virtual assistant for {pg_name}, representing the PG Owner/Manager.\n"
                 "Your role is to support existing tenants with: complaint registration, complaint status checking, rent/payment details, PG rules, food menus, WiFi credentials, emergency contacts, and maintenance schedules.\n"
                 "You MUST respond ONLY in a JSON object with this exact schema:\n"
                 "{\n"
@@ -507,9 +570,11 @@ class ChatbotService:
                 "  }\n"
                 "}\n"
                 "Guidelines:\n"
+                f"- When greeting or welcoming the tenant (e.g. hello/hi), welcome them warmly representing {pg_name} (e.g., 'Hello! Welcome to {pg_name}. How can I assist you today?').\n"
                 "- If the tenant mentions any issue, problem, request for repair, or complaint (e.g. 'fan not working', 'tap leaking'), you MUST immediately register it. Set intents to include 'register_complaint', extract the complaint description into 'complaint_message', and assign the correct category (Electricity, Water, Internet, or Other). Do NOT ask the user for confirmation or permission first. Register it directly and inform them in the reply that you have registered it.\n"
                 "- If the message contains multiple intents (e.g. asking for rent AND registering a complaint), include all matching intents in the 'intents' list.\n"
                 "- If the tenant asks about their rent, pending bills, or payment instructions, set intents to include 'check_rent' and answer based on Rent Info and Owner Settings. You MUST prioritize sending the Payment Submission Link from the context for pending/late payments. Do NOT mention direct UPI Details (UPI ID / name) unless the tenant specifically asks for direct bank details or has trouble using the link.\n"
+                "- If the payment status is 'Under Review', tell the tenant that their payment proof has been submitted and is currently under review by the owner/manager, who will verify it as soon as possible. Do NOT ask them to pay again or resubmit unless the status is explicitly pending or late.\n"
                 "- If the tenant asks about their complaints status, set intents to include 'check_status'.\n"
                 "- For other questions (rules, food menu, WiFi, emergency contacts, maintenance, simple greetings), set intents to include 'general_query'.\n"
                 "- Context is Ground Truth: The information in the static context above (Rent/Payment info, Owner Settings, Rules, Food Menu, WiFi, Emergency Contacts, etc.) is the absolute current ground truth. If the context changes, you MUST immediately adopt the new value from the context and ignore any conflicting older values in the chat history.\n"
@@ -685,6 +750,11 @@ class ChatbotService:
                 "- \"submit_lead\" → customer confirmed final notification to PG owner."
             )
  
+        # Apply custom addon hooks if present
+        if addon:
+            context = addon.modify_context(context, is_tenant, session)
+            system_prompt = addon.modify_system_prompt(system_prompt, is_tenant, session)
+
         # 5. Call LLM
         llm_provider = get_llm_provider()
         llm_prompt = f"Context:\n{context}\n\nUser Message: {text}"
@@ -861,6 +931,13 @@ class ChatbotService:
                     conv_state["awaiting_field"] = None
                     reply = self._build_room_selection_reply(lead_info, available_rooms)
                     original_reply = reply
+
+        # 6.5 Run Custom Addon Intent Handler if registered
+        if addon:
+            addon_reply = await addon.handle_custom_intents(intents, extracted, session, is_tenant)
+            if addon_reply:
+                reply += addon_reply
+                original_reply = reply
 
         # 7. Update History and Save Session (using clean original reply)
         session["history"].append({"role": "user", "content": text})

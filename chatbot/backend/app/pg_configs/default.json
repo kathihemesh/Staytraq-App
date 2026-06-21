@@ -6,5 +6,6 @@
   "emergency_contacts": "🚨 Emergency Contacts:\n- PG Manager (Hemesh): +91-7989610495\n- Electrician (Raju): +91-9876543210\n- Plumber (Suresh): +91-9876543211\n- Nearest Hospital (Apollo): +91-040-23607777\n- Police Control Room: 100\n- Fire Station: 101",
   "maintenance_schedule": "🔧 Maintenance Schedule:\n- Water tank cleaning: 1st Saturday of every month\n- Generator servicing: Every 3 months\n- Pest control: Last Sunday of every month\n- Common area deep cleaning: Every Sunday morning",
   "visiting_hours": "⏰ Visiting Hours:\n- 10:00 AM to 6:00 PM, Monday to Sunday\n- Note: Please call the PG manager first to check for vacancy/availability before scheduling a visit.",
-  "address": "Staytraq Premium PG, Near Tech Park Main Gate, Phase 2, Madhapur, Hyderabad, 500081. Location Link: https://maps.app.goo.gl/samplePGLocationLink"
+  "address": "Staytraq Premium PG, Near Tech Park Main Gate, Phase 2, Madhapur, Hyderabad, 500081. Location Link: https://maps.app.goo.gl/samplePGLocationLink",
+  "blocklist": []
 }

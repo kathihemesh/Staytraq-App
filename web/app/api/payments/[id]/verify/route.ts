@@ -90,6 +90,42 @@ export async function POST(
       notes: sanitizedNotes
     })
 
+    // If rejecting, send WhatsApp notification via chatbot backend if enabled
+    if (action === 'reject') {
+      try {
+        const { data: ownerData } = await supabase
+          .from('pg_owners')
+          .select('chatbot_enabled')
+          .eq('id', user.id)
+          .single()
+
+        if (ownerData?.chatbot_enabled) {
+          const chatbotApiUrl = process.env.CHATBOT_API_URL || 'http://localhost:8000'
+          const { data: { session } } = await supabase.auth.getSession()
+          const token = session?.access_token
+
+          if (token) {
+            await fetch(`${chatbotApiUrl}/api/v1/send-payment-rejection`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                payment_id: payment.id,
+                rejection_reason: sanitizedNotes || ''
+              })
+            }).catch(err => {
+              console.error('Failed to send rejection notice via chatbot API:', err)
+            })
+          }
+        }
+      } catch (chatbotErr) {
+        // Non-critical: don't fail the main response if chatbot notification fails
+        console.error('Error checking chatbot status or sending rejection notice:', chatbotErr)
+      }
+    }
+
     return NextResponse.json({ success: true })
 
   } catch (error) {

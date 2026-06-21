@@ -8,3 +8,7 @@ node_modules/
 .next/
 .env*.local
 .DS_Store
+
+# Local Onboarding Import Routes
+app/local-import/
+app/api/local-import/

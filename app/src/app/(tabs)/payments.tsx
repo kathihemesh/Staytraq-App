@@ -917,8 +917,32 @@ export default function PaymentsScreen() {
 
       setDetailModalVisible(false)
       setRejectingMode(false)
+      const currentRejectionReason = rejectNotes || ""
       setRejectNotes("")
       showToast("Payment Rejected", "The payment proof has been rejected.", "warning")
+
+      if (chatbotEnabled) {
+        void supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+          const token = currentSession?.access_token
+          if (token) {
+            const chatbotApiUrl = getChatbotApiUrl()
+            void fetch(`${chatbotApiUrl}/api/v1/send-payment-rejection`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                payment_id: payment.id,
+                rejection_reason: currentRejectionReason
+              })
+            }).catch(err => {
+              console.error("Failed to send rejection notice via chatbot API:", err)
+            })
+          }
+        })
+      }
+
       void fetchPayments(true)
     } catch (err) {
       console.error("Reject payment error:", err)

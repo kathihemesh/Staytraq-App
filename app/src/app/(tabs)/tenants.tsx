@@ -1757,8 +1757,31 @@ export default function TenantsScreen() {
       })
 
       setRejectingMode(false)
+      const currentRejectionReason = rejectNotes || ""
       setRejectNotes("")
       showToast("Payment Rejected", "The payment proof has been rejected.", "warning")
+
+      if (chatbotEnabled) {
+        void supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+          const token = currentSession?.access_token
+          if (token) {
+            const chatbotApiUrl = getChatbotApiUrl()
+            void fetch(`${chatbotApiUrl}/api/v1/send-payment-rejection`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                payment_id: payment.id,
+                rejection_reason: currentRejectionReason
+              })
+            }).catch(err => {
+              console.error("Failed to send rejection notice via chatbot API:", err)
+            })
+          }
+        })
+      }
     } catch (err) {
       console.error("Reject payment error:", err)
       showToast("Database Error", "Failed to reject payment record.", "error")

@@ -256,14 +256,13 @@ export default function TenantPaymentPage() {
     e.preventDefault()
     if (!data || !selectedPayment) return
 
-    const { settings } = data
-    if (settings?.utr_required && !utrNumber) {
-      toast.error('UTR/Reference Number is required')
+    if (!screenshotFile) {
+      toast.error('Payment screenshot is required')
       return
     }
 
-    if (settings?.screenshot_required && !screenshotFile) {
-      toast.error('Payment screenshot is required')
+    if (!utrNumber.trim()) {
+      toast.error('UTR/Reference Number is required')
       return
     }
 
@@ -751,7 +750,7 @@ export default function TenantPaymentPage() {
                     {/* Screenshot Upload */}
                     <div className="space-y-2">
                       <Label className="text-neutral-300">
-                        Payment Screenshot {data.settings?.screenshot_required && <span className="text-red-500">*</span>}
+                        Payment Screenshot <span className="text-red-500">*</span>
                       </Label>
                       
                       {!screenshotFile ? (
@@ -805,10 +804,10 @@ export default function TenantPaymentPage() {
                     </div>
 
                     {/* UTR Input */}
-                    {(data.settings?.utr_required || !data.settings?.utr_required) && (
+                    {(
                       <div className="space-y-2">
                         <Label htmlFor="utr" className="text-neutral-300">
-                          UTR / Reference Number {data.settings?.utr_required && <span className="text-red-500">*</span>}
+                          UTR / Reference Number <span className="text-red-500">*</span>
                         </Label>
                         <div className="relative">
                           <Input
@@ -817,7 +816,7 @@ export default function TenantPaymentPage() {
                             onChange={(e) => setUtrNumber(e.target.value)}
                             placeholder={isScanning ? "Scanning screenshot..." : "e.g. 312345678901"}
                             className="bg-neutral-950 border-neutral-800 text-white placeholder:text-neutral-600 focus-visible:ring-primary pr-10"
-                            required={data.settings?.utr_required}
+                            required
                             disabled={isScanning}
                           />
                           {isScanning && (
@@ -833,7 +832,7 @@ export default function TenantPaymentPage() {
                     <Button 
                       type="submit" 
                       className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium shadow-lg shadow-primary/20"
-                      disabled={isSubmitting || isScanning || (data.settings?.screenshot_required && !screenshotFile) || (data.settings?.utr_required && !utrNumber)}
+                      disabled={isSubmitting || isScanning || !screenshotFile || !utrNumber.trim()}
                     >
                       {isSubmitting ? (
                         <>

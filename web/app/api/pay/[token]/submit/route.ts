@@ -20,6 +20,15 @@ export async function POST(
     if (!paymentIdStr) {
       return NextResponse.json({ error: 'Payment reference ID is required' }, { status: 400 })
     }
+
+    if (!screenshot || screenshot.size === 0) {
+      return NextResponse.json({ error: 'Payment screenshot is required' }, { status: 400 })
+    }
+
+    if (!utr || !utr.trim()) {
+      return NextResponse.json({ error: 'UTR/Reference Number is required' }, { status: 400 })
+    }
+
     const paymentId = parseInt(paymentIdStr, 10)
 
     const supabase = createAdminClient()
