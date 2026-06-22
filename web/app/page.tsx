@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { StatsCard } from "@/components/dashboard/stats-card"
+import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton"
 import { RentCollectionChart, type RentCollectionData } from "@/components/dashboard/rent-collection-chart"
 import { PaymentStatusChart, type PaymentStatusData } from "@/components/dashboard/payment-status-chart"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -14,6 +15,8 @@ import { createClient } from "@/lib/supabase/client"
 
 
 import { runWithNetworkRetry } from "@/lib/networkRetry"
+import { loadDashboardAggregates, type DashboardAggregates } from "@/lib/dashboard/dashboard-aggregates"
+import { retrieveAggregates, storeAggregates, invalidateAggregates, createTrailingDebounce } from "@/lib/dashboard/dashboard-cache"
 
 interface ActivityItem {
   tenant: string
@@ -22,6 +25,19 @@ interface ActivityItem {
   time: string
   status: "success" | "pending" | "late"
   timestamp: Date
+}
+
+function formatRelativeTime(timestamp: Date) {
+  const now = new Date()
+  const diffMs = now.getTime() - timestamp.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMins / 60)
+  const diffDays = Math.floor(diffHours / 24)
+
+  if (diffDays > 0) return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`
+  if (diffHours > 0) return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`
+  if (diffMins > 0) return `${diffMins} min${diffMins > 1 ? "s" : ""} ago`
+  return "Just now"
 }
 
 export default function DashboardPage() {
@@ -40,201 +56,153 @@ export default function DashboardPage() {
   const [statusData, setStatusData] = useState<PaymentStatusData[]>([])
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const tenantIdsRef = useRef<number[]>([])
+
+  // Map a `DashboardAggregates` value into the existing useState setters.
+  // Shared by the cached render-immediately path and the background refetch so
+  // both render byte-for-byte the same way. Per-section errors keep prior values
+  // so the dashboard is never blanked (Req 13).
+  const applyAggregates = useCallback((aggregates: DashboardAggregates) => {
+    const { summary, monthly, activity } = aggregates
+
+    // Summary section: update metrics + status chart only when it succeeded.
+    if (summary.ok) {
+      const s = summary.data
+      const statusCounts = s.payment_status_counts || {}
+
+      setTotalTenants(Number(s.total_active_tenants || 0))
+      setPaidThisMonth(Number(s.paid_amount_this_month || 0))
+      setPendingPaymentsCount(Number(s.pending_payment_count_this_month || 0))
+      setPendingPaymentsTotal(Number(s.pending_amount_this_month || 0))
+      setLatePaymentsCount(Number(s.late_payment_count_this_month || 0))
+
+      setStatusData([
+        { name: "Paid", value: Number(statusCounts.paid || 0), color: "var(--color-success)" },
+        { name: "Pending", value: Number(statusCounts.pending || 0), color: "var(--color-warning)" },
+        { name: "Late", value: Number(statusCounts.late || 0), color: "var(--color-destructive)" },
+      ])
+    } else {
+      console.error("Error fetching dashboard summary:", summary.error)
+    }
+
+    // Monthly collection chart: keep prior values on error.
+    if (monthly.ok) {
+      setRentData(monthly.data.map((row) => ({
+        month: row.month,
+        collected: Number(row.collected || 0),
+        pending: Number(row.pending || 0),
+      })))
+    } else {
+      console.error("Error fetching dashboard monthly collection:", monthly.error)
+    }
+
+    // Recent activity: keep prior values on error.
+    if (activity.ok) {
+      setRecentActivity(activity.data.map((row) => {
+        const timestamp = row.occurred_at ? new Date(row.occurred_at) : new Date()
+        return {
+          tenant: row.tenant || "Unknown Tenant",
+          action: row.action || "Activity",
+          amount: row.amount || "",
+          status: row.status || "pending",
+          timestamp,
+          time: formatRelativeTime(timestamp),
+        }
+      }))
+    } else {
+      console.error("Error fetching dashboard recent activity:", activity.error)
+    }
+  }, [])
 
   const fetchDashboardData = useCallback(async () => {
     if (!user?.id) return
+    const ownerId = user.id
 
     try {
       if (hasLoadedOnce) setIsRefreshing(true)
 
-      const { data: tenants } = await runWithNetworkRetry(async () => {
-        return await supabase
-          .from("tenants_table")
-          .select("id, name, status")
-          .eq("owner_id", user.id)
-      })
-
-      const activeTenants = tenants?.filter((t) => t.status === "active") || []
-      setTotalTenants(activeTenants.length)
-
-      const tenantMap = new Map<number, string>(
-        (tenants || []).map((t: any) => [t.id, t.name || ""])
+      const aggregates = await loadDashboardAggregates(
+        supabase as unknown as Parameters<typeof loadDashboardAggregates>[0],
+        { ownerId, call: runWithNetworkRetry }
       )
-      const tenantIds = (tenants?.map((t) => t.id) || []) as number[]
-      tenantIdsRef.current = tenantIds
 
-      const { data: payments } = await runWithNetworkRetry(async () => {
-        return await supabase.from("payments").select("*").eq("owner_id", user.id)
-      })
+      applyAggregates(aggregates)
 
-      const allPayments = (payments || []) as any[]
-
-      const now = new Date()
-      const currentMonth = now.getMonth()
-      const currentYear = now.getFullYear()
-
-      let currentPaid = 0
-      let currentPendingCount = 0
-      let currentPendingTotal = 0
-      let currentLateCount = 0
-
-      const currentMonthStatusCounts = { paid: 0, pending: 0, late: 0 }
-
-      allPayments.forEach((payment) => {
-        const dateStr = payment.payment_date || payment.created_at
-        if (!dateStr) return
-        const pDate = new Date(dateStr)
-
-        if (pDate.getMonth() === currentMonth && pDate.getFullYear() === currentYear) {
-          if (payment.status === "paid" || payment.status === "success" || payment.status === "completed") {
-            currentPaid += Number(payment.total_amount || payment.amount || 0)
-            currentMonthStatusCounts.paid++
-          } else if (payment.status === "pending") {
-            currentPendingCount++
-            currentPendingTotal += Number(payment.total_amount || payment.amount || 0)
-            currentMonthStatusCounts.pending++
-          } else if (payment.status === "late") {
-            currentLateCount++
-            currentMonthStatusCounts.late++
-          }
-        }
-      })
-
-      setPaidThisMonth(currentPaid)
-      setPendingPaymentsCount(currentPendingCount)
-      setPendingPaymentsTotal(currentPendingTotal)
-      setLatePaymentsCount(currentLateCount)
-
-      setStatusData([
-        { name: "Paid", value: currentMonthStatusCounts.paid, color: "var(--color-success)" },
-        { name: "Pending", value: currentMonthStatusCounts.pending, color: "var(--color-warning)" },
-        { name: "Late", value: currentMonthStatusCounts.late, color: "var(--color-destructive)" },
-      ])
-
-      const last6Months: { month: string; collected: number; pending: number; year: number; monthIndex: number }[] = []
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
-        last6Months.push({
-          month: d.toLocaleString("default", { month: "short" }),
-          monthIndex: d.getMonth(),
-          year: d.getFullYear(),
-          collected: 0,
-          pending: 0,
-        })
+      // Cache the last successful result for stale-while-revalidate (Req 10.1,
+      // 10.2). Only store when every section succeeded so a partial failure never
+      // overwrites a previously good cache with a degraded snapshot (Req 13.2).
+      if (aggregates.summary.ok && aggregates.monthly.ok && aggregates.activity.ok) {
+        storeAggregates(ownerId, aggregates)
       }
-
-      allPayments.forEach((payment) => {
-        const dateStr = payment.payment_date || payment.created_at
-        if (!dateStr) return
-        const pDate = new Date(dateStr)
-        const monthData = last6Months.find((m) => m.monthIndex === pDate.getMonth() && m.year === pDate.getFullYear())
-
-        if (monthData) {
-          if (payment.status === "paid" || payment.status === "success" || payment.status === "completed") {
-            monthData.collected += Number(payment.total_amount || payment.amount || 0)
-          } else if (payment.status === "pending" || payment.status === "late") {
-            monthData.pending += Number(payment.total_amount || payment.amount || 0)
-          }
-        }
-      })
-
-      setRentData(last6Months.map(({ month, collected, pending }) => ({ month, collected, pending })))
-
-      let allReminders: any[] = []
-      if (tenantIds.length > 0) {
-        const { data: reminders } = await runWithNetworkRetry(async () => {
-          return await supabase.from("reminders").select("*").in("tenant_id", tenantIds)
-        })
-        allReminders = reminders || []
-      }
-
-      const activityList: ActivityItem[] = []
-      const sevenDaysAgo = new Date()
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-
-      allPayments.forEach((payment) => {
-        const dateStr = payment.payment_date || payment.created_at
-        if (!dateStr) return
-        const pDate = new Date(dateStr)
-
-        if (pDate >= sevenDaysAgo) {
-          let actionStr = "Payment processed"
-          let actionStatus: "success" | "pending" | "late" = "success"
-
-          if (payment.status === "late") {
-            actionStr = "Late payment"
-            actionStatus = "late"
-          } else if (payment.status === "pending") {
-            actionStr = "Payment pending"
-            actionStatus = "pending"
-          } else {
-            actionStr = "Rent paid"
-            actionStatus = "success"
-          }
-
-          activityList.push({
-            tenant: tenantMap.get(payment.tenant_id) || "Unknown Tenant",
-            action: actionStr,
-            amount: (payment.total_amount || payment.amount) ? `₹${Number(payment.total_amount || payment.amount).toLocaleString()}` : "",
-            status: actionStatus,
-            timestamp: pDate,
-            time: "",
-          })
-        }
-      })
-
-      allReminders.forEach((reminder) => {
-        const dateStr = reminder.sent_at || reminder.updated_at
-        if (!dateStr) return
-        const rDate = new Date(dateStr)
-
-        if (rDate >= sevenDaysAgo) {
-          activityList.push({
-            tenant: tenantMap.get(reminder.tenant_id) || "Unknown Tenant",
-            action: `Reminder sent${reminder.sent_via ? ` via ${reminder.sent_via}` : ""}`,
-            status: "pending",
-            timestamp: rDate,
-            time: "",
-          })
-        }
-      })
-
-      activityList.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
-
-      const top7 = activityList.slice(0, 7).map((item) => {
-        const diffMs = now.getTime() - item.timestamp.getTime()
-        const diffMins = Math.floor(diffMs / 60000)
-        const diffHours = Math.floor(diffMins / 60)
-        const diffDays = Math.floor(diffHours / 24)
-
-        let timeStr = "Just now"
-        if (diffDays > 0) timeStr = `${diffDays} day${diffDays > 1 ? "s" : ""} ago`
-        else if (diffHours > 0) timeStr = `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`
-        else if (diffMins > 0) timeStr = `${diffMins} min${diffMins > 1 ? "s" : ""} ago`
-
-        return { ...item, time: timeStr }
-      })
-
-      setRecentActivity(top7)
     } catch (err) {
       console.error("Error fetching dashboard data:", err)
     } finally {
       setDataLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id, hasLoadedOnce])
+  }, [user?.id, hasLoadedOnce, applyAggregates])
+
+  // Manual refresh: invalidate the cache first so the refetch always returns fresh
+  // values rather than re-rendering a stale cached aggregate (Req 10.5).
+  const handleRefresh = useCallback(() => {
+    if (!user?.id) return
+    invalidateAggregates(user.id)
+    if (hasLoadedOnce) setIsRefreshing(true)
+    fetchDashboardData()
+  }, [user?.id, hasLoadedOnce, fetchDashboardData])
+
+  // Keep refs to the latest `fetchDashboardData` and `user.id` so the single
+  // debouncer instance (created once per mount, below) always invokes the current
+  // closure without needing to be re-created when those values change.
+  const fetchDashboardDataRef = useRef(fetchDashboardData)
+  useEffect(() => {
+    fetchDashboardDataRef.current = fetchDashboardData
+  }, [fetchDashboardData])
+
+  const userIdRef = useRef(user?.id)
+  useEffect(() => {
+    userIdRef.current = user?.id
+  }, [user?.id])
+
+  // Single trailing-edge debouncer shared across every realtime channel event
+  // handler for this dashboard mount. Each realtime event calls `trigger()`, so a
+  // burst of changes across the subscribed tables coalesces into exactly one
+  // refetch after the 400ms window elapses (Req 11.1–11.5). The debounced callback
+  // invalidates the cache and then triggers the three-RPC refetch via
+  // `fetchDashboardData`, which itself sets `isRefreshing` once loaded (Req 10.4).
+  const realtimeDebouncerRef = useRef<ReturnType<typeof createTrailingDebounce> | null>(null)
+  if (realtimeDebouncerRef.current === null) {
+    realtimeDebouncerRef.current = createTrailingDebounce(() => {
+      const ownerId = userIdRef.current
+      if (!ownerId) return
+      invalidateAggregates(ownerId)
+      return fetchDashboardDataRef.current()
+    })
+  }
 
   useEffect(() => {
     if (isAuthenticated && user?.id) {
-      if (!hasLoadedOnce) setDataLoading(true)
+      // Stale-while-revalidate: render a cached aggregate immediately (if present)
+      // so the dashboard is populated without waiting on the network, then refetch
+      // in the background and replace the rendered values on success (Req 10.1).
+      const cached = retrieveAggregates(user.id)
+      if (cached) {
+        applyAggregates(cached)
+        setDataLoading(false)
+      } else if (!hasLoadedOnce) {
+        setDataLoading(true)
+      }
       fetchDashboardData()
     }
-  }, [isAuthenticated, user?.id, hasLoadedOnce, fetchDashboardData])
+  }, [isAuthenticated, user?.id, hasLoadedOnce, fetchDashboardData, applyAggregates])
 
   // Realtime: keep dashboard in sync without refetch-on-focus.
+  // Every event routes through the single 400ms trailing debouncer so bursts
+  // coalesce into exactly one three-RPC refetch (Req 5.1, 11.1–11.5). The channel
+  // name, subscribed tables, and owner-scoped filters are unchanged (Req 5.2).
   useEffect(() => {
     if (!user?.id) return
+
+    const debouncer = realtimeDebouncerRef.current!
 
     const channel = supabase
       .channel(`dashboard_owner_${user.id}`)
@@ -242,36 +210,41 @@ export default function DashboardPage() {
         "postgres_changes",
         { event: "*", schema: "public", table: "payments", filter: `owner_id=eq.${user.id}` },
         () => {
-          if (hasLoadedOnce) setIsRefreshing(true)
-          fetchDashboardData()
+          debouncer.trigger()
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "tenants_table", filter: `owner_id=eq.${user.id}` },
         () => {
-          if (hasLoadedOnce) setIsRefreshing(true)
-          fetchDashboardData()
+          debouncer.trigger()
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "reminders" },
         (payload) => {
-          // Reminders table does not have owner_id; only refetch when it relates to current tenants.
-          const tenantIds = tenantIdsRef.current
-          const newTenantId = (payload.new as any)?.tenant_id ?? (payload.old as any)?.tenant_id
-          if (tenantIds.length > 0 && newTenantId && !tenantIds.includes(Number(newTenantId))) return
-          if (hasLoadedOnce) setIsRefreshing(true)
-          fetchDashboardData()
+          const reminderOwnerId = (payload.new as any)?.owner_id ?? (payload.old as any)?.owner_id
+          if (reminderOwnerId && reminderOwnerId !== user.id) return
+          debouncer.trigger()
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "complaints", filter: `owner_id=eq.${user.id}` },
+        () => {
+          debouncer.trigger()
         }
       )
       .subscribe()
 
     return () => {
+      // Cancel any pending debounced refetch before tearing down the channel so a
+      // queued trigger can't fire after unmount.
+      debouncer.cancel()
       supabase.removeChannel(channel)
     }
-  }, [user?.id, hasLoadedOnce, fetchDashboardData])
+  }, [user?.id])
 
   // If auth says "authenticated" but user hasn't hydrated yet, don't get stuck
   // in the dashboard loading state forever.
@@ -287,14 +260,12 @@ export default function DashboardPage() {
     }
   }, [isAuthenticated, dataLoading])
 
-  const shouldShowFullScreenLoader = !hasLoadedOnce && (isAuthLoading || (isAuthenticated && dataLoading))
+  // Show the full-screen spinner only while auth itself is still resolving,
+  // before the first successful render. Once auth is ready the dashboard shell
+  // (and its skeleton) takes over so loading placeholders match the real layout.
+  const shouldShowAuthLoader = !hasLoadedOnce && (!authReady || isAuthLoading)
 
-  // Only show the full-screen loader before the first successful render.
-  // After that, keep UI visible across focus/session revalidation.
-  const shouldShowInitialLoader =
-    !hasLoadedOnce && (!authReady || isAuthLoading || (isAuthenticated && dataLoading))
-
-  if (shouldShowInitialLoader) {
+  if (shouldShowAuthLoader) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
@@ -313,6 +284,21 @@ export default function DashboardPage() {
           <p className="text-sm text-muted-foreground">Redirecting to login...</p>
         </div>
       </div>
+    )
+  }
+
+  // First load with no Cached_Aggregate: render the skeleton inside the real
+  // dashboard shell so placeholders occupy the same positions/dimensions as the
+  // loaded content and there is no layout shift when data arrives (Req 12.1–12.3).
+  // When a cache exists, the mount effect clears `dataLoading` and applies the
+  // cached values immediately, so this branch is skipped (stale-while-revalidate).
+  const shouldShowSkeleton = !hasLoadedOnce && dataLoading
+
+  if (shouldShowSkeleton) {
+    return (
+      <DashboardLayout title="Dashboard">
+        <DashboardSkeleton />
+      </DashboardLayout>
     )
   }
 

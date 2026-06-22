@@ -57,6 +57,7 @@ import {
 } from "lucide-react-native"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
+import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
 import useTheme from "@/hooks/use-theme"
 import {
   KeyboardAwareScrollView,
@@ -611,7 +612,14 @@ export default function RoomsScreen() {
   useFocusEffect(
     useCallback(() => {
       if (user?.id) {
-        void fetchData(hasLoadedOnce)
+        // Defer the on-focus fetch past the navigation transition / first interactive
+        // paint so it no longer blocks the destination's first paint (Change A). The
+        // cached/skeleton shell renders first; the load runs once per focus afterwards
+        // and is cancelled on blur-before-run so loads are neither dropped nor duplicated.
+        const handle = scheduleAfterInteractions(() => {
+          void fetchData(hasLoadedOnce)
+        })
+        return () => handle.cancel()
       }
     }, [user?.id, fetchData, hasLoadedOnce])
   )

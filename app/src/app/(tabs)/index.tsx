@@ -16,13 +16,15 @@ import {
   StyleSheet,
   KeyboardAvoidingView,
   Linking,
-  Alert,
-  InteractionManager
+  Alert
 } from "react-native"
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useRouter, useFocusEffect } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
+import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
+import { loadDashboardAggregates, type SupabaseLike, type DashboardAggregates } from "@/lib/dashboard-aggregates"
+import { store as storeDashboardCache, retrieve as retrieveDashboardCache, invalidate as invalidateDashboardCache, hydrateFromSnapshot as hydrateDashboardCache, createDebouncer, type Debouncer } from "@/lib/dashboard-cache"
 import { 
   Users, 
   IndianRupee, 
@@ -98,6 +100,47 @@ interface ActivityItem {
   rawItem: any
 }
 
+interface DashboardSummary {
+  total_active_tenants?: number
+  paid_amount_this_month?: number
+  pending_payment_count_this_month?: number
+  pending_amount_this_month?: number
+  late_payment_count_this_month?: number
+  payment_status_counts?: {
+    paid?: number
+    pending?: number
+    late?: number
+    submitted?: number
+  }
+  bed_stats?: {
+    total?: number
+    occupied?: number
+    vacant?: number
+  }
+  pending_complaints_count?: number
+  chatbot_enabled?: boolean
+  pg_id?: number | null
+}
+
+interface DashboardCollectionRow {
+  month: string
+  month_number?: number
+  year?: number
+  collected: number
+  pending: number
+}
+
+interface DashboardRecentActivityRow {
+  id: string
+  type: "payment" | "complaint" | "reminder"
+  tenant: string
+  action: string
+  amount?: string | null
+  status: "success" | "pending" | "late"
+  occurred_at: string
+  raw_item: any
+}
+
 const { height } = Dimensions.get("window")
 
 export default function DashboardScreen() {
@@ -118,6 +161,9 @@ export default function DashboardScreen() {
   const [pgId, setPgId] = useState<number | null>(null)
   const [chatbotEnabled, setChatbotEnabled] = useState<boolean>(false)
   const [leads, setLeads] = useState<any[]>([])
+  const [dashboardSummary, setDashboardSummary] = useState<DashboardSummary | null>(null)
+  const [dashboardCollection, setDashboardCollection] = useState<DashboardCollectionRow[]>([])
+  const [dashboardRecentActivity, setDashboardRecentActivity] = useState<ActivityItem[]>([])
   const [selectedLeadForModal, setSelectedLeadForModal] = useState<any | null>(null)
   const [copiedPhoneLeadId, setCopiedPhoneLeadId] = useState<number | null>(null)
 
@@ -234,6 +280,105 @@ export default function DashboardScreen() {
     void loadDismissed()
   }, [])
 
+  // Apply a DashboardAggregates result (fresh or cached) into the dashboard state
+  // setters. Returns true if any section failed. Used both for the synchronous
+  // render of a Cached_Aggregate (Req 10.1) and for the background refetch (Req 10.2).
+  const applyAggregates = useCallback((aggregates: DashboardAggregates): boolean => {
+    const { summary: summaryResult, monthly: monthlyResult, activity: activityResult } = aggregates
+
+    let hadError = false
+
+    if (summaryResult.ok) {
+      const summary = summaryResult.data as DashboardSummary
+      setDashboardSummary(summary)
+      setChatbotEnabled(!!summary.chatbot_enabled)
+      if (summary.pg_id) setPgId(summary.pg_id)
+    } else {
+      hadError = true
+    }
+
+    if (monthlyResult.ok) {
+      setDashboardCollection(monthlyResult.data as DashboardCollectionRow[])
+    } else {
+      hadError = true
+    }
+
+    if (activityResult.ok) {
+      const now = new Date()
+      const rows = activityResult.data
+      setDashboardRecentActivity(rows.filter((item) => item.type !== "reminder").map((item) => {
+        const timestamp = item.occurred_at ? new Date(item.occurred_at) : new Date()
+        const diffMs = now.getTime() - timestamp.getTime()
+        const diffMins = Math.floor(diffMs / 60000)
+        const diffHours = Math.floor(diffMins / 60)
+        const diffDays = Math.floor(diffHours / 24)
+        let timeStr = "Just now"
+        if (diffDays > 0) timeStr = `${diffDays} day${diffDays > 1 ? "s" : ""} ago`
+        else if (diffHours > 0) timeStr = `${diffHours} hr${diffHours > 1 ? "s" : ""} ago`
+        else if (diffMins > 0) timeStr = `${diffMins} min${diffMins > 1 ? "s" : ""} ago`
+
+        return {
+          id: item.id,
+          type: item.type === "complaint" ? "complaint" : "payment",
+          tenant: item.tenant || "Unknown Tenant",
+          action: item.action || "Activity",
+          amount: item.amount || undefined,
+          status: item.status || "pending",
+          timestamp,
+          time: timeStr,
+          rawItem: item.raw_item || {}
+        }
+      }))
+    } else {
+      hadError = true
+    }
+
+    return hadError
+  }, [])
+
+  const fetchDashboardAggregates = useCallback(async () => {
+    if (!user?.id) return
+
+    const aggregates = await loadDashboardAggregates(
+      supabase as unknown as SupabaseLike,
+      { ownerId: user.id },
+    )
+
+    const hadError = applyAggregates(aggregates)
+
+    // Cache the last successful aggregate sections so a future mount can render
+    // them immediately under Stale_While_Revalidate (Req 10.1, 10.2).
+    if (!hadError) {
+      storeDashboardCache(user.id, aggregates)
+    }
+
+    if (hadError) {
+      showToast("Error", "Failed to retrieve dashboard data", "error")
+    }
+  }, [user?.id, showToast, applyAggregates])
+
+  // Stale-While-Revalidate: on mount (once user.id is available) render the last
+  // successfully cached aggregates immediately so the dashboard is responsive before
+  // the network refetch completes (Req 10.1). The background refetch runs via
+  // useFocusEffect → fetchDashboardData and replaces these values on success (Req 10.2).
+  const hasRenderedCache = useRef(false)
+  useEffect(() => {
+    if (!user?.id || hasRenderedCache.current) return
+    hasRenderedCache.current = true
+
+    const cached = retrieveDashboardCache(user.id)
+    if (cached) {
+      applyAggregates(cached)
+      return
+    }
+
+    // No synchronous in-memory entry: hydrate from the persisted snapshot so a
+    // Cached_Aggregate from a previous session can still render immediately.
+    void hydrateDashboardCache(user.id).then((snapshot) => {
+      if (snapshot) applyAggregates(snapshot)
+    })
+  }, [user?.id, applyAggregates])
+
   // Fetch all tables concurrently
   const fetchDashboardData = useCallback(async (silent = false) => {
     if (!user?.id) {
@@ -246,6 +391,8 @@ export default function DashboardScreen() {
         if (hasLoadedOnce.current) setIsRefreshing(true)
         else setDataLoading(true)
       }
+
+      await fetchDashboardAggregates()
 
       // Concurrently fetch pg_details, tenants, payments, complaints, pg_owners (for chatbot_enabled) and leads
       const [pgRes, tenantsRes, paymentsRes, complaintsRes, ownerRes, leadsRes] = await Promise.all([
@@ -316,71 +463,95 @@ export default function DashboardScreen() {
       setDataLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id, showToast])
+  }, [user?.id, showToast, fetchDashboardAggregates])
 
   useFocusEffect(
     useCallback(() => {
       if (isAuthenticated && user?.id) {
-        const task = InteractionManager.runAfterInteractions(() => {
+        // Cache-first behavior is preserved elsewhere (hasRenderedCache renders cached
+        // aggregates immediately). Here the heavy raw-dataset fetch + chart/analytics work
+        // is deferred past the navigation transition / first interactive paint via the
+        // shared scheduler (Change A); it runs once per focus and is cancelled on
+        // blur-before-run so the load is neither dropped nor duplicated.
+        const handle = scheduleAfterInteractions(() => {
           void fetchDashboardData(hasLoadedOnce.current)
         })
-        return () => task.cancel()
+        return () => handle.cancel()
       }
     }, [isAuthenticated, user?.id, fetchDashboardData])
   )
 
   // Realtime subscribe
+  //
+  // A single trailing-edge debouncer is shared across every channel handler via a
+  // ref so that a burst of events from any subscribed table coalesces into exactly
+  // one refetch after the Debounce_Window (Req 11.1–11.5). The debounced action
+  // invalidates the Cached_Aggregate and then triggers the three-RPC refetch
+  // (Req 10.4). The subscribed tables and owner-scoped filters are unchanged so the
+  // existing realtime contract is preserved (Req 5.1, 5.2).
+  const realtimeDebouncerRef = useRef<Debouncer | null>(null)
+
   useEffect(() => {
     if (!user?.id) return
 
+    const ownerId = user.id
+    const debouncer = createDebouncer(() => {
+      invalidateDashboardCache(ownerId)
+      void fetchDashboardAggregates()
+    })
+    realtimeDebouncerRef.current = debouncer
+
+    const onRealtimeChange = () => {
+      debouncer.trigger()
+    }
+
     const channel = supabase
-      .channel(`dashboard_owner_realtime_${user.id}`)
+      .channel(`dashboard_owner_realtime_${ownerId}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "payments", filter: `owner_id=eq.${user.id}` },
-        () => {
-          void fetchDashboardData(true)
-        }
+        { event: "*", schema: "public", table: "payments", filter: `owner_id=eq.${ownerId}` },
+        onRealtimeChange
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "tenants_table", filter: `owner_id=eq.${user.id}` },
-        () => {
-          void fetchDashboardData(true)
-        }
+        { event: "*", schema: "public", table: "tenants_table", filter: `owner_id=eq.${ownerId}` },
+        onRealtimeChange
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "complaints", filter: `owner_id=eq.${user.id}` },
-        () => {
-          void fetchDashboardData(true)
-        }
+        { event: "*", schema: "public", table: "complaints", filter: `owner_id=eq.${ownerId}` },
+        onRealtimeChange
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "pg_owners", filter: `id=eq.${user.id}` },
-        () => {
-          void fetchDashboardData(true)
-        }
+        { event: "*", schema: "public", table: "reminders", filter: `owner_id=eq.${ownerId}` },
+        onRealtimeChange
       )
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "leads", filter: `owner_id=eq.${user.id}` },
-        () => {
-          void fetchDashboardData(true)
-        }
+        { event: "*", schema: "public", table: "pg_owners", filter: `id=eq.${ownerId}` },
+        onRealtimeChange
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "leads", filter: `owner_id=eq.${ownerId}` },
+        onRealtimeChange
       )
       .subscribe()
 
     return () => {
+      debouncer.cancel()
+      realtimeDebouncerRef.current = null
       void supabase.removeChannel(channel)
     }
-  }, [user?.id, fetchDashboardData])
+  }, [user?.id, fetchDashboardAggregates])
 
   const onRefresh = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    // Manual_Refresh: invalidate the Cached_Aggregate before refetching (Req 10.5).
+    if (user?.id) invalidateDashboardCache(user.id)
     void fetchDashboardData()
-  }, [fetchDashboardData])
+  }, [fetchDashboardData, user?.id])
 
   // Custom filter helper function
   const getDateRangeForFilter = useCallback((filter: string, customStartStr?: string, customEndStr?: string) => {
@@ -492,6 +663,16 @@ export default function DashboardScreen() {
 
   // Priority Card 3 & Occupancy Overview: Vacant Beds
   const bedStats = useMemo(() => {
+    if (dashboardSummary?.bed_stats) {
+      const total = Number(dashboardSummary.bed_stats.total || 0)
+      const occupied = Number(dashboardSummary.bed_stats.occupied || 0)
+      return {
+        total,
+        occupied,
+        vacant: Number(dashboardSummary.bed_stats.vacant ?? Math.max(0, total - occupied))
+      }
+    }
+
     let total = 0
     let occupied = 0
     rawRooms.forEach(r => {
@@ -503,15 +684,26 @@ export default function DashboardScreen() {
       occupied,
       vacant: Math.max(0, total - occupied)
     }
-  }, [rawRooms])
+  }, [rawRooms, dashboardSummary])
 
   // Priority Card 4: Pending Complaints
   const pendingComplaintsCount = useMemo(() => {
+    if (dashboardSummary?.pending_complaints_count !== undefined) {
+      return Number(dashboardSummary.pending_complaints_count || 0)
+    }
     return rawComplaints.filter(c => c.status === "Under Working").length
-  }, [rawComplaints])
+  }, [rawComplaints, dashboardSummary])
 
   // Revenue Overview
   const revenueOverview = useMemo(() => {
+    if (selectedFilter === "This Month" && dashboardSummary) {
+      const collected = Number(dashboardSummary.paid_amount_this_month || 0)
+      const pending = Number(dashboardSummary.pending_amount_this_month || 0)
+      const expected = collected + pending
+      const percent = expected > 0 ? Math.round((collected / expected) * 100) : 0
+      return { expected, collected, pending, percent }
+    }
+
     let expected = 0
     let collected = 0
     let pending = 0
@@ -528,7 +720,7 @@ export default function DashboardScreen() {
     
     const percent = expected > 0 ? Math.round((collected / expected) * 100) : 0
     return { expected, collected, pending, percent }
-  }, [paymentsInRange])
+  }, [paymentsInRange, selectedFilter, dashboardSummary])
 
   // Today's Tasks
   const followUpPayments = useMemo(() => {
@@ -645,6 +837,10 @@ export default function DashboardScreen() {
 
   // Recent Activity List (Submitted Payments + Working Complaints)
   const recentActivityList = useMemo(() => {
+    if (dashboardRecentActivity.length > 0) {
+      return dashboardRecentActivity
+    }
+
     const activityList: ActivityItem[] = []
     
     rawPayments.forEach(payment => {
@@ -711,7 +907,7 @@ export default function DashboardScreen() {
 
       return { ...item, time: timeStr }
     })
-  }, [rawPayments, rawComplaints, tenantMap])
+  }, [rawPayments, rawComplaints, tenantMap, dashboardRecentActivity])
 
   // Filter recent activities to hide dismissed ones
   const filteredRecentActivity = useMemo(() => {
@@ -736,6 +932,38 @@ export default function DashboardScreen() {
 
   // Collection history (last 6 months bar chart)
   const collectionTrendData = useMemo(() => {
+    if (dashboardCollection.length > 0) {
+      return dashboardCollection.map((row, index) => {
+        const barKey = `${row.year ?? ""}-${row.month_number ?? index}`
+        const monthlyCollected = Number(row.collected || 0)
+        const isLastBar = index === dashboardCollection.length - 1
+        return {
+          value: monthlyCollected,
+          label: row.month,
+          frontColor: "#0091ff",
+          onPress: () => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+            setSelectedBarKey(selectedBarKey === barKey ? null : barKey)
+          },
+          topLabelComponent: selectedBarKey === barKey && monthlyCollected > 0 ? () => (
+            <View 
+              style={{ 
+                minWidth: 46, 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                transform: [{ translateX: isLastBar ? -12 : 0 }] 
+              }} 
+              className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded shadow-sm -mb-1"
+            >
+              <Text numberOfLines={1} className="text-[7px] font-black text-slate-900 dark:text-white text-center">
+                ₹{monthlyCollected.toLocaleString()}
+              </Text>
+            </View>
+          ) : undefined
+        }
+      })
+    }
+
     const now = new Date()
     const monthsData: any[] = []
     
@@ -781,10 +1009,29 @@ export default function DashboardScreen() {
       })
     }
     return monthsData
-  }, [rawPayments, selectedBarKey])
+  }, [rawPayments, selectedBarKey, dashboardCollection])
 
   // Payment status breakdown percentages
   const paymentStatusOverview = useMemo(() => {
+    if (selectedFilter === "This Month" && dashboardSummary?.payment_status_counts) {
+      const paidCount = Number(dashboardSummary.payment_status_counts.paid || 0)
+      const pendingCount = Number(dashboardSummary.payment_status_counts.pending || 0)
+      const lateCount = Number(dashboardSummary.payment_status_counts.late || 0)
+      const total = paidCount + pendingCount + lateCount
+      if (total === 0) {
+        return { paid: 0, pending: 0, late: 0, paidPct: 0, pendingPct: 0, latePct: 0, total }
+      }
+      return {
+        paid: paidCount,
+        pending: pendingCount,
+        late: lateCount,
+        paidPct: Math.round((paidCount / total) * 100),
+        pendingPct: Math.round((pendingCount / total) * 100),
+        latePct: Math.round((lateCount / total) * 100),
+        total
+      }
+    }
+
     let paidCount = 0
     let pendingCount = 0
     let lateCount = 0
@@ -812,7 +1059,7 @@ export default function DashboardScreen() {
       latePct: Math.round((lateCount / total) * 100),
       total
     }
-  }, [paymentsInRange])
+  }, [paymentsInRange, selectedFilter, dashboardSummary])
 
   // Upcoming scheduled check-ins & check-outs count
   const upcomingEventsSummary = useMemo(() => {
@@ -1554,7 +1801,11 @@ export default function DashboardScreen() {
     return "█".repeat(filledChars) + "░".repeat(emptyChars)
   }
 
-  if (dataLoading && !hasLoadedOnce.current) {
+  // First-load Skeleton_UI: shown only while the very first aggregate fetch is in
+  // flight AND no Cached_Aggregate has been rendered. When a Cached_Aggregate is
+  // applied on mount, `dashboardSummary` is populated synchronously, so the skeleton
+  // is skipped and the cached values render immediately instead (Req 12.1).
+  if (dataLoading && !hasLoadedOnce.current && dashboardSummary === null) {
     return (
       <SafeAreaView key="dashboard-loading" className="flex-1 bg-background dark:bg-background-dark" edges={["top"]}>
         <View className="px-6 pt-4 pb-6 flex-row justify-between items-center">
@@ -1587,6 +1838,33 @@ export default function DashboardScreen() {
           <View className="px-6 gap-6">
             <View className="h-56 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm opacity-60" />
             <View className="h-56 w-full bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm opacity-60" />
+          </View>
+
+          {/* Recent Activity placeholder — mirrors the loaded activity section
+              header + card so first-load → content swap introduces no layout shift (Req 12.2, 12.3) */}
+          <View className="px-6 mt-4 mb-4">
+            <View className="flex-row justify-between items-center mb-2">
+              <View className="h-3 w-28 bg-muted/15 dark:bg-muted-dark/15 rounded-md" />
+            </View>
+            <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-4 rounded-2xl opacity-65">
+              {[1, 2, 3].map((i) => (
+                <View
+                  key={i}
+                  className={`flex-row items-center justify-between py-2.5 border-border/10 dark:border-border-dark/10 ${
+                    i === 3 ? "border-b-0" : "border-b"
+                  }`}
+                >
+                  <View className="flex-row items-center flex-1 pr-3 gap-3">
+                    <View className="h-9 w-9 bg-muted/20 dark:bg-muted-dark/20 rounded-full" />
+                    <View className="gap-1.5 flex-1">
+                      <View className="h-3 w-32 bg-muted/20 dark:bg-muted-dark/20 rounded-md" />
+                      <View className="h-2.5 w-20 bg-muted/10 dark:bg-muted-dark/10 rounded-md" />
+                    </View>
+                  </View>
+                  <View className="h-6 w-6 bg-muted/10 dark:bg-muted-dark/20 rounded-full" />
+                </View>
+              ))}
+            </View>
           </View>
         </ScrollView>
       </SafeAreaView>

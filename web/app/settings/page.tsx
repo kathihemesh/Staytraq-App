@@ -22,7 +22,7 @@ export default function SettingsPage() {
   // Payment Settings State
   const [rentDueDay, setRentDueDay] = useState(1)
   const [gracePeriodDays, setGracePeriodDays] = useState(3)
-  const [defaultMaintenanceFee, setDefaultMaintenanceFee] = useState(0)
+  const [defaultDepositFees, setDefaultDepositFees] = useState(0)
   const [refundDeposit, setRefundDeposit] = useState(0)
   
   // UPI Settings State
@@ -31,8 +31,8 @@ export default function SettingsPage() {
   const [paymentInstructions, setPaymentInstructions] = useState("")
   const [isMerchant, setIsMerchant] = useState(false)
 
-  const handleMaintenanceFeeChange = (val: number) => {
-    setDefaultMaintenanceFee(val)
+  const handleDepositFeesChange = (val: number) => {
+    setDefaultDepositFees(val)
     if (!isNaN(val)) {
       setRefundDeposit(Math.round(val * 0.5))
     } else {
@@ -98,7 +98,7 @@ export default function SettingsPage() {
       } else if (data) {
         setRentDueDay(data.rent_due_day || 1)
         setGracePeriodDays(data.grace_period_days || 3)
-        setDefaultMaintenanceFee(data.default_maintenance_fee || 0)
+        setDefaultDepositFees(data.default_deposit_fees || 0)
         setRefundDeposit(data.refund_deposit || 0)
         setUpiId(data.upi_id || "")
         setUpiName(data.upi_name || "")
@@ -128,7 +128,7 @@ export default function SettingsPage() {
         .update({
           rent_due_day: rentDueDay,
           grace_period_days: gracePeriodDays,
-          default_maintenance_fee: defaultMaintenanceFee,
+          default_deposit_fees: defaultDepositFees,
           refund_deposit: refundDeposit,
           upi_id: upiId,
           upi_name: upiName,
@@ -202,13 +202,13 @@ export default function SettingsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="defaultMaintenanceFee" className="text-sm font-medium">Default Maintenance Fee</Label>
+                <Label htmlFor="defaultDepositFees" className="text-sm font-medium">Default Deposit Fees</Label>
                 <Input 
-                  id="defaultMaintenanceFee" 
+                  id="defaultDepositFees" 
                   type="number" 
                   min="0"
-                  value={defaultMaintenanceFee} 
-                  onChange={(e) => handleMaintenanceFeeChange(parseInt(e.target.value) || 0)} 
+                  value={defaultDepositFees} 
+                  onChange={(e) => handleDepositFeesChange(parseInt(e.target.value) || 0)} 
                   className="bg-muted/50 focus:bg-background" 
                 />
               </div>

@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Platform, L
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
+import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
 import useTheme from "@/hooks/use-theme"
 import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, AlertTriangle, RefreshCw, CreditCard, Link } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
@@ -21,7 +22,7 @@ export default function SettingsScreen() {
   }, [])
 
   const rentDueDayInput = useKeyboardAwareInput()
-  const defaultMaintenanceFeeInput = useKeyboardAwareInput()
+  const defaultDepositFeesInput = useKeyboardAwareInput()
   const refundDepositInput = useKeyboardAwareInput()
   const upiIdInput = useKeyboardAwareInput()
   const upiNameInput = useKeyboardAwareInput()
@@ -36,7 +37,7 @@ export default function SettingsScreen() {
 
   // Settings values
   const [rentDueDay, setRentDueDay] = useState("5")
-  const [defaultMaintenanceFee, setDefaultMaintenanceFee] = useState("0")
+  const [defaultDepositFees, setDefaultDepositFees] = useState("0")
   const [refundDeposit, setRefundDeposit] = useState("0")
   const [upiId, setUpiId] = useState("")
   const [upiName, setUpiName] = useState("")
@@ -73,8 +74,8 @@ export default function SettingsScreen() {
     setIsMerchant(detectMerchantUpi(val))
   }
 
-  const handleMaintenanceFeeChange = (val: string) => {
-    setDefaultMaintenanceFee(val)
+  const handleDepositFeesChange = (val: string) => {
+    setDefaultDepositFees(val)
     const num = parseFloat(val)
     if (!isNaN(num)) {
       setRefundDeposit(String(Math.round(num * 0.5)))
@@ -104,7 +105,7 @@ export default function SettingsScreen() {
       if (data) {
         setSettingsId(data.id)
         setRentDueDay(String(data.rent_due_day ?? 5))
-        setDefaultMaintenanceFee(String(data.default_maintenance_fee ?? 0))
+        setDefaultDepositFees(String(data.default_deposit_fees ?? 0))
         setRefundDeposit(String(data.refund_deposit ?? 0))
         setUpiId(data.upi_id ?? "")
         setUpiName(data.upi_name ?? "")
@@ -113,7 +114,7 @@ export default function SettingsScreen() {
         setIsMerchant(data.is_merchant ?? false)
       } else {
         setRentDueDay("5")
-        setDefaultMaintenanceFee("0")
+        setDefaultDepositFees("0")
         setRefundDeposit("0")
         setUpiId("")
         setUpiName("")
@@ -130,7 +131,13 @@ export default function SettingsScreen() {
   }, [user?.id])
 
   useEffect(() => {
-    void fetchSettings()
+    // Defer the initial settings load past the navigation transition / first interactive
+    // paint (Change A) so it does not block the destination's first paint; the load runs
+    // once and is cancelled on unmount-before-run (no drop, no duplicate).
+    const handle = scheduleAfterInteractions(() => {
+      void fetchSettings()
+    })
+    return () => handle.cancel()
   }, [fetchSettings])
 
   useEffect(() => {
@@ -147,7 +154,7 @@ export default function SettingsScreen() {
     
     // Validation
     const dueDayNum = parseInt(rentDueDay, 10)
-    const maintenanceFeeNum = parseInt(defaultMaintenanceFee, 10)
+    const depositFeesNum = parseInt(defaultDepositFees, 10)
     const refundDepositNum = parseInt(refundDeposit, 10)
 
     if (isNaN(dueDayNum) || dueDayNum < 1 || dueDayNum > 31) {
@@ -156,9 +163,9 @@ export default function SettingsScreen() {
       return
     }
 
-    if (isNaN(maintenanceFeeNum) || maintenanceFeeNum < 0) {
+    if (isNaN(depositFeesNum) || depositFeesNum < 0) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-      setError("Default maintenance fee must be a valid positive amount.")
+      setError("Default deposit fees must be a valid positive amount.")
       return
     }
 
@@ -191,7 +198,7 @@ export default function SettingsScreen() {
 
       const payload = {
         rent_due_day: dueDayNum,
-        default_maintenance_fee: maintenanceFeeNum,
+        default_deposit_fees: depositFeesNum,
         refund_deposit: refundDepositNum,
         owner_id: user.id,
         upi_id: upiId.trim() || null,
@@ -369,24 +376,24 @@ export default function SettingsScreen() {
                 </Text>
               </View>
 
-              {/* Default Maintenance Fee */}
+              {/* Default Deposit Fees */}
               <View>
                 <View className="flex-row items-center justify-between mb-2">
-                  <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Default Maintenance Fee</Text>
+                  <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Default Deposit Fees</Text>
                   <Text className="text-xs text-muted font-semibold">Rupees (₹)</Text>
                 </View>
                 <TextInput
-                  ref={defaultMaintenanceFeeInput.ref}
-                  onFocus={defaultMaintenanceFeeInput.onFocus}
-                  value={defaultMaintenanceFee}
-                  onChangeText={handleMaintenanceFeeChange}
+                  ref={defaultDepositFeesInput.ref}
+                  onFocus={defaultDepositFeesInput.onFocus}
+                  value={defaultDepositFees}
+                  onChangeText={handleDepositFeesChange}
                   keyboardType="numeric"
-                  placeholder="e.g. 1000"
+                  placeholder="e.g. 10000"
                   placeholderTextColor="#9ca3af"
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
                 />
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  Standard monthly maintenance fee applied automatically to new rooms.
+                  Standard security deposit applied automatically to new tenants.
                 </Text>
               </View>
 
@@ -402,12 +409,12 @@ export default function SettingsScreen() {
                   value={refundDeposit}
                   onChangeText={setRefundDeposit}
                   keyboardType="numeric"
-                  placeholder="e.g. 500"
+                  placeholder="e.g. 5000"
                   placeholderTextColor="#9ca3af"
                   className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
                 />
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
-                  Expected refund deposit amount auto-filled during move out checklist (defaults to 50% of maintenance fee).
+                  Expected refund deposit amount auto-filled during move out checklist (defaults to 50% of deposit fees).
                 </Text>
               </View>
 

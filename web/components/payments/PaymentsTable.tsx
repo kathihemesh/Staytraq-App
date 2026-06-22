@@ -1,5 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { InboxIcon, XCircle } from "lucide-react";
+import { InboxIcon, XCircle, Loader2 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import {
   Table,
   TableBody,
@@ -19,6 +20,16 @@ interface PaymentsTableProps {
   onMarkPaid: (id: string, tenantName: string, roomNumber: string) => void;
   onClearFilters: () => void;
   hasActiveFilters: boolean;
+  /**
+   * Requests the next page when the scroll container reaches its end.
+   * Optional so existing usage keeps working; the page (task 7.2) owns the
+   * actual data fetching and wires this to load the next page.
+   */
+  onLoadMore?: () => void;
+  /** Whether more pages remain to load. When false, the sentinel stops requesting. */
+  hasMore?: boolean;
+  /** Whether a next-page request is currently in flight (shows a footer spinner). */
+  isLoadingMore?: boolean;
 }
 
 const containerVariants = {
@@ -54,8 +65,45 @@ export function PaymentsTable({
   onRowClick,
   onMarkPaid,
   onClearFilters,
-  hasActiveFilters
+  hasActiveFilters,
+  onLoadMore,
+  hasMore = false,
+  isLoadingMore = false
 }: PaymentsTableProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // Keep the latest onLoadMore in a ref so the observer effect doesn't need to
+  // re-create the observer on every render when the callback identity changes.
+  const onLoadMoreRef = useRef(onLoadMore);
+  useEffect(() => {
+    onLoadMoreRef.current = onLoadMore;
+  }, [onLoadMore]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const root = scrollContainerRef.current;
+    // Nothing to observe until we have a sentinel, a load-more handler, and
+    // there are more pages to fetch. While loading we also skip to avoid
+    // re-triggering before the in-flight request resolves.
+    if (!sentinel || !root || !onLoadMore || !hasMore || isLoading || isLoadingMore) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry?.isIntersecting) {
+          onLoadMoreRef.current?.();
+        }
+      },
+      { root, rootMargin: "200px", threshold: 0 }
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [onLoadMore, hasMore, isLoading, isLoadingMore, payments.length]);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -63,7 +111,7 @@ export function PaymentsTable({
       transition={{ delay: 0.3 }}
       className="rounded-lg border bg-card shadow-sm"
     >
-      <div className="max-h-[600px] overflow-y-auto custom-scrollbar">
+      <div ref={scrollContainerRef} className="max-h-[600px] overflow-y-auto custom-scrollbar">
         <Table>
           <TableHeader className="sticky top-0 z-10 bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/75">
             <TableRow className="hover:bg-transparent border-b-border/50">
@@ -149,6 +197,19 @@ export function PaymentsTable({
               )}
             </motion.div>
           </AnimatePresence>
+        )}
+
+        {/* Infinite-load footer: spinner while a next page is in flight */}
+        {!isLoading && isLoadingMore && (
+          <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading more...
+          </div>
+        )}
+
+        {/* Scroll-end sentinel: when it enters the viewport, request the next page */}
+        {!isLoading && payments.length > 0 && hasMore && (
+          <div ref={sentinelRef} aria-hidden="true" className="h-px w-full" />
         )}
       </div>
     </motion.div>

@@ -25,6 +25,21 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useFocusEffect, useLocalSearchParams } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
+import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
+import {
+  buildPageArgs,
+  buildSummaryArgs,
+  fetchPaymentsPage,
+  fetchMonthSummary,
+  reducePageResult,
+  initialPageState,
+  filterSignature,
+  type SupabaseLike,
+  type PaymentFilters,
+  type PageState,
+  type PaymentRow,
+  type MonthSummary,
+} from "@/lib/payments-page"
 import { 
   Search, 
   Calendar, 
@@ -150,6 +165,44 @@ const getMonthNumber = (monthName: string): number => {
   return idx !== -1 ? idx + 1 : new Date().getMonth() + 1;
 }
 
+// Map a flat PaymentRow returned by get_payments_page into the screen's nested
+// `Payment` view type (reconstructing the tenants_table/rooms_table objects the
+// detail view and list rows render). No business logic changes here — this is a
+// pure shape adapter so the rest of the UI is unaffected by the server contract.
+const mapRowToPayment = (row: PaymentRow, ownerId: string): Payment => ({
+  id: row.id,
+  tenant_id: row.tenant_id ?? 0,
+  owner_id: ownerId,
+  month: row.month ?? 0,
+  year: row.year ?? 0,
+  rent_amount: row.rent_amount ?? 0,
+  extra_charges: row.extra_charges,
+  total_amount: row.total_amount ?? 0,
+  due_date: row.due_date ?? "",
+  status: (row.status ?? "pending") as Payment["status"],
+  paid_at: row.paid_at,
+  reminder_sent: row.reminder_sent,
+  created_at: "",
+  payment_token: row.payment_token ?? "",
+  screenshot_path: row.screenshot_path,
+  utr_number: row.utr_number,
+  submitted_at: row.submitted_at,
+  verified_at: row.verified_at,
+  verification_notes: row.verification_notes,
+  payment_method: row.payment_method,
+  payment_code: row.payment_code,
+  tenants_table: {
+    name: row.tenant_name,
+    mobile_number: row.tenant_mobile_number,
+    rooms_table: row.room_number
+      ? {
+          room_number: row.room_number,
+          rent_amount: row.rent_amount_room ?? 0,
+        }
+      : null,
+  },
+})
+
 export default function PaymentsScreen() {
   const { user } = useAuth()
   const params = useLocalSearchParams<{ search?: string; status?: string }>()
@@ -159,7 +212,23 @@ export default function PaymentsScreen() {
   const keyboardHeight = useKeyboardHeight()
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
-  const [payments, setPayments] = useState<Payment[]>([])
+  // Pagination/infinite-load state for the active filter view. `rows` holds the
+  // server-paginated PaymentRow set; the screen derives its nested `Payment[]`
+  // (`payments`) from it below. Previous rows stay visible during loads because
+  // the reducer only runs when a result arrives.
+  const [pageState, setPageState] = useState<PageState>(() =>
+    initialPageState({ month: 0, year: 0, status: "all", search: "" }),
+  )
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  // Month-level summary totals (Collected / Pending / Late / Under Review) sourced
+  // from the get_payment_month_summary RPC for the selected month/year. The carousel
+  // cards read their monetary totals from this rather than from the loaded pages, so
+  // figures stay accurate regardless of how many pages are loaded (Req 5.5). It stays
+  // null when the summary is unavailable; the cards never fall back to page-derived
+  // totals (Req 5.10).
+  const [monthSummary, setMonthSummary] = useState<MonthSummary | null>(null)
+  // Monotonic request id used to recognize append-eligible results (Req 4.7).
+  const requestIdRef = useRef(0)
   const [occupants, setOccupants] = useState<Occupant[]>([])
   const hasLoadedOnce = useRef(false)
 
@@ -252,6 +321,37 @@ export default function PaymentsScreen() {
   })
   const [sortField, setSortField] = useState<"amount" | "dueDate">("dueDate")
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
+
+  // Derive the server-side filter set from the UI filter state. month/year come
+  // from the `selectedMonth` "Month YYYY" string; status and search are passed
+  // through to the RPC (server-side month/year/status/search filtering).
+  const filters = useMemo<PaymentFilters>(() => {
+    const [monthName, yearStr] = selectedMonth.split(" ")
+    return {
+      month: getMonthNumber(monthName),
+      year: parseInt(yearStr, 10) || new Date().getFullYear(),
+      status: statusFilter,
+      search: searchQuery,
+    }
+  }, [selectedMonth, statusFilter, searchQuery])
+
+  // The screen's nested `Payment[]`, derived from the server-paginated rows. The
+  // page is already filtered (owner/month/year/status/search) and ordered by the
+  // server; only the in-page sort is applied client-side over the loaded rows.
+  const payments = useMemo<Payment[]>(
+    () => pageState.rows.map((r) => mapRowToPayment(r, user?.id ?? "")),
+    [pageState.rows, user?.id],
+  )
+
+  // Mirror of pageState for use inside callbacks without adding it to their
+  // dependency lists (avoids re-creating fetch callbacks on every page load).
+  const pageStateRef = useRef(pageState)
+  pageStateRef.current = pageState
+
+  // Mirror of the active filters, kept current synchronously so the (stable)
+  // fetch callbacks always read the latest filter set.
+  const filtersRef = useRef(filters)
+  filtersRef.current = filters
 
   // Modals & Bottom Sheets state
   const [detailModalVisible, setDetailModalVisible] = useState(false)
@@ -351,23 +451,27 @@ export default function PaymentsScreen() {
       setLoading(false)
       return
     }
+
+    const activeFilters = filtersRef.current
+    const sig = filterSignature(activeFilters)
+    const reqId = ++requestIdRef.current
+
     try {
       if (!silent) {
-        if (payments.length === 0) setLoading(true)
+        if (pageStateRef.current.rows.length === 0) setLoading(true)
         else setIsRefreshing(true)
       }
 
-      const [monthName, yearStr] = selectedMonth.split(" ")
-      const monthVal = getMonthNumber(monthName)
-      const yearVal = parseInt(yearStr, 10) || new Date().getFullYear()
+      const monthVal = activeFilters.month
+      const yearVal = activeFilters.year
 
-      // Fetch payments, occupants, portal token, PG details, and owner (for chatbot_enabled) concurrently
-      const [payResult, tenantResult, linkResult, pgResult, ownerResult] = await Promise.all([
-        supabase
-          .from("payments")
-          .select("*, tenants_table(name, mobile_number, rooms_table(room_number, rent_amount))")
-          .eq("owner_id", user.id)
-          .order("due_date", { ascending: false }),
+      // Fetch the first page (offset 0) via the bounded RPC alongside occupants,
+      // portal token, PG details, owner (chatbot_enabled), and the month summary
+      // concurrently. The unbounded `from("payments").select("*")` is replaced by
+      // fetchPaymentsPage; the carousel totals come from fetchMonthSummary (Req 5.5).
+      const [pageResult, summaryResult, tenantResult, linkResult, pgResult, ownerResult] = await Promise.all([
+        fetchPaymentsPage(supabase as unknown as SupabaseLike, buildPageArgs(user.id, activeFilters, 0)),
+        fetchMonthSummary(supabase as unknown as SupabaseLike, buildSummaryArgs(user.id, activeFilters)),
         supabase
           .from("tenants_table")
           .select("id, name, extra_charges, rooms_table(room_number, rent_amount)")
@@ -393,8 +497,20 @@ export default function PaymentsScreen() {
           .single()
       ])
 
-      if (payResult.error) throw payResult.error
-      setPayments((payResult.data || []) as any)
+      if (!pageResult.ok) throw pageResult.error
+      // First page for these filters: reset to a fresh state and apply the page so
+      // the rows are replaced (not appended). Previous rows stayed visible until now.
+      setPageState(reducePageResult(initialPageState(activeFilters), pageResult.data, reqId, sig))
+
+      // Source the carousel monetary totals from the summary RPC (Req 5.5). On
+      // failure, keep the totals unavailable (null) rather than substituting
+      // page-derived totals (Req 5.10).
+      if (summaryResult.ok) {
+        setMonthSummary(summaryResult.data)
+      } else {
+        console.error("Error fetching payment month summary:", summaryResult.error)
+        setMonthSummary(null)
+      }
 
       if (tenantResult.error) throw tenantResult.error
       setOccupants((tenantResult.data || []) as any)
@@ -430,7 +546,41 @@ export default function PaymentsScreen() {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id, payments.length, selectedMonth])
+  }, [user?.id])
+
+  // Load the next page for the current filters and append it (Req 4.2, 4.3). Keeps
+  // the currently displayed rows visible; a short page marks the list fully loaded.
+  const loadMorePayments = useCallback(async () => {
+    if (!user?.id) return
+    const current = pageStateRef.current
+    if (current.fullyLoaded || isLoadingMore || current.rows.length === 0) return
+
+    const activeFilters = filtersRef.current
+    const sig = filterSignature(activeFilters)
+    // Only advance the page if the loaded rows still belong to the active filters.
+    if (sig !== current.filterSignature) return
+
+    const reqId = ++requestIdRef.current
+    setIsLoadingMore(true)
+    try {
+      const result = await fetchPaymentsPage(
+        supabase as unknown as SupabaseLike,
+        buildPageArgs(user.id, activeFilters, current.pageOffset),
+      )
+      if (!result.ok) throw result.error
+      setPageState((prev) =>
+        // Guard against a filter change that happened mid-flight: only append when
+        // the incoming page still matches the displayed filter signature.
+        sig === prev.filterSignature
+          ? reducePageResult(prev, result.data, reqId, sig)
+          : prev,
+      )
+    } catch (err) {
+      console.error("Error loading more payments:", err)
+    } finally {
+      setIsLoadingMore(false)
+    }
+  }, [user?.id, isLoadingMore])
 
   const handleRefreshPortalLink = async () => {
     if (!user?.id) return
@@ -543,10 +693,31 @@ export default function PaymentsScreen() {
   useFocusEffect(
     useCallback(() => {
       if (user?.id) {
-        void fetchPayments(hasLoadedOnce.current)
+        // Defer the on-focus fetch past the navigation transition / first interactive
+        // paint (Change A); cached/skeleton content renders first, then the load runs
+        // once per focus and is cancelled on blur-before-run (no drop, no duplicate).
+        const handle = scheduleAfterInteractions(() => {
+          void fetchPayments(hasLoadedOnce.current)
+        })
+        return () => handle.cancel()
       }
     }, [user?.id, fetchPayments])
   )
+
+  // Filter changes (month/year/status/search) reset the offset to 0 and request the
+  // first page for the new filters (Req 4.6). Previous rows stay visible until the
+  // new first page arrives (the reducer replaces them only on result). A short debounce
+  // coalesces rapid search keystrokes. The first focus load handles the initial fetch,
+  // so this effect skips running before the first load has happened.
+  const filterSig = useMemo(() => filterSignature(filters), [filters])
+  useEffect(() => {
+    if (!user?.id || !hasLoadedOnce.current) return
+    const handle = setTimeout(() => {
+      void fetchPayments(true)
+    }, 250)
+    return () => clearTimeout(handle)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterSig, user?.id, fetchPayments])
 
   // Realtime updates
   useEffect(() => {
@@ -791,13 +962,14 @@ export default function PaymentsScreen() {
     setMarkingPaidId(paymentId)
     
     // Optimistic UI updates
-    setPayments((prev) =>
-      prev.map((p) =>
-        p.id === paymentId
-          ? { ...p, status: "paid" as const, paid_at: new Date().toISOString(), payment_method: method }
-          : p
-      )
-    )
+    setPageState((prev) => ({
+      ...prev,
+      rows: prev.rows.map((r) =>
+        r.id === paymentId
+          ? { ...r, status: "paid", paid_at: new Date().toISOString(), payment_method: method }
+          : r,
+      ),
+    }))
     if (selectedPayment?.id === paymentId) {
       setSelectedPayment((prev) =>
         prev ? { ...prev, status: "paid" as const, paid_at: new Date().toISOString(), payment_method: method } : null
@@ -848,9 +1020,12 @@ export default function PaymentsScreen() {
     const now = new Date().toISOString()
 
     // Optimistic Update
-    setPayments((prev) =>
-      prev.map((p) => (p.id === payment.id ? { ...p, status: "paid" as const, paid_at: now, verified_at: now } : p))
-    )
+    setPageState((prev) => ({
+      ...prev,
+      rows: prev.rows.map((r) =>
+        r.id === payment.id ? { ...r, status: "paid", paid_at: now, verified_at: now } : r,
+      ),
+    }))
 
     try {
       const { error } = await (supabase as any)
@@ -888,9 +1063,12 @@ export default function PaymentsScreen() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
     
     // Optimistic update (return to pending)
-    setPayments((prev) =>
-      prev.map((p) => (p.id === payment.id ? { ...p, status: "pending" as const, verification_notes: rejectNotes } : p))
-    )
+    setPageState((prev) => ({
+      ...prev,
+      rows: prev.rows.map((r) =>
+        r.id === payment.id ? { ...r, status: "pending", verification_notes: rejectNotes } : r,
+      ),
+    }))
 
     try {
       const { error } = await (supabase as any)
@@ -1169,36 +1347,19 @@ export default function PaymentsScreen() {
     }
   }
 
-  // Filter & Sort Logic matching usePaymentFilters hook
+  // Server already filters by owner/month/year/status/search; only the in-page sort
+  // is applied client-side over the deterministic server order (Req 9.4).
   const filteredPayments = useMemo(() => {
-    return payments
-      .filter((p) => {
-        // 1. Month-Year Filtering
-        const monthName = new Date(2000, p.month - 1).toLocaleString("en-US", { month: "long" })
-        const matchesMonth = `${monthName} ${p.year}` === selectedMonth
-
-        // 2. Search query matching
-        const tenantName = p.tenants_table?.name || ""
-        const roomNum = p.tenants_table?.rooms_table?.room_number || ""
-        const matchesSearch =
-          tenantName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          roomNum.toLowerCase().includes(searchQuery.toLowerCase())
-
-        // 3. Status filter matching
-        const matchesStatus = statusFilter === "all" || p.status === statusFilter
-
-        return matchesMonth && matchesSearch && matchesStatus
-      })
-      .sort((a, b) => {
-        let comparison = 0
-        if (sortField === "amount") {
-          comparison = a.total_amount - b.total_amount
-        } else {
-          comparison = new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
-        }
-        return sortDirection === "asc" ? comparison : -comparison
-      })
-  }, [payments, selectedMonth, searchQuery, statusFilter, sortField, sortDirection])
+    return [...payments].sort((a, b) => {
+      let comparison = 0
+      if (sortField === "amount") {
+        comparison = a.total_amount - b.total_amount
+      } else {
+        comparison = new Date(a.due_date).getTime() - new Date(b.due_date).getTime()
+      }
+      return sortDirection === "asc" ? comparison : -comparison
+    })
+  }, [payments, sortField, sortDirection])
 
   // Totals calculations matching web app
   const currentMonthPayments = useMemo(() => {
@@ -1209,16 +1370,26 @@ export default function PaymentsScreen() {
   }, [payments, selectedMonth])
 
   const statusFilterOptions = useMemo(() => {
+    // Per-status counts are derived from the currently loaded pages only, so showing
+    // them for every option (especially non-selected ones) would mislead the user.
+    // We therefore attach a count ONLY to the currently selected status, and the
+    // dropdown list hides option counts entirely (see hideOptionCounts on the
+    // InlineSelect). The trigger still shows the selected option's chip.
+    const countFor = (value: string) =>
+      value === "all"
+        ? currentMonthPayments.length
+        : currentMonthPayments.filter((p) => p.status === value).length
+
     return [
       { 
         value: "all", 
         shortLabel: "All", 
-        count: currentMonthPayments.length
+        count: statusFilter === "all" ? countFor("all") : undefined
       },
       { 
         value: "paid", 
         shortLabel: "Paid", 
-        count: currentMonthPayments.filter(p => p.status === "paid").length,
+        count: statusFilter === "paid" ? countFor("paid") : undefined,
         colorClass: "text-emerald-600 dark:text-emerald-300",
         bgClass: "bg-emerald-50 dark:bg-emerald-500/10",
         borderClass: "border-emerald-200 dark:border-emerald-500/30",
@@ -1229,7 +1400,7 @@ export default function PaymentsScreen() {
       { 
         value: "pending", 
         shortLabel: "Pending", 
-        count: currentMonthPayments.filter(p => p.status === "pending").length,
+        count: statusFilter === "pending" ? countFor("pending") : undefined,
         colorClass: "text-amber-600 dark:text-amber-300",
         bgClass: "bg-amber-50 dark:bg-amber-500/10",
         borderClass: "border-amber-200 dark:border-amber-500/30",
@@ -1240,7 +1411,7 @@ export default function PaymentsScreen() {
       { 
         value: "late", 
         shortLabel: "Late", 
-        count: currentMonthPayments.filter(p => p.status === "late").length,
+        count: statusFilter === "late" ? countFor("late") : undefined,
         colorClass: "text-rose-600 dark:text-rose-300",
         bgClass: "bg-rose-50 dark:bg-rose-500/10",
         borderClass: "border-rose-200 dark:border-rose-500/30",
@@ -1251,7 +1422,7 @@ export default function PaymentsScreen() {
       { 
         value: "submitted", 
         shortLabel: "Review", 
-        count: currentMonthPayments.filter(p => p.status === "submitted").length,
+        count: statusFilter === "submitted" ? countFor("submitted") : undefined,
         colorClass: "text-purple-600 dark:text-purple-300",
         bgClass: "bg-purple-50 dark:bg-purple-500/10",
         borderClass: "border-purple-200 dark:border-purple-500/30",
@@ -1260,35 +1431,19 @@ export default function PaymentsScreen() {
         iconColor: isDark ? "#c084fc" : "#a855f7"
       },
     ]
-  }, [currentMonthPayments, isDark])
+  }, [currentMonthPayments, isDark, statusFilter])
 
-  const totalCollected = useMemo(() => {
-    return currentMonthPayments
-      .filter((p) => p.status === "paid")
-      .reduce((sum, p) => sum + p.total_amount, 0)
-  }, [currentMonthPayments])
-
-  const totalPending = useMemo(() => {
-    return currentMonthPayments
-      .filter((p) => p.status === "pending")
-      .reduce((sum, p) => sum + p.total_amount, 0)
-  }, [currentMonthPayments])
-
-  const totalLate = useMemo(() => {
-    return currentMonthPayments
-      .filter((p) => p.status === "late")
-      .reduce((sum, p) => sum + p.total_amount, 0)
-  }, [currentMonthPayments])
-
-  const totalSubmitted = useMemo(() => {
-    return currentMonthPayments
-      .filter((p) => p.status === "submitted")
-      .reduce((sum, p) => sum + p.total_amount, 0)
-  }, [currentMonthPayments])
+  // Carousel monetary totals are sourced exclusively from the month-summary RPC
+  // result (Req 5.5). When the summary is unavailable, the totals are not substituted
+  // with page-derived sums (Req 5.10); they read as unavailable (null) instead.
+  const totalCollected = monthSummary?.total_collected ?? null
+  const totalPending = monthSummary?.total_pending ?? null
+  const totalLate = monthSummary?.total_late ?? null
+  const totalSubmitted = monthSummary?.total_submitted ?? null
 
   const carouselData: {
     title: string
-    amount: number
+    amount: number | null
     text: string
     border: string
     bg: string[]
@@ -1506,7 +1661,7 @@ export default function PaymentsScreen() {
                       {card.title}
                     </Text>
                     <Text className="text-base font-black text-foreground dark:text-foreground-dark tracking-tight mt-0.5">
-                      ₹{card.amount.toLocaleString()}
+                      {card.amount == null ? "—" : `₹${card.amount.toLocaleString()}`}
                     </Text>
                   </View>
                 </View>
@@ -1572,6 +1727,7 @@ export default function PaymentsScreen() {
             isDark={isDark}
             overlay={false}
             triggerHeightClassName="h-9"
+            hideOptionCounts
             isActive={statusFilter !== "all"}
             open={openDropdown === "filter-status"}
             onOpenChange={(o) => {
@@ -1609,6 +1765,17 @@ export default function PaymentsScreen() {
             keyExtractor={(item) => `${item.id}-${item.status}`}
             showsVerticalScrollIndicator={false}
             contentContainerStyle={{ paddingBottom: 110 }}
+            onEndReachedThreshold={0.4}
+            onEndReached={() => {
+              void loadMorePayments()
+            }}
+            ListFooterComponent={
+              isLoadingMore ? (
+                <View className="py-5 items-center justify-center">
+                  <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
+                </View>
+              ) : null
+            }
             refreshControl={
               <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={isDark ? "#0091ff" : "#0071df"} />
             }

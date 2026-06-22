@@ -435,7 +435,7 @@ export type Database = {
       settings: {
         Row: {
           created_at: string
-          default_maintenance_fee: number | null
+          default_deposit_fees: number | null
           grace_period_days: number | null
           id: number
           is_merchant: boolean | null
@@ -450,7 +450,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
-          default_maintenance_fee?: number | null
+          default_deposit_fees?: number | null
           grace_period_days?: number | null
           id?: number
           is_merchant?: boolean | null
@@ -465,7 +465,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
-          default_maintenance_fee?: number | null
+          default_deposit_fees?: number | null
           grace_period_days?: number | null
           id?: number
           is_merchant?: boolean | null

@@ -289,32 +289,19 @@ class ChatbotService:
 
         room_number = self._extract_room_number(text) or (conversation_state.get("current_room") or "").replace("Room", "").strip()
         room = self._find_room_by_number(room_number, available_rooms)
-        default_maintenance = owner_settings.get("default_maintenance_fee") if owner_settings else None
+        default_deposit = owner_settings.get("default_deposit_fees") if owner_settings else None
         refund_deposit = owner_settings.get("refund_deposit") if owner_settings else None
         asks_maintenance = self._asks_maintenance_fee(text)
         asks_refund = self._asks_refund(text)
         parts = []
 
-        if asks_maintenance and room:
-            room_maintenance = room.get("maintenance")
-            if room_maintenance is not None:
+        if asks_maintenance:
+            if default_deposit is not None:
                 parts.append(
-                    f"Room {room['room_number']} has a maintenance fee of Rs {room_maintenance}/month. "
-                )
-            elif default_maintenance is not None:
-                parts.append(
-                    f"The default maintenance fee is Rs {default_maintenance}/month. "
-                    f"Room {room['room_number']} may have room-specific charges, so the PG can confirm the exact advance/deposit when you proceed."
+                    f"There is no monthly maintenance fee for rooms. The default security deposit is Rs {default_deposit}."
                 )
             else:
-                parts.append("Maintenance fee details are not configured for this room yet.")
-        elif asks_maintenance and default_maintenance is not None:
-            parts.append(
-                f"The default maintenance fee is Rs {default_maintenance}/month. "
-                "Maintenance can vary for specific rooms. Do you want to check the maintenance fee for any room number?"
-            )
-        elif asks_maintenance:
-            parts.append("Maintenance or advance fee details are not configured yet. Which room are you checking so I can keep the query specific?")
+                parts.append("There is no monthly maintenance fee. The security deposit details are not configured yet.")
 
         if asks_refund:
             if refund_deposit is not None:
@@ -533,7 +520,7 @@ class ChatbotService:
             if owner_settings:
                 settings_context = (
                     f"Grace Period Days: {owner_settings.get('grace_period_days', 'N/A')}\n"
-                    f"Default Maintenance Fee: ₹{owner_settings.get('default_maintenance_fee', 'N/A')}\n"
+                    f"Default Deposit Fees: ₹{owner_settings.get('default_deposit_fees', 'N/A')}\n"
                     f"Refund Deposit: ₹{owner_settings.get('refund_deposit', 'N/A')}\n"
                     f"Rent Due Day of Month: {owner_settings.get('rent_due_day', 'N/A')}\n"
                     f"Payment Instructions: {owner_settings.get('payment_instructions', 'N/A')}\n"
@@ -586,7 +573,7 @@ class ChatbotService:
             pg_details = await supabase_service.get_pg_details(owner_id)
             owner_settings = await supabase_service.get_owner_settings(owner_id)
             pg_name = pg_details[0].get("pg_name", "Staytraq PG") if pg_details else "Staytraq PG"
-            default_maintenance_fee = owner_settings.get("default_maintenance_fee") if owner_settings else None
+            default_deposit_fees = owner_settings.get("default_deposit_fees") if owner_settings else None
 
             # Format room availability context (calculating sharing type based on total beds)
             rooms_context = "No rooms are currently available."
@@ -594,12 +581,11 @@ class ChatbotService:
                 rooms_list = []
                 for r in available_rooms:
                     sharing_type = f"{r['total_beds']} sharing" if r['total_beds'] > 1 else "single sharing"
-                    maint_str = f", Maintenance: ₹{r['maintenance']}/month" if r.get('maintenance') else ""
                     floor_str = f", Floor: {r['floor_no']}" if r.get('floor_no') is not None else ""
                     rooms_list.append(
                         f"- Room {r['room_number']} ({sharing_type}, {r['room_type']}): "
                         f"{r['vacant_beds']} beds vacant out of {r['total_beds']} total, "
-                        f"Rent: ₹{r['rent_amount']}/month{floor_str}{maint_str}"
+                        f"Rent: ₹{r['rent_amount']}/month{floor_str}"
                     )
                 rooms_context = "\n".join(rooms_list)
 
@@ -614,7 +600,7 @@ class ChatbotService:
                 f"Food Menu:\n{food_menu}\n"
                 f"PG Location/Address: {fixed_address}\n"
                 f"Visiting Hours: {visiting_hours}\n"
-                f"Default Maintenance Fee: Rs {default_maintenance_fee if default_maintenance_fee is not None else 'Not configured'}\n"
+                f"Default Deposit Fees: Rs {default_deposit_fees if default_deposit_fees is not None else 'Not configured'}\n"
                 f"Refundable Deposit: Rs {refund_deposit if refund_deposit is not None else 'Not configured'}\n"
             )
 

@@ -6,6 +6,11 @@ const months = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ]
 
+function normalizeMobileLast10(mobileNumber: string) {
+  const clean = mobileNumber.replace(/\D/g, '')
+  return clean.length >= 10 ? clean.slice(-10) : null
+}
+
 // GET: Validates the public portal token and returns the owner's payment settings + month details
 export async function GET(
   request: Request,
@@ -83,6 +88,11 @@ export async function POST(
       return NextResponse.json({ error: 'Registered mobile number is required' }, { status: 400 })
     }
 
+    const normalizedMobile = normalizeMobileLast10(mobile_number)
+    if (!normalizedMobile) {
+      return NextResponse.json({ error: 'Please enter a valid 10-digit mobile number' }, { status: 400 })
+    }
+
     const supabase = createAdminClient()
 
     // 1. Fetch monthly payment link matching the portal_token
@@ -96,38 +106,28 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid or expired payment portal link' }, { status: 404 })
     }
 
-    // 2. Fetch active tenants under this owner to find a mobile number match
+    // 2. Directly find the active tenant by owner and normalized last-10 mobile digits.
     const { data: tenants, error: tenantsError } = await supabase
       .from('tenants_table')
       .select(`
         id,
         name,
         payment_code,
-        mobile_number,
         rooms_table (
           room_number
         )
       `)
       .eq('owner_id', linkRecord.owner_id)
+      .eq('mobile_number_normalized', normalizedMobile)
       .eq('status', 'active')
+      .limit(1)
 
-    if (tenantsError || !tenants) {
+    if (tenantsError) {
       console.error('[pay/token] Error fetching tenants:', JSON.stringify(tenantsError))
-      return NextResponse.json({ error: 'No active tenants found for this property' }, { status: 404 })
+      return NextResponse.json({ error: 'Database error verifying tenant identity' }, { status: 500 })
     }
 
-    // Clean input mobile number
-    const cleanInput = mobile_number.replace(/\D/g, '')
-    if (cleanInput.length < 10) {
-      return NextResponse.json({ error: 'Please enter a valid 10-digit mobile number' }, { status: 400 })
-    }
-
-    // Look for a matching tenant
-    const matchedTenant = tenants.find((t) => {
-      if (!t.mobile_number) return false
-      const dbClean = t.mobile_number.replace(/\D/g, '')
-      return dbClean.slice(-10) === cleanInput.slice(-10)
-    })
+    const matchedTenant = tenants?.[0]
 
     if (!matchedTenant) {
       return NextResponse.json({ error: 'No tenant found matching this mobile number. Please check or contact the property owner.' }, { status: 404 })

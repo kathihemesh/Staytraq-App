@@ -27,9 +27,17 @@ interface MobilePaymentListProps {
   hasActiveFilters: boolean;
   onRefresh: () => void;
   selectedMonth: string;
+  /** Requests the next page of payments when the list nears its end. Data fetching is owned by the page. */
+  onLoadMore?: () => void;
+  /** Whether more pages are available to load. When false, no further load-more requests are made. */
+  hasMore?: boolean;
+  /** Whether a next-page request is currently in flight. */
+  isLoadingMore?: boolean;
 }
 
 const PULL_THRESHOLD = 64;
+/** Distance (px) from the bottom of the scroll container at which the next page is requested. */
+const LOAD_MORE_THRESHOLD = 200;
 
 export function MobilePaymentList({
   payments,
@@ -41,6 +49,9 @@ export function MobilePaymentList({
   hasActiveFilters,
   onRefresh,
   selectedMonth,
+  onLoadMore,
+  hasMore = false,
+  isLoadingMore = false,
 }: MobilePaymentListProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const [scrollY, setScrollY] = useState(0);
@@ -51,9 +62,22 @@ export function MobilePaymentList({
   const pullOpacity = useTransform(pullY, [0, PULL_THRESHOLD], [0, 1]);
   const pullRotate = useTransform(pullY, [0, PULL_THRESHOLD], [0, 360]);
 
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    setScrollY((e.target as HTMLDivElement).scrollTop);
-  }, []);
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.target as HTMLDivElement;
+      setScrollY(el.scrollTop);
+
+      // Scroll-end trigger: request the next page as the user nears the bottom.
+      // Current rows stay visible; the page owns the actual data fetch.
+      if (onLoadMore && hasMore && !isLoadingMore && !isLoading) {
+        const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (distanceFromBottom <= LOAD_MORE_THRESHOLD) {
+          onLoadMore();
+        }
+      }
+    },
+    [onLoadMore, hasMore, isLoadingMore, isLoading]
+  );
 
   const paidCount = payments.filter((p) => p.status === "paid").length;
 
@@ -153,6 +177,14 @@ export function MobilePaymentList({
               )}
             </motion.div>
           </AnimatePresence>
+        )}
+
+        {/* Load-more footer: keeps current rows visible while the next page loads */}
+        {!isLoading && payments.length > 0 && isLoadingMore && (
+          <div className="flex items-center justify-center py-4">
+            <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+            <span className="ml-2 text-xs text-muted-foreground">Loading more…</span>
+          </div>
         )}
       </div>
 

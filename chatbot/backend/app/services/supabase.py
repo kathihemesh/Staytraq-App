@@ -242,7 +242,7 @@ class SupabaseService:
 
     async def get_owner_settings(self, owner_id: str) -> dict:
         """Retrieves settings details for the owner."""
-        url = f"{self.url}/rest/v1/settings?owner_id=eq.{owner_id}&select=grace_period_days,default_maintenance_fee,refund_deposit,rent_due_day,payment_instructions,upi_id,upi_name,whatsapp_invite_link"
+        url = f"{self.url}/rest/v1/settings?owner_id=eq.{owner_id}&select=grace_period_days,default_deposit_fees,refund_deposit,rent_due_day,payment_instructions,upi_id,upi_name,whatsapp_invite_link"
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(url, headers=self.headers, timeout=10.0)

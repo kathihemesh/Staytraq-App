@@ -49,6 +49,13 @@ type InlineSelectProps = {
   /** When set, re-measure overlay position on keyboard show/hide (keeps menu aligned). */
   keyboardHeight?: number
   triggerHeightClassName?: string
+  /**
+   * When true, count chips are NOT rendered next to options inside the dropdown
+   * list. The selected option's count chip on the trigger is still shown. Use this
+   * where per-option counts would be misleading (e.g. page-derived counts that do
+   * not reflect the full dataset).
+   */
+  hideOptionCounts?: boolean
 }
 
 type MenuLayout = { x: number; y: number; width: number; height: number }
@@ -72,6 +79,7 @@ export function InlineSelect({
   overlay = false,
   keyboardHeight = 0,
   triggerHeightClassName,
+  hideOptionCounts = false,
 }: InlineSelectProps) {
   const triggerRef = useRef<View>(null)
   const [menuLayout, setMenuLayout] = useState<MenuLayout | null>(null)
@@ -182,7 +190,7 @@ export function InlineSelect({
               {opt.listLabel ?? opt.shortLabel}
             </Text>
 
-            {typeof opt.count === "number" && (
+            {!hideOptionCounts && typeof opt.count === "number" && (
               <View
                 className={clsx(
                   "h-5 min-w-[20px] px-1 rounded-full items-center justify-center ml-2 border border-slate-200 dark:border-slate-700",

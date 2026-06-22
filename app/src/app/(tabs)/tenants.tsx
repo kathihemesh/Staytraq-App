@@ -4,6 +4,7 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 import { useLocalSearchParams, router, useFocusEffect } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
+import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
 import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User, Hotel, Edit3, Trash2, Camera, Upload, Check, AlertTriangle, Info, Maximize2, Copy, Clock, ShieldCheck, LogOut, DollarSign, Lock } from "lucide-react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import Svg, { Path } from "react-native-svg"
@@ -451,7 +452,7 @@ export default function TenantsScreen() {
           .order("name", { ascending: true }),
         supabase
           .from("settings")
-          .select("whatsapp_invite_link, upi_id, upi_name, rent_due_day, refund_deposit")
+          .select("whatsapp_invite_link, upi_id, upi_name, rent_due_day, refund_deposit, default_deposit_fees")
           .eq("owner_id", user.id)
           .maybeSingle(),
         supabase
@@ -665,7 +666,13 @@ export default function TenantsScreen() {
   useFocusEffect(
     useCallback(() => {
       if (user?.id) {
-        void fetchData(hasLoadedOnce.current)
+        // Defer the on-focus fetch past the navigation transition / first interactive
+        // paint (Change A); cached/skeleton content renders first, then the load runs
+        // once per focus and is cancelled on blur-before-run (no drop, no duplicate).
+        const handle = scheduleAfterInteractions(() => {
+          void fetchData(hasLoadedOnce.current)
+        })
+        return () => handle.cancel()
       }
     }, [user?.id, fetchData])
   )
@@ -847,7 +854,7 @@ export default function TenantsScreen() {
     setEmail("")
     setJoinDate(new Date().toISOString().split("T")[0])
     setRentDueDay((ownerSettings?.rent_due_day || 5).toString())
-    setDepositAmount("10000")
+    setDepositAmount((ownerSettings?.default_deposit_fees ?? 10000).toString())
     setExtraCharges("0")
     setSelectedRoomId("")
     setTenantStatus("active")

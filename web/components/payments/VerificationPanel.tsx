@@ -17,9 +17,12 @@ export function VerificationPanel({ payment, onApprove, onReject }: Verification
   const [signedUrl, setSignedUrl] = useState<string | null>(null);
   const [isLoadingImage, setIsLoadingImage] = useState(false);
 
-  // Fetch signed URL when payment has a screenshot
+  // Resolve a fresh signed URL whenever the detail view opens for a record that
+  // has a screenshot path. This component mounts on drawer open, so the request
+  // runs on every open (no caching across opens), per Req 7.2. Records with no
+  // screenshot_path request nothing (Req 7.3).
   useEffect(() => {
-    if (!payment.screenshot_url) return;
+    if (!payment.screenshot_path) return;
     setIsLoadingImage(true);
     fetch(`/api/payments/${payment.id}/screenshot`)
       .then((res) => res.json())
@@ -28,7 +31,7 @@ export function VerificationPanel({ payment, onApprove, onReject }: Verification
       })
       .catch(console.error)
       .finally(() => setIsLoadingImage(false));
-  }, [payment.id, payment.screenshot_url]);
+  }, [payment.id, payment.screenshot_path]);
 
   const handleReject = () => {
     if (!isRejecting) {
@@ -46,7 +49,7 @@ export function VerificationPanel({ payment, onApprove, onReject }: Verification
       
       <div className="bg-muted/20 border border-purple-500/20 rounded-xl p-4 space-y-4">
         {/* Payment Proof Image */}
-        {payment.screenshot_url && (
+        {payment.screenshot_path && (
           <div className="space-y-2">
             <p className="text-sm font-medium">Payment Proof</p>
             {isLoadingImage ? (

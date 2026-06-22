@@ -13,7 +13,10 @@ export interface Payment {
   month: string;
   year: number;
   payment_token?: string;
-  screenshot_url?: string;
+  // Storage object path for the proof screenshot. The list never resolves this to a
+  // signed URL; the detail view requests a fresh signed URL on open (see
+  // VerificationPanel). Null/undefined means the record has no screenshot.
+  screenshot_path?: string | null;
   utr_number?: string;
   verification_notes?: string;
 }
@@ -62,27 +65,16 @@ export function usePaymentFilters(payments: Payment[]) {
     }
   };
 
+  // Month/year, status, and search filtering now happen server-side via the
+  // payments-page RPCs (see web/lib/payments/payments-page.ts). The hook retains
+  // that UI state (selectedMonth, statusFilter, debouncedSearch) so the page can
+  // forward it to the server, but it no longer filters the dataset locally.
+  //
+  // Only the in-page sort is applied client-side, over the deterministic server
+  // order, so the already-loaded rows can be reordered without a refetch.
   const filteredAndSortedPayments = useMemo(() => {
-    let result = [...payments];
+    const result = [...payments];
 
-    // 1. Filter by Month/Year
-    result = result.filter(p => `${p.month} ${p.year}` === selectedMonth);
-
-    // 2. Filter by Search
-    if (debouncedSearch) {
-      const lowerSearch = debouncedSearch.toLowerCase();
-      result = result.filter(p => 
-        p.tenantName.toLowerCase().includes(lowerSearch) ||
-        p.roomNumber.toLowerCase().includes(lowerSearch)
-      );
-    }
-
-    // 3. Filter by Status
-    if (statusFilter !== "all") {
-      result = result.filter(p => p.status === statusFilter);
-    }
-
-    // 4. Sort
     result.sort((a, b) => {
       let comparison = 0;
       if (sortField === "amount") {
@@ -95,7 +87,7 @@ export function usePaymentFilters(payments: Payment[]) {
     });
 
     return result;
-  }, [payments, debouncedSearch, statusFilter, sortField, sortDirection, selectedMonth]);
+  }, [payments, sortField, sortDirection]);
 
   return {
     searchValue,
@@ -107,6 +99,9 @@ export function usePaymentFilters(payments: Payment[]) {
     toggleSort,
     selectedMonth,
     setSelectedMonth,
+    // Debounced search value, exposed so the page can drive the server-side
+    // search RPC (the hook no longer filters the dataset locally).
+    debouncedSearch,
     filteredPayments: filteredAndSortedPayments
   };
 }

@@ -17,13 +17,13 @@ import {
   Animated,
   StyleSheet,
   Share,
-  KeyboardAvoidingView,
-  InteractionManager
+  KeyboardAvoidingView
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useFocusEffect } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
+import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
 import { 
   Inbox, 
   Copy, 
@@ -210,10 +210,13 @@ export default function ComplaintsScreen() {
   useFocusEffect(
     useCallback(() => {
       if (user?.id) {
-        const task = InteractionManager.runAfterInteractions(() => {
+        // Defer the on-focus fetch past the navigation transition / first interactive
+        // paint via the shared scheduler (Change A); the load runs once per focus and is
+        // cancelled on blur-before-run so it is neither dropped nor duplicated.
+        const handle = scheduleAfterInteractions(() => {
           void fetchComplaintsData(hasLoadedOnce.current)
         })
-        return () => task.cancel()
+        return () => handle.cancel()
       }
     }, [user?.id, fetchComplaintsData])
   )
