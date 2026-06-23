@@ -1,6 +1,6 @@
 "use client"
 
-import { Bell, Loader2 } from "lucide-react"
+import { Bell, Loader2, RefreshCw } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -12,17 +12,23 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { MobileMenuButton } from "./sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { useAuth } from "@/components/auth-provider"
+import { cn } from "@/lib/utils"
 
 interface HeaderProps {
   title: string
-  onMenuClick: () => void
-  isMobileMenuOpen: boolean
+  /**
+   * Manual refresh handler (e.g. `useDashboardHome().refresh()`). When provided,
+   * the header renders a refresh control; while a refetch is in flight the
+   * control shows a spinner and is disabled (Req 1.5, 1.6, 12.5).
+   */
+  onRefresh?: () => void
+  /** True while a refresh is in flight; spins the icon and disables the control. */
+  isRefreshing?: boolean
 }
 
-export function Header({ title, onMenuClick, isMobileMenuOpen }: HeaderProps) {
+export function Header({ title, onRefresh, isRefreshing = false }: HeaderProps) {
   const { logout, user } = useAuth()
   const [isLoggingOut, setIsLoggingOut] = useState(false)
   const notificationCount = 3
@@ -52,13 +58,29 @@ export function Header({ title, onMenuClick, isMobileMenuOpen }: HeaderProps) {
     >
       <div className="flex h-16 items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <div className="flex items-center gap-2 lg:gap-3">
-          <MobileMenuButton onClick={onMenuClick} isOpen={isMobileMenuOpen} />
           <h1 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl lg:text-2xl">
             {title}
           </h1>
         </div>
 
         <div className="flex items-center gap-1 sm:gap-3" role="toolbar" aria-label="Header actions">
+          {/* Manual refresh control - rendered only when a refresh handler is wired */}
+          {onRefresh && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              aria-label="Refresh dashboard data"
+              aria-busy={isRefreshing}
+            >
+              <RefreshCw
+                className={cn("h-5 w-5", isRefreshing && "animate-spin")}
+                aria-hidden="true"
+              />
+            </Button>
+          )}
+
           {/* Theme Toggle - Desktop only */}
           <div className="hidden sm:block">
             <ThemeToggle />

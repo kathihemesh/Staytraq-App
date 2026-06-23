@@ -1,409 +1,254 @@
 "use client"
 
-import { useState, useEffect, useCallback, useRef } from "react"
-import { useAuth } from "@/components/auth-provider"
+// Feature: web-dashboard-parity
+// Task 16.1: Complete dashboard home page wiring
+//
+// This page mounts `useDashboardHome` (the data lifecycle hook), renders all
+// sections (Time_Filter, Priority_Cards, Revenue/Occupancy/Payment_Status overviews,
+// Monthly_Collection_Chart, Tasks_Section, Recent_Activity, Leads_Section) inside
+// the extended Dashboard_Layout, connects the three modal panels (Payment_Verification,
+// Complaint_Detail, Lead_Detail), wires the Chatbot_Launcher (conditional on
+// chatbot_enabled), and applies the responsive layout: single-column below lg,
+// multi-column at lg+ (Requirements 1.1, 1.4–1.8, 13.1–13.3, 13.6, 16.1).
+//
+// Auth states, loading skeleton, ready/error phases, and the manual refresh control
+// are wired to `useDashboardHome()`'s status flags and API (phase, isRefreshing,
+// isStale, refresh, retryInitial). Panels open via local state setters and refresh
+// dashboard data via `useDashboardHome().refresh()` on success (Req 9.6, 9.7, 10.5).
+//
+// Layout: below lg, single column; at lg+, multi-column grid matching the mobile
+// dashboard's feature parity (Req 13.1, 13.2, 13.6).
+
+import { useState } from "react"
+import { Loader2, AlertCircle } from "lucide-react"
+
+import { useDashboardHome } from "@/lib/hooks/useDashboardHome"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
-import { StatsCard } from "@/components/dashboard/stats-card"
-import { DashboardSkeleton } from "@/components/dashboard/dashboard-skeleton"
-import { RentCollectionChart, type RentCollectionData } from "@/components/dashboard/rent-collection-chart"
-import { PaymentStatusChart, type PaymentStatusData } from "@/components/dashboard/payment-status-chart"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Users, IndianRupee, Clock, AlertTriangle, Loader2 } from "lucide-react"
-import { cn } from "@/lib/utils"
-import { createClient } from "@/lib/supabase/client"
+import { Button } from "@/components/ui/button"
 
+// Section components
+import { TimeFilter } from "@/components/dashboard/home/time-filter"
+import { PriorityCards } from "@/components/dashboard/home/priority-cards"
+import { RevenueOverview } from "@/components/dashboard/home/revenue-overview"
+import { OccupancyOverview } from "@/components/dashboard/home/occupancy-overview"
+import { PaymentStatusOverview } from "@/components/dashboard/home/payment-status-overview"
+import { MonthlyCollectionChart } from "@/components/dashboard/home/monthly-collection-chart"
+import { TasksSection } from "@/components/dashboard/home/tasks-section"
+import { RecentActivity } from "@/components/dashboard/home/recent-activity"
+import { LeadsSection } from "@/components/dashboard/home/leads-section"
+import { ChatbotLauncher } from "@/components/dashboard/home/chatbot-launcher"
 
-import { runWithNetworkRetry } from "@/lib/networkRetry"
-import { loadDashboardAggregates, type DashboardAggregates } from "@/lib/dashboard/dashboard-aggregates"
-import { retrieveAggregates, storeAggregates, invalidateAggregates, createTrailingDebounce } from "@/lib/dashboard/dashboard-cache"
+// Panel components
+import { PaymentVerificationPanel } from "@/components/dashboard/home/payment-verification-panel"
+import { ComplaintDetailPanel } from "@/components/dashboard/home/complaint-detail-panel"
+import { LeadDetailPanel } from "@/components/dashboard/home/lead-detail-panel"
 
-interface ActivityItem {
-  tenant: string
-  action: string
-  amount?: string
-  time: string
-  status: "success" | "pending" | "late"
-  timestamp: Date
-}
-
-function formatRelativeTime(timestamp: Date) {
-  const now = new Date()
-  const diffMs = now.getTime() - timestamp.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-  const diffHours = Math.floor(diffMins / 60)
-  const diffDays = Math.floor(diffHours / 24)
-
-  if (diffDays > 0) return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`
-  if (diffHours > 0) return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`
-  if (diffMins > 0) return `${diffMins} min${diffMins > 1 ? "s" : ""} ago`
-  return "Just now"
-}
+import type { PaymentRow, ComplaintRow, LeadRow, FollowUpTask } from "@/lib/dashboard/home-compute"
 
 export default function DashboardPage() {
-  const supabase = createClient()
-  const { authReady, isLoading: isAuthLoading, isAuthenticated, user } = useAuth()
-  
-  const [dataLoading, setDataLoading] = useState(true)
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false)
-  const [totalTenants, setTotalTenants] = useState(0)
-  const [paidThisMonth, setPaidThisMonth] = useState(0)
-  const [pendingPaymentsCount, setPendingPaymentsCount] = useState(0)
-  const [pendingPaymentsTotal, setPendingPaymentsTotal] = useState(0)
-  const [latePaymentsCount, setLatePaymentsCount] = useState(0)
-  
-  const [rentData, setRentData] = useState<RentCollectionData[]>([])
-  const [statusData, setStatusData] = useState<PaymentStatusData[]>([])
-  const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([])
-  const [isRefreshing, setIsRefreshing] = useState(false)
+  const hook = useDashboardHome()
 
-  // Map a `DashboardAggregates` value into the existing useState setters.
-  // Shared by the cached render-immediately path and the background refetch so
-  // both render byte-for-byte the same way. Per-section errors keep prior values
-  // so the dashboard is never blanked (Req 13).
-  const applyAggregates = useCallback((aggregates: DashboardAggregates) => {
-    const { summary, monthly, activity } = aggregates
+  // Panel open state: each panel is controlled by a local open/close flag plus
+  // the selected record (payment/complaint/lead). A null record with open=false
+  // keeps the panel closed.
+  const [selectedPayment, setSelectedPayment] = useState<PaymentRow | null>(null)
+  const [paymentPanelOpen, setPaymentPanelOpen] = useState(false)
 
-    // Summary section: update metrics + status chart only when it succeeded.
-    if (summary.ok) {
-      const s = summary.data
-      const statusCounts = s.payment_status_counts || {}
+  const [selectedComplaint, setSelectedComplaint] = useState<ComplaintRow | null>(null)
+  const [complaintPanelOpen, setComplaintPanelOpen] = useState(false)
 
-      setTotalTenants(Number(s.total_active_tenants || 0))
-      setPaidThisMonth(Number(s.paid_amount_this_month || 0))
-      setPendingPaymentsCount(Number(s.pending_payment_count_this_month || 0))
-      setPendingPaymentsTotal(Number(s.pending_amount_this_month || 0))
-      setLatePaymentsCount(Number(s.late_payment_count_this_month || 0))
+  const [selectedLead, setSelectedLead] = useState<LeadRow | null>(null)
+  const [leadPanelOpen, setLeadPanelOpen] = useState(false)
 
-      setStatusData([
-        { name: "Paid", value: Number(statusCounts.paid || 0), color: "var(--color-success)" },
-        { name: "Pending", value: Number(statusCounts.pending || 0), color: "var(--color-warning)" },
-        { name: "Late", value: Number(statusCounts.late || 0), color: "var(--color-destructive)" },
-      ])
-    } else {
-      console.error("Error fetching dashboard summary:", summary.error)
-    }
-
-    // Monthly collection chart: keep prior values on error.
-    if (monthly.ok) {
-      setRentData(monthly.data.map((row) => ({
-        month: row.month,
-        collected: Number(row.collected || 0),
-        pending: Number(row.pending || 0),
-      })))
-    } else {
-      console.error("Error fetching dashboard monthly collection:", monthly.error)
-    }
-
-    // Recent activity: keep prior values on error.
-    if (activity.ok) {
-      setRecentActivity(activity.data.map((row) => {
-        const timestamp = row.occurred_at ? new Date(row.occurred_at) : new Date()
-        return {
-          tenant: row.tenant || "Unknown Tenant",
-          action: row.action || "Activity",
-          amount: row.amount || "",
-          status: row.status || "pending",
-          timestamp,
-          time: formatRelativeTime(timestamp),
-        }
-      }))
-    } else {
-      console.error("Error fetching dashboard recent activity:", activity.error)
-    }
-  }, [])
-
-  const fetchDashboardData = useCallback(async () => {
-    if (!user?.id) return
-    const ownerId = user.id
-
-    try {
-      if (hasLoadedOnce) setIsRefreshing(true)
-
-      const aggregates = await loadDashboardAggregates(
-        supabase as unknown as Parameters<typeof loadDashboardAggregates>[0],
-        { ownerId, call: runWithNetworkRetry }
-      )
-
-      applyAggregates(aggregates)
-
-      // Cache the last successful result for stale-while-revalidate (Req 10.1,
-      // 10.2). Only store when every section succeeded so a partial failure never
-      // overwrites a previously good cache with a degraded snapshot (Req 13.2).
-      if (aggregates.summary.ok && aggregates.monthly.ok && aggregates.activity.ok) {
-        storeAggregates(ownerId, aggregates)
-      }
-    } catch (err) {
-      console.error("Error fetching dashboard data:", err)
-    } finally {
-      setDataLoading(false)
-      setIsRefreshing(false)
-    }
-  }, [user?.id, hasLoadedOnce, applyAggregates])
-
-  // Manual refresh: invalidate the cache first so the refetch always returns fresh
-  // values rather than re-rendering a stale cached aggregate (Req 10.5).
-  const handleRefresh = useCallback(() => {
-    if (!user?.id) return
-    invalidateAggregates(user.id)
-    if (hasLoadedOnce) setIsRefreshing(true)
-    fetchDashboardData()
-  }, [user?.id, hasLoadedOnce, fetchDashboardData])
-
-  // Keep refs to the latest `fetchDashboardData` and `user.id` so the single
-  // debouncer instance (created once per mount, below) always invokes the current
-  // closure without needing to be re-created when those values change.
-  const fetchDashboardDataRef = useRef(fetchDashboardData)
-  useEffect(() => {
-    fetchDashboardDataRef.current = fetchDashboardData
-  }, [fetchDashboardData])
-
-  const userIdRef = useRef(user?.id)
-  useEffect(() => {
-    userIdRef.current = user?.id
-  }, [user?.id])
-
-  // Single trailing-edge debouncer shared across every realtime channel event
-  // handler for this dashboard mount. Each realtime event calls `trigger()`, so a
-  // burst of changes across the subscribed tables coalesces into exactly one
-  // refetch after the 400ms window elapses (Req 11.1–11.5). The debounced callback
-  // invalidates the cache and then triggers the three-RPC refetch via
-  // `fetchDashboardData`, which itself sets `isRefreshing` once loaded (Req 10.4).
-  const realtimeDebouncerRef = useRef<ReturnType<typeof createTrailingDebounce> | null>(null)
-  if (realtimeDebouncerRef.current === null) {
-    realtimeDebouncerRef.current = createTrailingDebounce(() => {
-      const ownerId = userIdRef.current
-      if (!ownerId) return
-      invalidateAggregates(ownerId)
-      return fetchDashboardDataRef.current()
-    })
+  // Panel open helpers
+  const openPaymentPanel = (payment: PaymentRow) => {
+    setSelectedPayment(payment)
+    setPaymentPanelOpen(true)
   }
 
-  useEffect(() => {
-    if (isAuthenticated && user?.id) {
-      // Stale-while-revalidate: render a cached aggregate immediately (if present)
-      // so the dashboard is populated without waiting on the network, then refetch
-      // in the background and replace the rendered values on success (Req 10.1).
-      const cached = retrieveAggregates(user.id)
-      if (cached) {
-        applyAggregates(cached)
-        setDataLoading(false)
-      } else if (!hasLoadedOnce) {
-        setDataLoading(true)
-      }
-      fetchDashboardData()
-    }
-  }, [isAuthenticated, user?.id, hasLoadedOnce, fetchDashboardData, applyAggregates])
+  const openComplaintPanel = (complaint: ComplaintRow) => {
+    setSelectedComplaint(complaint)
+    setComplaintPanelOpen(true)
+  }
 
-  // Realtime: keep dashboard in sync without refetch-on-focus.
-  // Every event routes through the single 400ms trailing debouncer so bursts
-  // coalesce into exactly one three-RPC refetch (Req 5.1, 11.1–11.5). The channel
-  // name, subscribed tables, and owner-scoped filters are unchanged (Req 5.2).
-  useEffect(() => {
-    if (!user?.id) return
+  const openLeadPanel = (lead: LeadRow) => {
+    setSelectedLead(lead)
+    setLeadPanelOpen(true)
+  }
 
-    const debouncer = realtimeDebouncerRef.current!
+  // Task activation: follow-up tasks open the Payment_Verification_Panel when the
+  // payment is awaiting verification (status `submitted`) and otherwise initiate
+  // the follow-up action (Req 6.6). For now the action is just opening the panel;
+  // a future enhancement would implement the mobile's follow-up flow.
+  const handleFollowUpActivate = (task: FollowUpTask) => {
+    openPaymentPanel(task.payment)
+  }
 
-    const channel = supabase
-      .channel(`dashboard_owner_${user.id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "payments", filter: `owner_id=eq.${user.id}` },
-        () => {
-          debouncer.trigger()
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "tenants_table", filter: `owner_id=eq.${user.id}` },
-        () => {
-          debouncer.trigger()
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "reminders" },
-        (payload) => {
-          const reminderOwnerId = (payload.new as any)?.owner_id ?? (payload.old as any)?.owner_id
-          if (reminderOwnerId && reminderOwnerId !== user.id) return
-          debouncer.trigger()
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "complaints", filter: `owner_id=eq.${user.id}` },
-        () => {
-          debouncer.trigger()
-        }
-      )
-      .subscribe()
-
-    return () => {
-      // Cancel any pending debounced refetch before tearing down the channel so a
-      // queued trigger can't fire after unmount.
-      debouncer.cancel()
-      supabase.removeChannel(channel)
-    }
-  }, [user?.id])
-
-  // If auth says "authenticated" but user hasn't hydrated yet, don't get stuck
-  // in the dashboard loading state forever.
-  useEffect(() => {
-    if (!isAuthLoading && isAuthenticated && !user?.id) {
-      setDataLoading(false)
-    }
-  }, [isAuthLoading, isAuthenticated, user?.id])
-
-  useEffect(() => {
-    if (isAuthenticated && !dataLoading) {
-      setHasLoadedOnce(true)
-    }
-  }, [isAuthenticated, dataLoading])
-
-  // Show the full-screen spinner only while auth itself is still resolving,
-  // before the first successful render. Once auth is ready the dashboard shell
-  // (and its skeleton) takes over so loading placeholders match the real layout.
-  const shouldShowAuthLoader = !hasLoadedOnce && (!authReady || isAuthLoading)
-
-  if (shouldShowAuthLoader) {
+  // Auth phase: render a full-screen loader with message while auth resolves and
+  // nothing has rendered yet (Req 17.1), stopping after 10s (Req 17.4).
+  if (hook.phase === "auth") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden="true" />
           <p className="text-sm text-muted-foreground">Loading dashboard...</p>
         </div>
       </div>
     )
   }
 
-  if (!isAuthenticated) {
+  // Skeleton phase: render the dashboard shell + placeholders so positions match
+  // the loaded content and there is no layout shift when data arrives (Req 12.1–12.3,
+  // 12.6). The skeleton phase is capped at 10s; after that it transitions to error.
+  if (hook.phase === "skeleton") {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">Redirecting to login...</p>
+      <DashboardLayout title="Dashboard" onRefresh={hook.refresh} isRefreshing={hook.isRefreshing}>
+        <div className="flex flex-col gap-6">
+          {/* Skeleton: single column of loading placeholders */}
+          <div className="h-12 animate-pulse rounded-lg bg-muted" />
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-28 animate-pulse rounded-lg bg-muted" />
+            ))}
+          </div>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="h-80 animate-pulse rounded-lg bg-muted" />
+            <div className="h-80 animate-pulse rounded-lg bg-muted" />
+          </div>
+          <div className="h-96 animate-pulse rounded-lg bg-muted" />
         </div>
-      </div>
-    )
-  }
-
-  // First load with no Cached_Aggregate: render the skeleton inside the real
-  // dashboard shell so placeholders occupy the same positions/dimensions as the
-  // loaded content and there is no layout shift when data arrives (Req 12.1–12.3).
-  // When a cache exists, the mount effect clears `dataLoading` and applies the
-  // cached values immediately, so this branch is skipped (stale-while-revalidate).
-  const shouldShowSkeleton = !hasLoadedOnce && dataLoading
-
-  if (shouldShowSkeleton) {
-    return (
-      <DashboardLayout title="Dashboard">
-        <DashboardSkeleton />
       </DashboardLayout>
     )
   }
 
+  // Error phase: render an error state with a retry control inside the dashboard
+  // shell so the layout and header stay consistent (Req 12.9).
+  if (hook.phase === "error") {
+    return (
+      <DashboardLayout title="Dashboard" onRefresh={hook.refresh} isRefreshing={hook.isRefreshing}>
+        <div
+          role="alert"
+          className="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed border-border py-16 text-center"
+        >
+          <AlertCircle className="h-12 w-12 text-destructive" aria-hidden="true" />
+          <div>
+            <p className="text-lg font-semibold text-foreground">
+              Couldn't load dashboard data
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Check your connection and try again.
+            </p>
+          </div>
+          <Button type="button" onClick={hook.retryInitial} disabled={hook.isRefreshing}>
+            {hook.isRefreshing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                Retrying…
+              </>
+            ) : (
+              "Retry"
+            )}
+          </Button>
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  // Ready phase: render every section with live data. Layout: single-column below
+  // lg, multi-column at lg+ (Req 13.1, 13.2, 13.6).
   return (
-    <DashboardLayout title="Dashboard">
-      {/* Stats Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatsCard
-          title="Total Tenants"
-          value={totalTenants}
-          icon={Users}
-        />
-        <StatsCard
-          title="Paid This Month"
-          value={`₹${paidThisMonth.toLocaleString()}`}
-          icon={IndianRupee}
-          iconClassName="bg-success/10"
-        />
-        <StatsCard
-          title="Pending Payments"
-          value={pendingPaymentsCount}
-          description={pendingPaymentsTotal > 0 ? `₹${pendingPaymentsTotal.toLocaleString()} pending` : undefined}
-          icon={Clock}
-          iconClassName="bg-warning/10"
-        />
-        <StatsCard
-          title="Late Payments"
-          value={latePaymentsCount}
-          description={latePaymentsCount > 0 ? "follow up required" : undefined}
-          icon={AlertTriangle}
-          iconClassName="bg-destructive/10"
-        />
-      </div>
+    <>
+      <DashboardLayout title="Dashboard" onRefresh={hook.refresh} isRefreshing={hook.isRefreshing}>
+        <div className="flex flex-col gap-6">
+          {/* Time filter */}
+          <TimeFilter
+            filter={hook.filter}
+            customStart={hook.customStart}
+            customEnd={hook.customEnd}
+            onFilterChange={hook.setFilter}
+            onCustomRangeChange={hook.setCustomRange}
+          />
 
-      {/* Charts */}
-      <div className="mt-6 grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="min-w-0">
-          <RentCollectionChart data={rentData} />
-        </div>
-        <div className="min-w-0">
-          <PaymentStatusChart data={statusData} />
-        </div>
-      </div>
+          {/* Priority cards: four at-a-glance metrics (Req 3) */}
+          <PriorityCards
+            summary={hook.summary}
+            payments={hook.payments}
+            rooms={hook.rooms}
+            complaints={hook.complaints}
+            dateRange={hook.dateRange}
+            filter={hook.filter}
+          />
 
-      {/* Recent Activity */}
-      <Card className="mt-6 min-w-0 overflow-hidden">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg font-semibold">Recent Activity</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          {recentActivity.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              No recent activity in the last 7 days.
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {recentActivity.map((activity, index) => (
-                <div
-                  key={index}
-                  className="flex items-start gap-3 px-4 py-4 transition-colors hover:bg-muted/50 sm:items-center sm:gap-4 sm:px-6"
-                >
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-semibold uppercase">
-                    {activity.tenant
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")
-                      .substring(0, 2)}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium">{activity.tenant}</p>
-                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-xs",
-                              activity.status === "success" &&
-                                "border-success/30 bg-success/10 text-success",
-                              activity.status === "pending" &&
-                                "border-warning/30 bg-warning/10 text-warning",
-                              activity.status === "late" &&
-                                "border-destructive/30 bg-destructive/10 text-destructive"
-                            )}
-                          >
-                            {activity.action}
-                          </Badge>
-                          <span className="text-xs text-muted-foreground sm:text-sm">
-                            {activity.time}
-                          </span>
-                        </div>
-                      </div>
-                      {activity.amount && (
-                        <p className="mt-1 text-base font-semibold sm:mt-0 sm:text-right">
-                          {activity.amount}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-    </DashboardLayout>
+          {/* Revenue, occupancy, payment-status overviews: single column below lg,
+              multi-column (3 cols) at lg+ (Req 4, 13.1, 13.2) */}
+          <div className="grid gap-6 lg:grid-cols-3">
+            <RevenueOverview
+              summary={hook.summary}
+              payments={hook.payments}
+              dateRange={hook.dateRange}
+              filter={hook.filter}
+            />
+            <OccupancyOverview summary={hook.summary} rooms={hook.rooms} />
+            <PaymentStatusOverview
+              summary={hook.summary}
+              payments={hook.payments}
+              dateRange={hook.dateRange}
+              filter={hook.filter}
+            />
+          </div>
+
+          {/* Monthly collection chart (Req 5) */}
+          <MonthlyCollectionChart monthly={hook.monthly} payments={hook.payments} />
+
+          {/* Tasks section: follow-up, maintenance, move-out, check-in (Req 6).
+              Loading/error states are controlled by the hook's phase; since we're
+              in the ready phase, `loading` and `error` are both false. A future
+              enhancement could expose per-section status if needed. */}
+          <TasksSection
+            payments={hook.payments}
+            complaints={hook.complaints}
+            tenants={hook.tenants}
+            dateRange={hook.dateRange}
+            filter={hook.filter}
+            onFollowUpActivate={handleFollowUpActivate}
+          />
+
+          {/* Recent activity and leads: single column below lg, side-by-side at lg+ (Req 7, 8, 13.1) */}
+          <div className="grid gap-6 lg:grid-cols-2">
+            <RecentActivity
+              activity={hook.activity}
+              dismissedActivityIds={hook.dismissedActivityIds}
+              onDismiss={hook.dismissActivity}
+            />
+            <LeadsSection leads={hook.leads} onSelectLead={openLeadPanel} />
+          </div>
+        </div>
+      </DashboardLayout>
+
+      {/* Chatbot launcher: rendered only when chatbotEnabled is true (Req 1.2, 1.3).
+          Positioned fixed at bottom-right (below lg, above bottom nav; at lg+, lower right). */}
+      <ChatbotLauncher chatbotEnabled={hook.chatbotEnabled} />
+
+      {/* Modal panels: each controlled by its open flag + selected record */}
+      <PaymentVerificationPanel
+        payment={selectedPayment}
+        open={paymentPanelOpen}
+        onOpenChange={setPaymentPanelOpen}
+        onResolved={hook.refresh}
+      />
+
+      <ComplaintDetailPanel
+        complaint={selectedComplaint}
+        open={complaintPanelOpen}
+        onOpenChange={setComplaintPanelOpen}
+        onResolved={hook.refresh}
+      />
+
+      <LeadDetailPanel
+        lead={selectedLead}
+        open={leadPanelOpen}
+        onOpenChange={setLeadPanelOpen}
+      />
+    </>
   )
 }
