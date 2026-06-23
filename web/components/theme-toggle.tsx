@@ -4,6 +4,7 @@ import * as React from "react"
 import { Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Button } from "@/components/ui/button"
+import { nextTheme } from "@/lib/theme/next-theme"
 
 export function ThemeToggle() {
   const { theme, setTheme, resolvedTheme } = useTheme()
@@ -14,7 +15,7 @@ export function ThemeToggle() {
   }, [])
 
   const toggleTheme = () => {
-    setTheme(resolvedTheme === "dark" ? "light" : "dark")
+    setTheme(nextTheme(resolvedTheme === "dark" ? "dark" : "light"))
   }
 
   // Avoid hydration mismatch

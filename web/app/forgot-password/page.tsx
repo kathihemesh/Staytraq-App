@@ -2,25 +2,73 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { Building2, AlertCircle, Loader2, CheckCircle2, Mail, Phone, ArrowRight } from "lucide-react"
+import { AlertCircle, Loader2, CheckCircle2, Mail } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { createClient } from "@/lib/supabase/client"
 import { useAuth } from "@/components/auth-provider"
-
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
-import { useRouter } from "next/navigation"
+import { validateForgotEmail } from "@/lib/auth/validation"
+import { AUTH_MESSAGES } from "@/lib/auth/messages"
 
 export default function ForgotPasswordPage() {
   const { isLoading } = useAuth()
   const supabase = createClient()
-  const router = useRouter()
-  const [authType, setAuthType] = useState<"phone" | "email">("phone")
-  const [step, setStep] = useState<"initial" | "otp">("initial")
+
+  const [email, setEmail] = useState("")
+  const [error, setError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSuccess, setIsSuccess] = useState(false)
+
+  const handleSendResetLink = async () => {
+    const validationError = validateForgotEmail(email)
+    if (validationError) {
+      setError(validationError)
+      return
+    }
+
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      // 1. Check registration in auth.users via RPC
+      const { data: exists, error: fetchError } = await supabase.rpc("check_user_exists", {
+        p_email: email.trim(),
+        p_phone: null,
+      })
+
+      if (fetchError) {
+        setError(AUTH_MESSAGES.serverConnectionError)
+        setIsSubmitting(false)
+        return
+      }
+
+      if (!exists) {
+        setError(AUTH_MESSAGES.emailNotRegistered)
+        setIsSubmitting(false)
+        return
+      }
+
+      // 2. Send reset link
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/reset-password`,
+      })
+
+      if (resetError) {
+        setError(resetError.message)
+        setIsSubmitting(false)
+        return
+      }
+
+      setIsSuccess(true)
+    } catch {
+      setError(AUTH_MESSAGES.serverConnectionError)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -44,9 +92,6 @@ export default function ForgotPasswordPage() {
             </CardHeader>
 
             <CardContent className="space-y-6">
-              {/* Tabs Skeleton */}
-              <div className="h-10 w-full rounded-lg bg-muted/60 animate-pulse" />
-
               {/* Input Skeleton */}
               <div className="space-y-2">
                 <div className="h-4 w-24 rounded bg-muted animate-pulse" />
@@ -70,98 +115,8 @@ export default function ForgotPasswordPage() {
       </div>
     )
   }
-  const [identifier, setIdentifier] = useState("")
-  const [otp, setOtp] = useState("")
-  const [error, setError] = useState<string | null>(null)
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isSuccess, setIsSuccess] = useState(false)
 
-  const validateEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    return emailRegex.test(email)
-  }
-
-  const handleSendOTP = async () => {
-    if (!identifier || (authType === "phone" && identifier.length < 10)) {
-      setError(`Please enter a valid ${authType === "phone" ? "10-digit phone number" : "email address"}`)
-      return
-    }
-
-    if (authType === "email" && !validateEmail(identifier)) {
-      setError("Please enter a valid email address")
-      return
-    }
-    
-    setIsSubmitting(true)
-    setError(null)
-    
-    try {
-      // 1. Check registration in auth.users via RPC
-      const { data: exists, error: fetchError } = await supabase
-        .rpc("check_user_exists", {
-          p_email: authType === "email" ? identifier.trim() : null,
-          p_phone: authType === "phone" ? identifier.trim() : null
-        })
-
-      if (fetchError) throw new Error("Server error")
-
-      if (!exists) {
-        setError(`This ${authType === "email" ? "email" : "mobile number"} is not registered.`)
-        setIsSubmitting(false)
-        return
-      }
-
-      // 2. Send Reset Link/OTP
-      if (authType === "email") {
-        const { error: resetError } = await supabase.auth.resetPasswordForEmail(identifier.trim(), {
-          redirectTo: `${window.location.origin}/reset-password`,
-        })
-        if (resetError) throw resetError
-        setIsSuccess(true)
-      } else {
-        const { error: otpError } = await supabase.auth.signInWithOtp({
-          phone: identifier.startsWith("+") ? identifier : `+91${identifier}`,
-        })
-        if (otpError) throw otpError
-        setStep("otp")
-      }
-    } catch (err: any) {
-      setError(err.message || "An error occurred. Please try again.")
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleVerifyOTP = async () => {
-    if (otp.length < 6) {
-      setError("Please enter a valid 6-digit OTP")
-      return
-    }
-    
-    setIsSubmitting(true)
-    setError(null)
-    
-    try {
-      const { data, error: verifyError } = await supabase.auth.verifyOtp({
-        phone: identifier.startsWith("+") ? identifier : `+91${identifier}`,
-        token: otp,
-        type: 'sms',
-      })
-
-      if (verifyError) {
-        setError(verifyError.message)
-      } else if (data.session) {
-        // Redirection to reset-password
-        router.push("/reset-password")
-      }
-    } catch (err: any) {
-      setError("Verification failed. Please try again.")
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  // Show success state for Email
+  // Show success state
   if (isSuccess) {
     return (
       <div className="relative flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-muted/30">
@@ -191,15 +146,11 @@ export default function ForgotPasswordPage() {
               <div className="rounded-lg border border-border bg-muted/30 px-3 py-3 sm:px-4">
                 <p className="text-center text-sm text-muted-foreground">
                   {"We've sent a password reset link to "}
-                  <span className="font-medium text-foreground">{identifier}</span>
+                  <span className="font-medium text-foreground">{email}</span>
                 </p>
               </div>
-              <Button 
-                variant="outline"
-                className="h-11 w-full font-medium"
-                onClick={() => window.location.href = "/login"}
-              >
-                Back to Login
+              <Button asChild variant="outline" className="h-11 w-full font-medium">
+                <Link href="/login">Back to Login</Link>
               </Button>
             </CardContent>
           </Card>
@@ -228,115 +179,50 @@ export default function ForgotPasswordPage() {
         <Card className="w-full max-w-[420px] border-border/50 shadow-lg">
           <CardHeader className="space-y-1 text-center">
             <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
-              {authType === "email" ? <Mail className="h-6 w-6 text-primary-foreground" /> : <Phone className="h-6 w-6 text-primary-foreground" />}
+              <Mail className="h-6 w-6 text-primary-foreground" />
             </div>
             <CardTitle className="text-2xl font-bold tracking-tight">Forgot Password?</CardTitle>
             <CardDescription className="text-balance text-muted-foreground">
-              {authType === "email" 
-                ? "Enter your email address to receive a reset link." 
-                : "Enter your phone number to receive a verification code."}
+              Enter your email address to receive a reset link.
             </CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-6">
-            {error && (step === "initial" || step === "otp") && (
+            {error && (
               <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive animate-in fade-in-0 duration-200">
                 <AlertCircle className="h-5 w-5 shrink-0" />
                 <p className="font-medium">{error}</p>
               </div>
             )}
 
-            <Tabs 
-              value={authType} 
-              onValueChange={(v) => {
-                setAuthType(v as "phone" | "email")
-                setIdentifier("")
-                setStep("initial")
-                setError(null)
-              }} 
-              className="w-full"
-            >
-              {step === "initial" && (
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="phone" className="gap-2">
-                    <Phone className="h-4 w-4" />
-                    Phone
-                  </TabsTrigger>
-                  <TabsTrigger value="email" className="gap-2">
-                    <Mail className="h-4 w-4" />
-                    Email
-                  </TabsTrigger>
-                </TabsList>
-              )}
-
-              <div className="mt-6">
-                {step === "initial" ? (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="identifier">
-                        {authType === "phone" ? "Phone Number" : "Email Address"}
-                      </Label>
-                      <div className="relative">
-                        {authType === "phone" && (
-                          <div className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
-                            +91
-                          </div>
-                        )}
-                        <Input
-                          id="identifier"
-                          type={authType === "email" ? "email" : "tel"}
-                          placeholder={authType === "email" ? "name@example.com" : "00000 00000"}
-                          className={`h-11 ${authType === "phone" ? "pl-12" : ""}`}
-                          value={identifier}
-                          onChange={(e) => {
-                            const value = e.target.value
-                            setIdentifier(authType === "phone" ? value.replace(/\D/g, "").slice(0, 10) : value)
-                            setError(null)
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <Button className="w-full h-11 font-medium" onClick={handleSendOTP} disabled={isSubmitting}>
-                      {isSubmitting ? <Loader2 className="animate-spin" /> : authType === "email" ? "Send Reset Link" : "Send OTP"}
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-6 text-center">
-                    <div className="space-y-2">
-                      <Label>Enter Verification Code</Label>
-                      <p className="text-xs text-muted-foreground">
-                        OTP sent to +91 {identifier}
-                      </p>
-                      <div className="flex justify-center py-4">
-                        <InputOTP 
-                          maxLength={6} 
-                          value={otp} 
-                          onChange={(val) => {
-                            setOtp(val)
-                            setError(null)
-                          }}
-                        >
-                          <InputOTPGroup>
-                            {[0, 1, 2, 3, 4, 5].map((i) => (
-                              <InputOTPSlot key={i} index={i} />
-                            ))}
-                          </InputOTPGroup>
-                        </InputOTP>
-                      </div>
-                    </div>
-                    <Button className="w-full h-11 font-medium" onClick={handleVerifyOTP} disabled={isSubmitting}>
-                      {isSubmitting ? <Loader2 className="animate-spin" /> : "Verify & Reset"}
-                    </Button>
-                    <button 
-                      onClick={() => setStep("initial")} 
-                      className="text-xs text-primary hover:underline"
-                    >
-                      Change number
-                    </button>
-                  </div>
-                )}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email Address</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="name@example.com"
+                  className="h-11"
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value)
+                    setError(null)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !isSubmitting) {
+                      handleSendResetLink()
+                    }
+                  }}
+                />
               </div>
-            </Tabs>
+              <Button
+                className="w-full h-11 font-medium"
+                onClick={handleSendResetLink}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? <Loader2 className="animate-spin" /> : "Send Reset Link"}
+              </Button>
+            </div>
 
             <p className="text-center text-sm text-muted-foreground">
               <Link

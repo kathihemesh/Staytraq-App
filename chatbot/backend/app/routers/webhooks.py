@@ -35,6 +35,15 @@ async def receive_whatsapp_webhook(request: Request, authorization: str = Header
             
         sender_jid = key.get("remoteJid")
         
+        # Deduplicate duplicate webhook events from Evolution API
+        msg_id = key.get("id")
+        if msg_id:
+            dedup_key = f"webhook:processed:{msg_id}"
+            is_new = await chatbot_service.redis.set(dedup_key, "1", ex=60, nx=True)
+            if not is_new:
+                logger.info(f"Ignoring duplicate message event {msg_id} from {sender_jid}")
+                return {"status": "ignored", "reason": "duplicate_event"}
+        
         # Get content type of message
         message_content = data.get("message", {})
         conversation_text = message_content.get("conversation", "")
@@ -110,6 +119,74 @@ async def send_whatsapp_notice(payload: SendNoticeRequest, authorization: str = 
         raise HTTPException(
             status_code=500,
             detail="Failed to send message via Evolution API"
+        )
+
+class SendGroupNoticeRequest(BaseModel):
+    message: str
+
+@router.post("/send-group-notice")
+async def send_group_notice(payload: SendGroupNoticeRequest, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid Authorization header"
+        )
+    
+    token = authorization.split(" ")[1]
+    user_data = await supabase_service.verify_token(token)
+    if not user_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Supabase JWT token"
+        )
+        
+    owner_email = user_data.get("email")
+    if not owner_email:
+        raise HTTPException(
+            status_code=400,
+            detail="User email not found in auth token"
+        )
+        
+    # Check if chatbot is enabled for this owner
+    owner = await supabase_service.get_owner_by_email(owner_email)
+    if not owner or not owner.get("chatbot_enabled"):
+        raise HTTPException(
+            status_code=403,
+            detail="Chatbot is not enabled for this owner account."
+        )
+        
+    # Fetch owner settings to get whatsapp_invite_link
+    settings_data = await supabase_service.get_owner_settings(owner["id"])
+    invite_link = settings_data.get("whatsapp_invite_link")
+    if not invite_link:
+        raise HTTPException(
+            status_code=400,
+            detail="WhatsApp invite link is not configured in settings."
+        )
+        
+    # Resolve the invite link to get group JID
+    jid = await evolution_client.get_group_jid(
+        instance_name=owner_email,
+        invite_url=invite_link
+    )
+    if not jid:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to resolve group JID from invite link."
+        )
+        
+    # Send message to the JID
+    success = await evolution_client.send_text_message(
+        instance_name=owner_email,
+        number=jid,
+        text=payload.message
+    )
+    if success:
+        return {"status": "success", "jid": jid}
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send message to the WhatsApp group via Evolution API"
         )
 
 class PaymentRejectionRequest(BaseModel):

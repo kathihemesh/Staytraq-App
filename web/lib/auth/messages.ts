@@ -1,0 +1,16 @@
+export const AUTH_MESSAGES = {
+  emailRequired: "Email is required",
+  passwordRequired: "Password is required",
+  invalidEmail: "Please enter a valid email address",
+  invalidCredentials: "Invalid credentials. Please try again.",
+  unexpected: "An unexpected error occurred. Please try again.",
+  googleInitFailed: "Failed to initiate Google sign-in.",
+  emailAlreadyRegistered: "This email is already registered.",
+  emailNotRegistered: "This email is not registered.",
+  serverCheckError: "Server error while checking registration",
+  serverConnectionError: "Server connection error. Please try again.",
+  resetLinkInvalid: "This password reset link is invalid or has expired.",
+  accessDenied: "Access denied. Please use the reset link sent to your email.",
+  passwordsDoNotMatch: "Passwords do not match",
+  confirmPassword: "Please confirm your password",
+} as const

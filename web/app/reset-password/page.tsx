@@ -9,7 +9,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { createClient } from "@/lib/supabase/client"
-
+import { validateResetPassword, validateResetForm } from "@/lib/auth/validation"
+import { AUTH_MESSAGES } from "@/lib/auth/messages"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 
@@ -48,7 +49,7 @@ export default function ResetPasswordPage() {
           
           if (setSessionError) {
             setIsValidToken(false)
-            setError("This password reset link is invalid or has expired.")
+            setError(AUTH_MESSAGES.resetLinkInvalid)
           } else {
             setIsValidToken(true)
           }
@@ -60,7 +61,7 @@ export default function ResetPasswordPage() {
         // Scenario C: No session and no recovery token in URL
         else if (!session && !accessToken) {
           setIsValidToken(false)
-          setError("Access denied. Please use the reset link sent to your email.")
+          setError(AUTH_MESSAGES.accessDenied)
         }
         // Scenario D: Catch-all for session errors
         else if (sessionError) {
@@ -88,39 +89,19 @@ export default function ResetPasswordPage() {
     checkResetToken()
   }, [router])
 
-  const validatePassword = (password: string): string | null => {
-    if (!password.trim()) {
-      return "Password is required"
-    }
-    if (password.length < 8) {
-      return "Password must be at least 8 characters"
-    }
-    if (!/[A-Z]/.test(password)) {
-      return "Password must contain at least one uppercase letter"
-    }
-    if (!/[a-z]/.test(password)) {
-      return "Password must contain at least one lowercase letter"
-    }
-    if (!/[0-9]/.test(password)) {
-      return "Password must contain at least one number"
-    }
-    return null
-  }
-
   const validateForm = () => {
     const errors: { password?: string; confirmPassword?: string } = {}
-    
-    const passwordError = validatePassword(password)
+
+    const passwordError = validateResetPassword(password)
     if (passwordError) {
       errors.password = passwordError
     }
-    
-    if (!confirmPassword.trim()) {
-      errors.confirmPassword = "Please confirm your password"
-    } else if (password !== confirmPassword) {
-      errors.confirmPassword = "Passwords do not match"
+
+    const formErrors = validateResetForm(password, confirmPassword)
+    if (formErrors.confirmPassword) {
+      errors.confirmPassword = formErrors.confirmPassword
     }
-    
+
     setValidationError(errors)
     return Object.keys(errors).length === 0
   }
@@ -155,7 +136,7 @@ export default function ResetPasswordPage() {
         router.push("/login")
       }, 2000)
     } catch {
-      setError("An unexpected error occurred. Please try again.")
+      setError(AUTH_MESSAGES.unexpected)
     }
     
     setIsSubmitting(false)

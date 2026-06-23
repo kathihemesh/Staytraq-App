@@ -173,6 +173,7 @@ export default function DashboardScreen() {
   const [failedNoticesCount, setFailedNoticesCount] = useState(0)
   const [failedNotices, setFailedNotices] = useState<any[]>([])
   const [noticesSentState, setNoticesSentState] = useState(false)
+  const [totalNoticesCount, setTotalNoticesCount] = useState(0)
   const [failedNoticesModalVisible, setFailedNoticesModalVisible] = useState(false)
   const [copiedPhoneTenantId, setCopiedPhoneTenantId] = useState<any | null>(null)
   const [isSendingSingleWhatsApp, setIsSendingSingleWhatsApp] = useState(false)
@@ -306,7 +307,15 @@ export default function DashboardScreen() {
     if (activityResult.ok) {
       const now = new Date()
       const rows = activityResult.data
-      setDashboardRecentActivity(rows.filter((item) => item.type !== "reminder").map((item) => {
+      setDashboardRecentActivity(rows.filter((item) => {
+        if (item.type === "reminder") return false
+        if (item.type === "complaint") return true
+        if (item.type === "payment") {
+          const status = (item.status as string) || (item.raw_item as any)?.status
+          return status === "submitted"
+        }
+        return false
+      }).map((item) => {
         const timestamp = item.occurred_at ? new Date(item.occurred_at) : new Date()
         const diffMs = now.getTime() - timestamp.getTime()
         const diffMins = Math.floor(diffMs / 60000)
@@ -837,7 +846,7 @@ export default function DashboardScreen() {
 
   // Recent Activity List (Submitted Payments + Working Complaints)
   const recentActivityList = useMemo(() => {
-    if (dashboardRecentActivity.length > 0) {
+    if (!hasLoadedOnce.current && dashboardRecentActivity.length > 0) {
       return dashboardRecentActivity
     }
 
@@ -1456,6 +1465,7 @@ export default function DashboardScreen() {
     }
 
     setIsSendingNotices(true)
+    setTotalNoticesCount(latePays.length)
     setSuccessNoticesCount(0)
     setFailedNoticesCount(0)
     setFailedNotices([])
@@ -1548,13 +1558,12 @@ export default function DashboardScreen() {
             localSuccess++
           } else {
             localFail++
-            const errData = await response.json().catch(() => ({}))
             localFailed.push({
               id: payment.id,
               name: tenantName,
               phone: phone,
               message: message,
-              reason: errData.detail || "Failed to deliver via Evolution Gateway"
+              reason: "Failed to send message (try manual by clicking on the chat symbol)"
             })
           }
         } catch (err: any) {
@@ -1565,7 +1574,7 @@ export default function DashboardScreen() {
             name: payment.tenants_table?.name || "Tenant",
             phone: phone,
             message: "Failed to generate reminder",
-            reason: err.message || "Failed to process portal link"
+            reason: "Failed to send message (try manual by clicking on the chat symbol)"
           })
         }
 
@@ -1578,16 +1587,158 @@ export default function DashboardScreen() {
       setIsSendingNotices(false)
       setNoticesSentState(true)
       
-      // Show summary alert/toast
-      Alert.alert(
+      // Show summary toast (removed Alert popup)
+      showToast(
         "Notice Sending Finished",
-        `${localSuccess} notices sent successfully, ${localFail} notices failed to send.`
+        `${localSuccess} notices sent successfully, ${localFail} notices failed to send.`,
+        localFail > 0 ? "warning" : "success"
       )
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
     } catch (err: any) {
       console.error(err)
       setIsSendingNotices(false)
-      Alert.alert("Bulk Notice Error", err.message || "Failed to run bulk notices task.")
+      showToast("Error", err.message || "Failed to run bulk notices task.", "error")
+    }
+  }
+
+  const handleSendFailedNotices = async () => {
+    if (failedNotices.length === 0) {
+      Alert.alert("No Failed Notices", "There are no failed notices to retry.")
+      return
+    }
+
+    setIsSendingNotices(true)
+    const noticesToRetry = [...failedNotices]
+    setTotalNoticesCount(noticesToRetry.length)
+    setFailedNotices([])
+    setFailedNoticesCount(0)
+    setSuccessNoticesCount(0)
+
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+      const token = currentSession?.access_token
+      if (!token) {
+        throw new Error("User session not found. Please log in again.")
+      }
+
+      const chatbotApiUrl = getChatbotApiUrl()
+      const localFailed: any[] = []
+      let localSuccess = 0
+      let localFail = 0
+
+      for (let i = 0; i < noticesToRetry.length; i++) {
+        const item = noticesToRetry[i]
+        const phone = item.phone
+        const tenantName = item.name
+
+        try {
+          let cleanPhone = phone.replace(/[^0-9]/g, "")
+          if (cleanPhone.length === 10) {
+            cleanPhone = "91" + cleanPhone
+          }
+
+          console.log("[Bulk Notice Retry Debug] Sending to:", cleanPhone)
+
+          const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`,
+              "bypass-tunnel-reminder": "true"
+            },
+            body: JSON.stringify({
+              phone: cleanPhone,
+              message: item.message
+            })
+          })
+
+          if (response.ok) {
+            localSuccess++
+          } else {
+            localFail++
+            localFailed.push({
+              id: item.id,
+              name: tenantName,
+              phone: phone,
+              message: item.message,
+              reason: "Failed to send message (try manual by clicking on the chat symbol)"
+            })
+          }
+        } catch (err: any) {
+          console.error("[Bulk Notice Retry Debug] Error sending to tenant:", tenantName, err)
+          localFail++
+          localFailed.push({
+            id: item.id,
+            name: tenantName,
+            phone: phone,
+            message: item.message,
+            reason: "Failed to send message (try manual by clicking on the chat symbol)"
+          })
+        }
+
+        // Update live counts
+        setSuccessNoticesCount(localSuccess)
+        setFailedNoticesCount(localFail)
+        setFailedNotices([...localFailed])
+      }
+
+      setIsSendingNotices(false)
+      setNoticesSentState(true)
+      showToast(
+        "Notice Sending Finished",
+        `${localSuccess} notices sent successfully, ${localFail} notices failed to send.`,
+        localFail > 0 ? "warning" : "success"
+      )
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    } catch (err: any) {
+      console.error(err)
+      setIsSendingNotices(false)
+      showToast("Error", err.message || "Failed to retry bulk notices.", "error")
+    }
+  }
+
+  const handleRetrySingleNotice = async (item: any) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+      const token = currentSession?.access_token
+      if (!token) {
+        throw new Error("User session not found. Please log in again.")
+      }
+
+      const chatbotApiUrl = getChatbotApiUrl()
+      let cleanPhone = item.phone.replace(/[^0-9]/g, "")
+      if (cleanPhone.length === 10) {
+        cleanPhone = "91" + cleanPhone
+      }
+
+      showToast("Sending Retry", `Retrying notice for ${item.name}...`, "info")
+
+      const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "bypass-tunnel-reminder": "true"
+        },
+        body: JSON.stringify({
+          phone: cleanPhone,
+          message: item.message
+        })
+      })
+
+      if (response.ok) {
+        showToast("Notice Sent", `Retry notice for ${item.name} sent successfully!`, "success")
+        setFailedNotices(prev => prev.filter(f => f.id !== item.id))
+        setFailedNoticesCount(prev => Math.max(0, prev - 1))
+        setSuccessNoticesCount(prev => prev + 1)
+      } else {
+        showToast("Retry Failed", `Failed to send to ${item.name}`, "error")
+        setFailedNotices(prev => prev.map(f => f.id === item.id ? { ...f, reason: "Failed to send message (try manual by clicking on the chat symbol)" } : f))
+      }
+    } catch (err: any) {
+      console.error("[Single Retry Error]", err)
+      showToast("Error", err.message || "Failed to retry notice.", "error")
     }
   }
 
@@ -2074,9 +2225,10 @@ export default function DashboardScreen() {
         </View>
 
         {chatbotEnabled && (
-          <View className="px-6 mb-4">
+          <View key={`bulk-notices-container-${noticesSentState}-${isSendingNotices}-${successNoticesCount}-${failedNoticesCount}`} className="px-6 mb-4">
             {!noticesSentState && !isSendingNotices ? (
               <TouchableOpacity
+                key={`btn-send-notices-${noticesSentState}-${isSendingNotices}`}
                 onPress={() => {
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
                   void handleSendAllLateNotices()
@@ -2088,10 +2240,10 @@ export default function DashboardScreen() {
                 </Text>
               </TouchableOpacity>
             ) : isSendingNotices ? (
-              <View className="bg-destructive/10 border border-destructive/20 p-3.5 rounded-xl flex-row items-center justify-center gap-2">
+              <View key={`view-sending-notices-${noticesSentState}-${isSendingNotices}`} className="bg-destructive/10 border border-destructive/20 p-3.5 rounded-xl flex-row items-center justify-center gap-2">
                 <ActivityIndicator size="small" color="#ef4444" />
                 <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
-                  Sending {successNoticesCount + failedNoticesCount} notices (
+                  Sending {totalNoticesCount} notices (
                   <Text className="text-success font-black">{successNoticesCount}</Text>
                   {" / "}
                   <Text className="text-destructive font-black">{failedNoticesCount}</Text>
@@ -2099,24 +2251,26 @@ export default function DashboardScreen() {
                 </Text>
               </View>
             ) : (
-              <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-3.5 rounded-xl gap-2 shadow-sm">
+              <View key={`view-sent-notices-${noticesSentState}-${isSendingNotices}`} className="bg-card dark:bg-card-dark border border-border dark:border-border-dark p-3.5 rounded-xl gap-2 shadow-sm">
                 <View className="flex-row justify-between items-center">
                   <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
-                    Sent {successNoticesCount + failedNoticesCount} notices (
+                    Sent {totalNoticesCount} notices (
                     <Text className="text-success font-black">{successNoticesCount}</Text>
                     {" / "}
                     <Text className="text-destructive font-black">{failedNoticesCount}</Text>
                     )
                   </Text>
-                  <TouchableOpacity
-                    onPress={() => {
-                      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                      void handleSendAllLateNotices()
-                    }}
-                    className="px-2.5 py-1 bg-primary/10 rounded-md border border-primary/20"
-                  >
-                    <Text className="text-[10px] font-bold text-primary">Retry All</Text>
-                  </TouchableOpacity>
+                  {failedNoticesCount > 0 && (
+                    <TouchableOpacity
+                      onPress={() => {
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                        void handleSendFailedNotices()
+                      }}
+                      className="px-2.5 py-1 bg-primary/10 rounded-md border border-primary/20"
+                    >
+                      <Text className="text-[10px] font-bold text-primary">Retry Failed</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
                 {failedNoticesCount > 0 && (
                   <TouchableOpacity
@@ -2257,7 +2411,7 @@ export default function DashboardScreen() {
                         key={`task-moveout-${item.id}`}
                         onPress={() => {
                           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                          router.push({ pathname: "/tenants", params: { search: item.name } })
+                          router.push({ pathname: "/tenants", params: { status: "move_out", search: item.name } })
                         }}
                         className="flex-row justify-between items-center py-2 border-b border-border/10 dark:border-border-dark/10 active:opacity-85"
                       >
@@ -2820,9 +2974,9 @@ export default function DashboardScreen() {
           <TouchableOpacity 
             activeOpacity={1} 
             onPress={(e) => e.stopPropagation()}
-            className="w-full max-w-sm bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl overflow-hidden shadow-2xl"
+            className="w-full max-w-sm h-[65%] bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl overflow-hidden shadow-2xl"
           >
-            <View className="max-h-[80%]">
+            <View className="flex-1">
               {/* Header */}
               <View className="px-4 py-3 border-b border-border/10 dark:border-border-dark/10 flex-row justify-between items-center bg-card dark:bg-card-dark">
                 <View>
@@ -2846,7 +3000,7 @@ export default function DashboardScreen() {
 
               {/* List */}
               <ScrollView 
-                className="p-4" 
+                className="flex-1 p-4" 
                 contentContainerStyle={{ paddingBottom: 20 }}
                 showsVerticalScrollIndicator={false}
               >
@@ -2857,7 +3011,7 @@ export default function DashboardScreen() {
                       index === failedNotices.length - 1 ? "" : "border-b border-border/10 dark:border-border-dark/10"
                     }`}
                   >
-                    <View className="flex-row justify-between items-start">
+                    <View className="flex-row justify-between items-center">
                       <View className="flex-1 pr-2">
                         <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
                           {item.name}
@@ -2887,19 +3041,30 @@ export default function DashboardScreen() {
                         </Text>
                       </View>
 
-                      {/* Fallback Manual WhatsApp Button */}
-                      <TouchableOpacity
-                        onPress={() => {
-                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                          const cleanPhoneNum = item.phone.replace(/[^0-9]/g, "")
-                          const formattedPhone = cleanPhoneNum.length === 10 ? "91" + cleanPhoneNum : cleanPhoneNum
-                          const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(item.message)}`
-                          void Linking.openURL(url)
-                        }}
-                        className="p-2.5 bg-success/10 dark:bg-success-dark/15 rounded-full active:opacity-80 justify-center items-center"
-                      >
-                        <MessageCircle size={15} color={isDark ? "#34d399" : "#10b981"} />
-                      </TouchableOpacity>
+                      {/* Action buttons */}
+                      <View className="flex-row items-center gap-2">
+                        {/* Retry Button */}
+                        <TouchableOpacity
+                          onPress={() => handleRetrySingleNotice(item)}
+                          className="p-2.5 bg-primary/10 dark:bg-primary-dark/15 rounded-full active:opacity-80 justify-center items-center"
+                        >
+                          <RefreshCw size={15} color={isDark ? "#60a5fa" : "#0071df"} />
+                        </TouchableOpacity>
+
+                        {/* Fallback Manual WhatsApp Button */}
+                        <TouchableOpacity
+                          onPress={() => {
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                            const cleanPhoneNum = item.phone.replace(/[^0-9]/g, "")
+                            const formattedPhone = cleanPhoneNum.length === 10 ? "91" + cleanPhoneNum : cleanPhoneNum
+                            const url = `https://wa.me/${formattedPhone}?text=${encodeURIComponent(item.message)}`
+                            void Linking.openURL(url)
+                          }}
+                          className="p-2.5 bg-success/10 dark:bg-success-dark/15 rounded-full active:opacity-80 justify-center items-center"
+                        >
+                          <MessageCircle size={15} color={isDark ? "#34d399" : "#10b981"} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   </View>
                 ))}
@@ -2911,7 +3076,7 @@ export default function DashboardScreen() {
                   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
                   setFailedNoticesModalVisible(false)
                 }}
-                className="w-full h-12 bg-primary items-center justify-center active:opacity-90"
+                className="w-full h-12 bg-primary items-center justify-center active:opacity-90 mt-auto"
               >
                 <Text className="text-white text-xs font-bold uppercase tracking-wider">
                   Close Review
@@ -3306,9 +3471,10 @@ export default function DashboardScreen() {
                 </ScrollView>
 
                 {/* Primary Actions Footer */}
-                <View className="flex-row gap-3 border-t border-border/40 pt-2 flex-wrap pb-0">
+                <View key={`payment-footer-${selectedPayment.id}-${selectedPayment.status}-${rejectingMode}-${isSendingSingleWhatsApp}`} className="flex-row gap-3 border-t border-border/40 pt-2 flex-wrap pb-0">
                   {/* Delete Button */}
                   <TouchableOpacity
+                    key={`delete-btn-${selectedPayment.id}`}
                     onPress={() => handleDeletePayment(selectedPayment.id)}
                     className="h-12 w-12 border border-destructive/20 bg-destructive/5 rounded-xl items-center justify-center active:scale-95"
                   >
@@ -3318,6 +3484,7 @@ export default function DashboardScreen() {
                   {/* WhatsApp Reminder Button */}
                   {(selectedPayment.status === "pending" || selectedPayment.status === "late") && (
                     <TouchableOpacity
+                      key={`wa-reminder-btn-${selectedPayment.id}-${isSendingSingleWhatsApp}`}
                       onPress={() => handleWhatsAppReminder(selectedPayment)}
                       disabled={isSendingSingleWhatsApp}
                       className={`h-12 w-12 border rounded-xl items-center justify-center active:scale-95 ${
@@ -3338,6 +3505,7 @@ export default function DashboardScreen() {
                   {selectedPayment.status === "submitted" && !rejectingMode ? (
                     <>
                       <TouchableOpacity
+                        key={`reject-btn-${selectedPayment.id}`}
                         onPress={() => setRejectingMode(true)}
                         className="flex-1 border border-destructive/20 bg-destructive/5 rounded-xl h-12 items-center justify-center active:scale-95"
                       >
@@ -3345,6 +3513,7 @@ export default function DashboardScreen() {
                       </TouchableOpacity>
                       
                       <TouchableOpacity
+                        key={`approve-btn-${selectedPayment.id}`}
                         onPress={() => handleApprovePayment(selectedPayment)}
                         className="flex-1 bg-success rounded-xl h-12 items-center justify-center active:scale-95"
                       >
@@ -3353,13 +3522,14 @@ export default function DashboardScreen() {
                     </>
                   ) : selectedPayment.status !== "paid" && selectedPayment.status !== "success" && selectedPayment.status !== "completed" ? (
                     <TouchableOpacity
+                      key={`mark-paid-btn-${selectedPayment.id}`}
                       onPress={() => handleMarkAsPaid(selectedPayment)}
                       className="flex-1 bg-success rounded-xl h-12 items-center justify-center active:scale-95 shadow-md shadow-success/20"
                     >
                       <Text className="text-white font-black text-sm">Mark as Paid</Text>
                     </TouchableOpacity>
                   ) : (
-                    <View className="flex-1 bg-success/10 border border-success/30 rounded-xl h-12 flex-row items-center justify-center">
+                    <View key={`rent-settled-view-${selectedPayment.id}`} className="flex-1 bg-success/10 border border-success/30 rounded-xl h-12 flex-row items-center justify-center">
                       <Check size={16} color="#10b981" strokeWidth={3} className="mr-1.5" />
                       <Text className="text-success font-black text-sm">Rent Fully Settled</Text>
                     </View>

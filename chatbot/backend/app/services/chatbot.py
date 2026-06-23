@@ -470,6 +470,21 @@ class ChatbotService:
             latest_payment = await supabase_service.get_latest_payment(tenant_id)
             recent_complaints = await supabase_service.get_complaints(owner_id, clean_phone)
             owner_settings = await supabase_service.get_owner_settings(owner_id)
+            available_rooms = await supabase_service.get_available_rooms(owner_id)
+
+            # Format room availability context
+            rooms_context = "No rooms are currently available."
+            if available_rooms:
+                rooms_list = []
+                for r in available_rooms:
+                    sharing_type = f"{r['total_beds']} sharing" if r['total_beds'] > 1 else "single sharing"
+                    floor_str = f", Floor: {r['floor_no']}" if r.get('floor_no') is not None else ""
+                    rooms_list.append(
+                        f"- Room {r['room_number']} ({sharing_type}, {r['room_type']}): "
+                        f"{r['vacant_beds']} beds vacant out of {r['total_beds']} total, "
+                        f"Rent: ₹{r['rent_amount']}/month{floor_str}"
+                    )
+                rooms_context = "\n".join(rooms_list)
 
             # Format rent context
             rent_context = "No payment records or bills have been generated for you yet. This means you do not have any pending payments at this time."
@@ -541,6 +556,7 @@ class ChatbotService:
                 f"WiFi Credentials:\n{wifi_credentials}\n"
                 f"Emergency Contacts:\n{emergency_contacts}\n"
                 f"Maintenance Schedule:\n{maintenance_schedule}\n"
+                f"Available Rooms and Prices:\n{rooms_context}\n"
             )
 
             # System prompt for Tenants
@@ -557,14 +573,16 @@ class ChatbotService:
                 "  }\n"
                 "}\n"
                 "Guidelines:\n"
-                f"- When greeting or welcoming the tenant (e.g. hello/hi), welcome them warmly representing {pg_name} (e.g., 'Hello! Welcome to {pg_name}. How can I assist you today?').\n"
+                f"- When greeting or welcoming the tenant (e.g. hello/hi) at the start of a conversation, welcome them warmly by name representing {pg_name} (e.g., 'Hello {tenant_name}! Welcome to {pg_name}. How can I assist you today?'). You MUST include the tenant's name ({tenant_name}) in the welcome message. Do NOT repeat this welcome greeting prefix in subsequent messages in the conversation history.\n"
+                "- Do NOT allow the tenant to choose rooms, do NOT ask them room-related questions (such as budget, room/sharing preference, or move-in date), and do NOT try to collect lead capture details or create leads. Existing tenants cannot create leads or book new rooms through this flow.\n"
+                "- Focus on asking helpful follow-up questions regarding the tenant's registered complaints or any new issues they mention (e.g. asking for details, or checking if past complaints are resolved).\n"
                 "- If the tenant mentions any issue, problem, request for repair, or complaint (e.g. 'fan not working', 'tap leaking'), you MUST immediately register it. Set intents to include 'register_complaint', extract the complaint description into 'complaint_message', and assign the correct category (Electricity, Water, Internet, or Other). Do NOT ask the user for confirmation or permission first. Register it directly and inform them in the reply that you have registered it.\n"
                 "- If the message contains multiple intents (e.g. asking for rent AND registering a complaint), include all matching intents in the 'intents' list.\n"
                 "- If the tenant asks about their rent, pending bills, or payment instructions, set intents to include 'check_rent' and answer based on Rent Info and Owner Settings. You MUST prioritize sending the Payment Submission Link from the context for pending/late payments. Do NOT mention direct UPI Details (UPI ID / name) unless the tenant specifically asks for direct bank details or has trouble using the link.\n"
                 "- If the payment status is 'Under Review', tell the tenant that their payment proof has been submitted and is currently under review by the owner/manager, who will verify it as soon as possible. Do NOT ask them to pay again or resubmit unless the status is explicitly pending or late.\n"
                 "- If the tenant asks about their complaints status, set intents to include 'check_status'.\n"
-                "- For other questions (rules, food menu, WiFi, emergency contacts, maintenance, simple greetings), set intents to include 'general_query'.\n"
-                "- Context is Ground Truth: The information in the static context above (Rent/Payment info, Owner Settings, Rules, Food Menu, WiFi, Emergency Contacts, etc.) is the absolute current ground truth. If the context changes, you MUST immediately adopt the new value from the context and ignore any conflicting older values in the chat history.\n"
+                "- For other questions (rules, food menu, WiFi, emergency contacts, maintenance, simple greetings, or room availability), set intents to include 'general_query' and answer them using the context data (including Available Rooms and Prices). Remember that tenants cannot choose or book these rooms.\n"
+                "- Context is Ground Truth: The information in the static context above (Rent/Payment info, Owner Settings, Rules, Food Menu, WiFi, Emergency Contacts, Available Rooms and Prices, etc.) is the absolute current ground truth. If the context changes, you MUST immediately adopt the new value from the context and ignore any conflicting older values in the chat history.\n"
                 "- Stay friendly, polite, and professional."
             )
         else:
@@ -652,6 +670,7 @@ class ChatbotService:
                 "\n"
                 "Room Search: Help them find the right room.\n"
                 "- If they ask for a sharing type, list ALL matching rooms. Never skip any.\n"
+                "- Room availability guidelines: [A] If the conversation history is empty OR does not contain any previous room type or sharing preference, show the rooms matching their current query directly without saying 'based on your previous interest'. [B] If they ask generally about room availability (e.g. 'what rooms do you have?') in their current message without specifying a room type or sharing preference, but they HAVE previously expressed a preference (e.g. 2 sharing) in the conversation history: you MUST filter the rooms to only show options matching that past preference, you MUST explicitly state in your reply that you are showing these specific options based on their previous preference (e.g., 'Since you were interested in 2-sharing rooms earlier, here are the available ones...'), you MUST remind them of the other available options (like 3 sharing, 4 sharing, etc., depending on what is in Available Rooms and Prices), and ask if they would like to explore those other options instead.\n"
                 "- Show: Room number, sharing type, AC/non-AC, vacant beds, rent.\n"
                 "- Do NOT show maintenance fees, deposits, or advance amounts unless they specifically ask.\n"
                 "- You can ask about AC/non-AC preference or sharing ONLY to narrow down options — not to fill a form.\n"

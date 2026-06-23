@@ -237,6 +237,8 @@ export default function PaymentsScreen() {
   const [reminderType, setReminderType] = useState<"friendly" | "firm">("friendly")
   const [portalToken, setPortalToken] = useState("")
   const [isRefreshingLink, setIsRefreshingLink] = useState(false)
+  const [whatsappInviteLink, setWhatsappInviteLink] = useState("")
+  const [isSharingGroupNotice, setIsSharingGroupNotice] = useState(false)
 
   // Custom Toast State
   const [toast, setToast] = useState<{
@@ -469,7 +471,7 @@ export default function PaymentsScreen() {
       // portal token, PG details, owner (chatbot_enabled), and the month summary
       // concurrently. The unbounded `from("payments").select("*")` is replaced by
       // fetchPaymentsPage; the carousel totals come from fetchMonthSummary (Req 5.5).
-      const [pageResult, summaryResult, tenantResult, linkResult, pgResult, ownerResult] = await Promise.all([
+      const [pageResult, summaryResult, tenantResult, linkResult, pgResult, ownerResult, settingsResult] = await Promise.all([
         fetchPaymentsPage(supabase as unknown as SupabaseLike, buildPageArgs(user.id, activeFilters, 0)),
         fetchMonthSummary(supabase as unknown as SupabaseLike, buildSummaryArgs(user.id, activeFilters)),
         supabase
@@ -494,7 +496,12 @@ export default function PaymentsScreen() {
           .from("pg_owners")
           .select("chatbot_enabled")
           .eq("id", user.id)
-          .single()
+          .single(),
+        supabase
+          .from("settings")
+          .select("whatsapp_invite_link")
+          .eq("owner_id", user.id)
+          .maybeSingle()
       ])
 
       if (!pageResult.ok) throw pageResult.error
@@ -517,6 +524,7 @@ export default function PaymentsScreen() {
 
       if (ownerResult.error && ownerResult.error.code !== "PGRST116") throw ownerResult.error
       setChatbotEnabled(!!ownerResult.data?.chatbot_enabled)
+      setWhatsappInviteLink(settingsResult?.data?.whatsapp_invite_link || "")
 
       let activePortalToken = linkResult.data?.portal_token
       if (!activePortalToken) {
@@ -614,10 +622,7 @@ export default function PaymentsScreen() {
 
   // Prewritten notice messages
   const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
-  const friendlyMessage = `Dear Tenant, this is a friendly reminder that rent is due soon for ${pgName ? pgName : "your PG"}. You can view your invoice details, scan the QR code, and submit your payment receipt securely here: ${portalUrl}\nThank you!`
-  const firmMessage = `Dear Tenant, this is a formal notice that your rent payment for ${pgName ? pgName : "your PG"} is now due. Please clear outstanding amounts immediately and submit your verification details on our portal: ${portalUrl}`
-
-  const currentReminderMessage = reminderType === "friendly" ? friendlyMessage : firmMessage
+  const currentReminderMessage = `Dear Tenants, this is to request you all to clear your pending rent/payments for ${pgName ? pgName : "your PG"} for the month of ${selectedMonth} and submit the proof/receipt securely via our payment portal: ${portalUrl}\nThank you!`
 
   const handleCopyAndShareReminder = async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -629,6 +634,57 @@ export default function PaymentsScreen() {
       showToast("Notice Copied", "Reminder notice copied to clipboard & share sheet opened.", "success")
     } catch (err) {
       console.error("Share error:", err)
+    }
+  }
+
+  const handleShareToWhatsAppGroup = async () => {
+    if (!portalToken) {
+      showToast("Generating link...", "Payment portal link is being fetched/created. Please try again.", "info")
+      return
+    }
+
+    if (!whatsappInviteLink) {
+      Alert.alert("Missing Invite Link", "Please configure your WhatsApp group invite link in Settings first.")
+      return
+    }
+
+    setIsSharingGroupNotice(true)
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession()
+      const token = currentSession?.access_token
+      if (!token) {
+        throw new Error("User session not found. Please log in again.")
+      }
+
+      const chatbotApiUrl = getChatbotApiUrl()
+
+      console.log("[WhatsApp Group Notice Debug] Sharing group notice:")
+      console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-group-notice`)
+
+      const response = await fetch(`${chatbotApiUrl}/api/v1/send-group-notice`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "bypass-tunnel-reminder": "true"
+        },
+        body: JSON.stringify({
+          message: currentReminderMessage
+        })
+      })
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}))
+        throw new Error(errData.detail || "Failed to send message via chatbot server.")
+      }
+
+      showToast("Success", "Notice shared in WhatsApp group successfully.", "success")
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    } catch (err: any) {
+      console.error("[WhatsApp Group Notice Debug] Error details:", err)
+      Alert.alert("Error", err.message || "Could not share notice in WhatsApp group.")
+    } finally {
+      setIsSharingGroupNotice(false)
     }
   }
 
@@ -2405,7 +2461,7 @@ export default function PaymentsScreen() {
           <KeyboardAvoidingView
             behavior="padding"
             keyboardVerticalOffset={0}
-            className="w-full"
+            className="w-full bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark overflow-hidden"
           >
             {(() => {
               const sheetMax = Math.min(
@@ -2414,8 +2470,11 @@ export default function PaymentsScreen() {
               )
               return (
                 <View
-                  style={{ maxHeight: sheetMax }}
-                  className="bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark p-6"
+                  style={{ 
+                    maxHeight: sheetMax,
+                    paddingBottom: Math.max(24, insets.bottom)
+                  }}
+                  className="p-6"
                 >
             {/* Form Header */}
             <View className="flex-row justify-between items-center mb-5">
@@ -2654,7 +2713,7 @@ export default function PaymentsScreen() {
             </KeyboardAwareScrollView>
 
             {/* Save Buttons */}
-            <View className="flex-row gap-3 pb-6 border-t border-border/40 pt-4">
+            <View className="flex-row gap-3 border-t border-border/40 pt-4">
               <TouchableOpacity
                 onPress={() => setFormModalVisible(false)}
                 className="flex-1 border border-border rounded-xl h-12 items-center justify-center active:scale-95"
@@ -2694,40 +2753,23 @@ export default function PaymentsScreen() {
             </View>
 
             <View className="gap-5">
-              {/* Template Selectors */}
-              <View className="flex-row bg-muted/10 p-1 rounded-xl border border-border dark:border-border-dark">
+              {/* Share Notice in WhatsApp Group Button (Chatbot Users Only) */}
+              {chatbotEnabled && (
                 <TouchableOpacity
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                    setReminderType("friendly")
-                  }}
-                  className={`flex-1 py-2.5 rounded-lg items-center justify-center ${
-                    reminderType === "friendly" ? "bg-primary" : "bg-transparent"
-                  }`}
+                  onPress={handleShareToWhatsAppGroup}
+                  disabled={isSharingGroupNotice}
+                  className="w-full bg-[#25D366] rounded-xl h-12 flex-row items-center justify-center active:scale-95 shadow-md shadow-[#25D366]/20"
                 >
-                  <Text className={`text-xs font-black uppercase tracking-wider ${
-                    reminderType === "friendly" ? "text-white" : "text-muted"
-                  }`}>
-                    Friendly Reminder
-                  </Text>
+                  {isSharingGroupNotice ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <>
+                      <MessageSquare size={16} color="#ffffff" className="mr-2" />
+                      <Text className="text-white font-bold text-sm">Share notice in WhatsApp group</Text>
+                    </>
+                  )}
                 </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                    setReminderType("firm")
-                  }}
-                  className={`flex-1 py-2.5 rounded-lg items-center justify-center ${
-                    reminderType === "firm" ? "bg-primary" : "bg-transparent"
-                  }`}
-                >
-                  <Text className={`text-xs font-black uppercase tracking-wider ${
-                    reminderType === "firm" ? "text-white" : "text-muted"
-                  }`}>
-                    Firm Notice
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              )}
 
               {/* Highlighted Portal Link */}
               <View className="gap-2">

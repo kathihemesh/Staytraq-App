@@ -2,29 +2,123 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { Building2, Eye, EyeOff, AlertCircle, Loader2, CheckCircle2, UserPlus, Phone, Mail, ArrowRight } from "lucide-react"
+import { Eye, EyeOff, AlertCircle, Loader2, CheckCircle2, UserPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { createClient } from "@/lib/supabase/client"
 import { useAuth } from "@/components/auth-provider"
-
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
-import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
+import { AUTH_MESSAGES } from "@/lib/auth/messages"
+import { validateSignupForm } from "@/lib/auth/validation"
+
+function GoogleIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M23.52 12.27c0-.79-.07-1.54-.2-2.27H12v4.51h6.47a5.53 5.53 0 0 1-2.4 3.63v3h3.88c2.27-2.09 3.57-5.17 3.57-8.87Z"
+      />
+      <path
+        fill="#34A853"
+        d="M12 24c3.24 0 5.96-1.08 7.95-2.91l-3.88-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09A12 12 0 0 0 12 24Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M5.27 14.29a7.2 7.2 0 0 1 0-4.58V6.62H1.29a12 12 0 0 0 0 10.76l3.98-3.09Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.44-3.44A11.98 11.98 0 0 0 12 0 12 12 0 0 0 1.29 6.62l3.98 3.09C6.22 6.86 8.87 4.75 12 4.75Z"
+      />
+    </svg>
+  )
+}
 
 export default function SignupPage() {
-  const { isLoading } = useAuth()
+  const { isLoading, signInWithGoogle } = useAuth()
   const supabase = createClient()
+
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
-  const [authType, setAuthType] = useState<"phone" | "email">("phone")
-  const [step, setStep] = useState<"initial" | "otp" | "password">("initial")
+  const [error, setError] = useState<string | null>(null)
+  const [validationError, setValidationError] = useState<{ identifier?: string; password?: string }>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [googleLoading, setGoogleLoading] = useState(false)
+  const [isSuccess, setIsSuccess] = useState(false)
+
+  const handleEmailSignUp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+
+    const errors = validateSignupForm(email, password)
+    if (Object.keys(errors).length > 0) {
+      setValidationError(errors)
+      return
+    }
+
+    setValidationError({})
+    setIsSubmitting(true)
+    try {
+      // 1. Check if the email is already registered in auth.users via RPC.
+      const { data: exists, error: fetchError } = await supabase.rpc("check_user_exists", {
+        p_email: email.trim(),
+        p_phone: null,
+      })
+
+      if (fetchError) {
+        setError(AUTH_MESSAGES.serverCheckError)
+        setIsSubmitting(false)
+        return
+      }
+
+      if (exists) {
+        setError(AUTH_MESSAGES.emailAlreadyRegistered)
+        setIsSubmitting(false)
+        return
+      }
+
+      // 2. Create the account with an email verification redirect target.
+      const { error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/verified`,
+        },
+      })
+
+      if (signUpError) {
+        setError(signUpError.message)
+        setIsSubmitting(false)
+        return
+      }
+
+      setIsSuccess(true)
+    } catch {
+      setError(AUTH_MESSAGES.unexpected)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleGoogleSignIn = async () => {
+    setError(null)
+    setGoogleLoading(true)
+
+    const result = await signInWithGoogle()
+
+    if (!result.success) {
+      setError(result.error || AUTH_MESSAGES.googleInitFailed)
+      setGoogleLoading(false)
+    }
+    // On success the browser performs a full-page redirect; no need to reset state.
+  }
 
   if (isLoading) {
     return (
       <div className="relative flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-muted/30 animate-in fade-in-0 duration-200">
-        {/* Header */}
         <header className="flex items-center justify-between px-6 py-4 sm:px-8">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-lg bg-muted animate-pulse" />
@@ -33,7 +127,6 @@ export default function SignupPage() {
           <div className="h-9 w-9 rounded-md bg-muted animate-pulse" />
         </header>
 
-        {/* Main Content */}
         <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
           <Card className="w-full max-w-[420px] border-border/50 shadow-lg">
             <CardHeader className="space-y-1 text-center">
@@ -43,19 +136,15 @@ export default function SignupPage() {
             </CardHeader>
 
             <CardContent className="space-y-6">
-              {/* Tabs Skeleton */}
-              <div className="h-10 w-full rounded-lg bg-muted/60 animate-pulse" />
-
-              {/* Input Skeleton */}
               <div className="space-y-2">
                 <div className="h-4 w-24 rounded bg-muted animate-pulse" />
                 <div className="h-11 w-full rounded-md bg-muted/60 animate-pulse" />
               </div>
-
-              {/* Submit Button Skeleton */}
+              <div className="space-y-2">
+                <div className="h-4 w-20 rounded bg-muted animate-pulse" />
+                <div className="h-11 w-full rounded-md bg-muted/60 animate-pulse" />
+              </div>
               <div className="h-11 w-full rounded-md bg-muted animate-pulse mt-4" />
-
-              {/* Footer Text Skeleton */}
               <div className="pt-2 text-center">
                 <div className="mx-auto h-4 w-48 rounded bg-muted animate-pulse" />
               </div>
@@ -68,191 +157,6 @@ export default function SignupPage() {
         </footer>
       </div>
     )
-  }
-  
-  const [identifier, setIdentifier] = useState("") // phone or email
-  const [otp, setOtp] = useState("")
-  const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  
-  const [error, setError] = useState<string | null>(null)
-  const [validationError, setValidationError] = useState<Record<string, string>>({})
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [isSuccess, setIsSuccess] = useState(false)
-
-  const validateEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    return emailRegex.test(email)
-  }
-
-  const validatePassword = (pass: string): { isValid: boolean; errors: string[] } => {
-    const errors: string[] = []
-    if (pass.length < 8) errors.push("at least 8 characters")
-    if (!/\d/.test(pass)) errors.push("at least one number")
-    if (!/[!@#$%^&*(),.?":{}|<>]/.test(pass)) errors.push("at least one special character")
-    
-    return {
-      isValid: errors.length === 0,
-      errors
-    }
-  }
-
-  const handleSendOTP = async () => {
-    if (!identifier || identifier.length < 10) {
-      setValidationError({ identifier: "Please enter a valid 10-digit phone number" })
-      return
-    }
-    
-    setIsSubmitting(true)
-    setError(null)
-    
-    try {
-      // 1. Check if the mobile number is already registered in auth.users via RPC
-      const { data: exists, error: fetchError } = await supabase
-        .rpc("check_user_exists", {
-          p_email: null,
-          p_phone: identifier.trim()
-        })
-
-      if (fetchError) throw new Error("Server error while checking registration")
-
-      if (exists) {
-        setError("This mobile number is already registered.")
-        setIsSubmitting(false)
-        return
-      }
-
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        phone: identifier.startsWith("+") ? identifier : `+91${identifier}`,
-      })
-
-      if (otpError) {
-        setError(otpError.message)
-      } else {
-        setStep("otp")
-      }
-    } catch (err) {
-      setError("Failed to send OTP. Please try again.")
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleVerifyOTP = async () => {
-    if (otp.length < 6) {
-      setValidationError({ otp: "Please enter a valid 6-digit OTP" })
-      return
-    }
-    
-    setIsSubmitting(true)
-    setError(null)
-    
-    try {
-      const { data, error: verifyError } = await supabase.auth.verifyOtp({
-        phone: identifier.startsWith("+") ? identifier : `+91${identifier}`,
-        token: otp,
-        type: 'sms',
-      })
-
-      if (verifyError) {
-        setError(verifyError.message)
-      } else if (data.session) {
-        setStep("password")
-      }
-    } catch (err) {
-      setError("Verification failed. Please try again.")
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleEmailSignUp = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    const errors: Record<string, string> = {}
-
-    if (!identifier.trim() || !validateEmail(identifier)) {
-      errors.identifier = "Please enter a valid email address"
-    }
-
-    const passVal = validatePassword(password)
-    if (!passVal.isValid) {
-      errors.password = `Password must contain ${passVal.errors.join(", ")}`
-    }
-
-    if (Object.keys(errors).length > 0) {
-      setValidationError(errors)
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      // 1. Check if the email is already registered in auth.users via RPC
-      const { data: exists, error: fetchError } = await supabase
-        .rpc("check_user_exists", {
-          p_email: identifier.trim(),
-          p_phone: null
-        })
-
-      if (fetchError) throw new Error("Server error while checking registration")
-
-      if (exists) {
-        setError("This email is already registered.")
-        setIsSubmitting(false)
-        return
-      }
-
-      const { data, error: signUpError } = await supabase.auth.signUp({
-        email: identifier.trim(),
-        password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/verified`,
-        },
-      })
-
-      if (signUpError) {
-        setError(signUpError.message)
-      } else {
-        setIsSuccess(true)
-      }
-    } catch (err) {
-      setError("An unexpected error occurred. Please try again.")
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleSetPassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    
-    const passVal = validatePassword(password)
-    if (!passVal.isValid) {
-      setValidationError({ password: `Password must contain ${passVal.errors.join(", ")}` })
-      return
-    }
-
-    if (password !== confirmPassword) {
-      setValidationError({ confirmPassword: "Passwords do not match" })
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: password
-      })
-
-      if (updateError) {
-        setError(updateError.message)
-      } else {
-        setIsSuccess(true)
-      }
-    } catch (err) {
-      setError("Failed to set password. Please try again.")
-    } finally {
-      setIsSubmitting(false)
-    }
   }
 
   if (isSuccess) {
@@ -274,37 +178,24 @@ export default function SignupPage() {
               <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-success/10">
                 <CheckCircle2 className="h-6 w-6 text-success" />
               </div>
-              <CardTitle className="text-2xl font-bold tracking-tight">
-                {authType === "email" ? "Check Your Email" : "Account Created!"}
-              </CardTitle>
+              <CardTitle className="text-2xl font-bold tracking-tight">Check Your Email</CardTitle>
               <CardDescription className="text-balance text-muted-foreground">
-                {authType === "email" 
-                  ? "We've sent a confirmation link to your email." 
-                  : "Your account has been successfully verified and set up."}
+                We&apos;ve sent a confirmation link to your email.
               </CardDescription>
             </CardHeader>
 
             <CardContent className="space-y-4">
               <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
                 <p className="text-center text-sm text-muted-foreground">
-                  {authType === "email" ? (
-                    <>
-                      A verification email has been sent to{" "}
-                      <span className="font-medium text-foreground">{identifier}</span>. 
-                      Please click the link in the email to confirm your account.
-                    </>
-                  ) : (
-                    <>
-                      You can now sign in using your phone number{" "}
-                      <span className="font-medium text-foreground">+91 {identifier}</span>.
-                    </>
-                  )}
+                  A verification email has been sent to{" "}
+                  <span className="font-medium text-foreground">{email}</span>. Please click the link
+                  in the email to confirm your account.
                 </p>
               </div>
-              <Button 
+              <Button
                 variant="default"
                 className="h-11 w-full font-medium"
-                onClick={() => window.location.href = "/login"}
+                onClick={() => (window.location.href = "/login")}
               >
                 Go to Login
               </Button>
@@ -318,6 +209,8 @@ export default function SignupPage() {
       </div>
     )
   }
+
+  const isBusy = isSubmitting || googleLoading
 
   return (
     <div className="relative flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-muted/30">
@@ -351,203 +244,97 @@ export default function SignupPage() {
               </div>
             )}
 
-            <Tabs 
-              value={authType} 
-              onValueChange={(v) => {
-                setAuthType(v as "phone" | "email")
-                setIdentifier("")
-                setStep("initial")
-                setError(null)
-                setValidationError({})
-              }} 
-              className="w-full"
-            >
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="phone" className="gap-2">
-                  <Phone className="h-4 w-4" />
-                  Phone
-                </TabsTrigger>
-                <TabsTrigger value="email" className="gap-2">
-                  <Mail className="h-4 w-4" />
-                  Email
-                </TabsTrigger>
-              </TabsList>
-
-              <div className="mt-6">
-                {authType === "phone" ? (
-                  <div className="space-y-4">
-                    {step === "initial" && (
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="phone">Phone Number</Label>
-                          <div className="relative">
-                            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">
-                              +91
-                            </div>
-                            <Input
-                              id="phone"
-                              type="tel"
-                              placeholder="00000 00000"
-                              className={`h-11 pl-12 ${validationError.identifier ? "border-destructive" : ""}`}
-                              value={identifier}
-                              onChange={(e) => {
-                                setIdentifier(e.target.value.replace(/\D/g, "").slice(0, 10))
-                                setValidationError({})
-                              }}
-                            />
-                          </div>
-                          {validationError.identifier && (
-                            <p className="text-sm text-destructive">{validationError.identifier}</p>
-                          )}
-                        </div>
-                        <Button className="w-full h-11" onClick={handleSendOTP} disabled={isSubmitting}>
-                          {isSubmitting ? <Loader2 className="animate-spin" /> : "Send OTP"}
-                        </Button>
-                      </div>
-                    )}
-
-                    {step === "otp" && (
-                      <div className="space-y-4 text-center">
-                        <Label>Enter Verification Code</Label>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          OTP sent to +91 {identifier}
-                        </p>
-                        <div className="flex justify-center py-2">
-                          <InputOTP 
-                            maxLength={6} 
-                            value={otp} 
-                            onChange={(val) => {
-                              setOtp(val)
-                              setValidationError({})
-                            }}
-                          >
-                            <InputOTPGroup>
-                              {[0, 1, 2, 3, 4, 5].map((i) => (
-                                <InputOTPSlot key={i} index={i} />
-                              ))}
-                            </InputOTPGroup>
-                          </InputOTP>
-                        </div>
-                        {validationError.otp && (
-                          <p className="text-sm text-destructive">{validationError.otp}</p>
-                        )}
-                        <Button className="w-full h-11" onClick={handleVerifyOTP} disabled={isSubmitting}>
-                          {isSubmitting ? <Loader2 className="animate-spin" /> : "Verify OTP"}
-                        </Button>
-                        <button 
-                          onClick={() => setStep("initial")} 
-                          className="text-xs text-primary hover:underline"
-                        >
-                          Change number
-                        </button>
-                      </div>
-                    )}
-
-                    {step === "password" && (
-                      <form onSubmit={handleSetPassword} className="space-y-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="password">Create Password</Label>
-                          <div className="relative">
-                            <Input
-                              id="password"
-                              type={showPassword ? "text" : "password"}
-                              className={`h-11 pr-10 ${validationError.password ? "border-destructive" : ""}`}
-                              value={password}
-                              onChange={(e) => {
-                                setPassword(e.target.value)
-                                setValidationError({})
-                              }}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShowPassword(!showPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
-                            >
-                              {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                            </button>
-                          </div>
-                          {validationError.password && (
-                            <p className="text-xs text-destructive">{validationError.password}</p>
-                          )}
-                        </div>
-                        <div className="space-y-2">
-                          <Label htmlFor="confirmPassword">Confirm Password</Label>
-                          <Input
-                            id="confirmPassword"
-                            type="password"
-                            className={`h-11 ${validationError.confirmPassword ? "border-destructive" : ""}`}
-                            value={confirmPassword}
-                            onChange={(e) => {
-                              setConfirmPassword(e.target.value)
-                              setValidationError({})
-                            }}
-                          />
-                          {validationError.confirmPassword && (
-                            <p className="text-xs text-destructive">{validationError.confirmPassword}</p>
-                          )}
-                        </div>
-                        <Button type="submit" className="w-full h-11" disabled={isSubmitting}>
-                          {isSubmitting ? <Loader2 className="animate-spin" /> : "Complete Setup"}
-                        </Button>
-                      </form>
-                    )}
-                  </div>
-                ) : (
-                  <form className="space-y-4" onSubmit={handleEmailSignUp}>
-                    <div className="space-y-2">
-                      <Label htmlFor="email">Email Address</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        placeholder="Enter your email"
-                        className={`h-11 ${validationError.identifier ? "border-destructive" : ""}`}
-                        value={identifier}
-                        onChange={(e) => {
-                          setIdentifier(e.target.value)
-                          setError(null)
-                          setValidationError((prev) => ({ ...prev, identifier: "" }))
-                        }}
-                      />
-                      {validationError.identifier && (
-                        <p className="text-sm text-destructive">{validationError.identifier}</p>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="email-password">Password</Label>
-                      <div className="relative">
-                        <Input
-                          id="email-password"
-                          type={showPassword ? "text" : "password"}
-                          placeholder="Create a strong password"
-                          className={`h-11 pr-10 ${validationError.password ? "border-destructive" : ""}`}
-                          value={password}
-                          onChange={(e) => {
-                            setPassword(e.target.value)
-                            setError(null)
-                            setValidationError((prev) => ({ ...prev, password: "" }))
-                          }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground focus-visible:outline-none"
-                        >
-                          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                        </button>
-                      </div>
-                      {validationError.password && (
-                        <p className="text-xs text-destructive">{validationError.password}</p>
-                      )}
-                    </div>
-
-                    <Button type="submit" className="h-11 w-full font-medium" disabled={isSubmitting}>
-                      {isSubmitting ? <Loader2 className="animate-spin" /> : "Sign Up"}
-                    </Button>
-                  </form>
+            <form className="space-y-4" onSubmit={handleEmailSignUp}>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email Address</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="name@example.com"
+                  autoComplete="email"
+                  className={`h-11 ${validationError.identifier ? "border-destructive" : ""}`}
+                  value={email}
+                  onChange={(e) => {
+                    setEmail(e.target.value)
+                    setError(null)
+                    setValidationError((prev) => ({ ...prev, identifier: undefined }))
+                  }}
+                />
+                {validationError.identifier && (
+                  <p className="text-sm text-destructive">{validationError.identifier}</p>
                 )}
               </div>
-            </Tabs>
+
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    placeholder="Create a strong password"
+                    autoComplete="new-password"
+                    className={`h-11 pr-10 ${validationError.password ? "border-destructive" : ""}`}
+                    value={password}
+                    onChange={(e) => {
+                      setPassword(e.target.value)
+                      setError(null)
+                      setValidationError((prev) => ({ ...prev, password: undefined }))
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+                {validationError.password && (
+                  <p className="text-xs text-destructive">{validationError.password}</p>
+                )}
+              </div>
+
+              <Button type="submit" className="h-11 w-full font-medium" disabled={isBusy}>
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Creating account...
+                  </>
+                ) : (
+                  "Sign Up"
+                )}
+              </Button>
+            </form>
+
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t border-border" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-card px-2 text-muted-foreground">Or</span>
+              </div>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 w-full font-medium"
+              onClick={handleGoogleSignIn}
+              disabled={isBusy}
+            >
+              {googleLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  <GoogleIcon className="mr-2" />
+                  Continue with Google
+                </>
+              )}
+            </Button>
 
             <p className="text-center text-sm text-muted-foreground">
               {"Already have an account? "}

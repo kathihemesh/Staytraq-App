@@ -841,10 +841,12 @@ export default function TenantsScreen() {
   useEffect(() => {
     if (searchParam) {
       setSearchQuery(searchParam)
-      setStatusFilter("all")
+      if (!statusParam) {
+        setStatusFilter("all")
+      }
       router.setParams({ search: undefined })
     }
-  }, [searchParam])
+  }, [searchParam, statusParam])
 
   const openAddModal = () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -2684,7 +2686,7 @@ export default function TenantsScreen() {
           <KeyboardAvoidingView
             behavior="padding"
             keyboardVerticalOffset={0}
-            className="w-full"
+            className="w-full bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark overflow-hidden"
           >
             {(() => {
               const sheetMax = Math.min(
@@ -2693,8 +2695,11 @@ export default function TenantsScreen() {
               )
               return (
                 <View
-                  style={{ maxHeight: sheetMax }}
-                  className="bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark p-6"
+                  style={{ 
+                    maxHeight: sheetMax,
+                    paddingBottom: Math.max(24, insets.bottom)
+                  }}
+                  className="p-6"
                 >
             {/* Header */}
             <View className="flex-row justify-between items-center mb-6">
@@ -3035,7 +3040,7 @@ export default function TenantsScreen() {
             </KeyboardAwareScrollView>
 
             {/* Actions */}
-            <View className="flex-row gap-3 pb-6">
+            <View className="flex-row gap-3">
               <TouchableOpacity
                 onPress={() => setFormModalVisible(false)}
                 className="flex-1 border border-border dark:border-border-dark rounded-xl py-3.5 items-center justify-center bg-background dark:bg-background-dark"
@@ -3142,7 +3147,7 @@ export default function TenantsScreen() {
           <KeyboardAvoidingView
             behavior="padding"
             keyboardVerticalOffset={0}
-            className="w-full"
+            className="w-full bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark overflow-hidden"
           >
             {selectedTenant && (() => {
               const unpaidPayments = paymentHistory.filter(
@@ -3151,7 +3156,10 @@ export default function TenantsScreen() {
               const unpaidTotal = unpaidPayments.reduce((acc, curr) => acc + (curr.rent_amount || 0) + (curr.extra_charges || 0), 0)
               
               return (
-                <View className="bg-card dark:bg-card-dark rounded-t-[36px] border-t border-border dark:border-border-dark p-6">
+                <View 
+                  style={{ paddingBottom: Math.max(24, insets.bottom) }}
+                  className="p-6"
+                >
                   {/* Header */}
                   <View className="flex-row justify-between items-center mb-6">
                     <View>
@@ -3376,7 +3384,7 @@ export default function TenantsScreen() {
                   </ScrollView>
 
                   {/* Actions */}
-                  <View className="flex-row gap-3 pb-6">
+                  <View className="flex-row gap-3">
                     <TouchableOpacity
                       onPress={() => setMoveOutModalVisible(false)}
                       className="flex-1 border border-border dark:border-border-dark rounded-xl py-3.5 items-center justify-center bg-background dark:bg-background-dark"

@@ -1703,7 +1703,7 @@ export default function RoomsScreen() {
           <KeyboardAvoidingView
             behavior="padding"
             keyboardVerticalOffset={0}
-            className="w-full"
+            className="w-full bg-white dark:bg-slate-950 rounded-t-[26px] border border-slate-200 dark:border-slate-800 overflow-hidden"
           >
             {(() => {
               const sheetMax = Math.min(
@@ -1713,7 +1713,6 @@ export default function RoomsScreen() {
               const scrollMax = Math.max(180, sheetMax - 148)
               return (
                 <View
-                  className="rounded-t-[26px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-950"
                   style={{ maxHeight: sheetMax }}
                 >
                   <View className="flex-row items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">

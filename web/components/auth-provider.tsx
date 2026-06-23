@@ -4,11 +4,18 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, us
 import { useRouter, usePathname } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { Loader2 } from "lucide-react"
+import { AUTH_MESSAGES } from "@/lib/auth/messages"
+import {
+  decideAuthRedirect,
+  PUBLIC_ROUTES,
+  PUBLIC_ROUTE_PREFIXES,
+  type OnboardingStatus as RedirectOnboardingStatus,
+} from "@/lib/auth/redirect"
 
 
 import type { User, Session } from "@supabase/supabase-js"
 
-type OnboardingStatus = "unknown" | "onboarded" | "not_onboarded"
+type OnboardingStatus = RedirectOnboardingStatus
 
 interface AuthContextType {
   isAuthenticated: boolean
@@ -18,15 +25,22 @@ interface AuthContextType {
   isLoading: boolean
   user: User | null
   session: Session | null
-  login: (identifier: string, password: string, type: "email" | "phone") => Promise<{ success: boolean; error?: string }>
+  login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>
+  signInWithGoogle: () => Promise<{ success: boolean; error?: string }>
   logout: () => Promise<void>
   checkOnboardingStatus: (userId: string) => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-// Public routes that don't require authentication
-const PUBLIC_ROUTES = ["/login", "/reset-password", "/forgot-password", "/signup", "/verified"]
+// Public route helpers (including `/auth/callback`) are sourced from the pure
+// redirect helper so the provider and helper stay in lockstep.
+function isPublicRoute(normalizedPath: string): boolean {
+  return (
+    (PUBLIC_ROUTES as readonly string[]).includes(normalizedPath) ||
+    (PUBLIC_ROUTE_PREFIXES as readonly string[]).some((prefix) => normalizedPath.startsWith(prefix))
+  )
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const supabase = useMemo(() => createClient(), [])
@@ -189,44 +203,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Wait for the initial auth check to complete; otherwise redirects can flap on refresh/focus.
     if (!authReady || isLoading) return
 
-    const normalizedPath = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname
-    const isPublicRoute = PUBLIC_ROUTES.includes(normalizedPath) || normalizedPath.startsWith("/pay/") || normalizedPath.startsWith("/complaint-submit/")
-    const isOnboardingKnown = onboardingStatus !== "unknown"
-    const isOnboarded = onboardingStatus === "onboarded"
+    const target = decideAuthRedirect({
+      isAuthenticated,
+      onboardingStatus,
+      pathname,
+    })
 
-    if (!isAuthenticated && !isPublicRoute) {
-      // Redirect to login if not authenticated and trying to access protected route
-      router.push("/login")
-    } else if (isAuthenticated) {
-      // Avoid redirecting until we know onboarding status to prevent flicker.
-      if (!isOnboardingKnown) return
-
-      if (!isOnboarded && !["/onboarding", "/signup", "/forgot-password", "/reset-password", "/verified"].includes(normalizedPath)) {
-        // If authenticated but not onboarded, redirect to onboarding 
-        router.push("/onboarding")
-      } else if (isOnboarded && (normalizedPath === "/login" || normalizedPath === "/signup" || normalizedPath === "/onboarding")) {
-        // If authenticated and onboarded, redirect from public/onboarding routes to dashboard
-        router.push("/")
-      }
+    if (target && target !== pathname) {
+      router.push(target)
     }
   }, [isAuthenticated, onboardingStatus, authReady, isLoading, pathname, router])
 
-  const login = useCallback(async (identifier: string, password: string, type: "email" | "phone") => {
+  const login = useCallback(async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword(
-        type === "email" 
-          ? { email: identifier, password } 
-          : { phone: identifier.startsWith("+") ? identifier : `+91${identifier}`, password }
-      )
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      })
 
       if (error) {
-        return { success: false, error: "Invalid credentials. Please try again." }
+        return { success: false, error: AUTH_MESSAGES.invalidCredentials }
       }
 
       // State + redirects are handled centrally by onAuthStateChange + redirect effect.
       return { success: true }
     } catch {
-      return { success: false, error: "An unexpected error occurred. Please try again." }
+      return { success: false, error: AUTH_MESSAGES.unexpected }
+    }
+  }, [])
+
+  const signInWithGoogle = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      })
+
+      if (error) {
+        // Surface the verbatim Supabase error message.
+        return { success: false, error: error.message }
+      }
+
+      if (!data?.url) {
+        return { success: false, error: AUTH_MESSAGES.googleInitFailed }
+      }
+
+      return { success: true }
+    } catch {
+      return { success: false, error: AUTH_MESSAGES.unexpected }
     }
   }, [])
 
@@ -266,11 +292,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   if (!authReady) {
     const normalizedPath = pathname.length > 1 ? pathname.replace(/\/$/, "") : pathname
-    const isPublicRoute = PUBLIC_ROUTES.includes(normalizedPath) || normalizedPath.startsWith("/pay/") || normalizedPath.startsWith("/complaint-submit/")
 
-    if (isPublicRoute) {
+    if (isPublicRoute(normalizedPath)) {
       return (
-        <AuthContext.Provider value={{ isAuthenticated, isOnboarded, isOnboardingKnown, authReady, isLoading, user, session, login, logout, checkOnboardingStatus }}>
+        <AuthContext.Provider value={{ isAuthenticated, isOnboarded, isOnboardingKnown, authReady, isLoading, user, session, login, signInWithGoogle, logout, checkOnboardingStatus }}>
           {children}
         </AuthContext.Provider>
       )
@@ -287,7 +312,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isOnboarded, isOnboardingKnown, authReady, isLoading, user, session, login, logout, checkOnboardingStatus }}>
+    <AuthContext.Provider value={{ isAuthenticated, isOnboarded, isOnboardingKnown, authReady, isLoading, user, session, login, signInWithGoogle, logout, checkOnboardingStatus }}>
       {children}
     </AuthContext.Provider>
   )
