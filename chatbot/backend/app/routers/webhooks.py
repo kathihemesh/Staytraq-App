@@ -301,6 +301,95 @@ async def send_payment_rejection(payload: PaymentRejectionRequest, authorization
         )
 
 
+class SendNoticeServiceRequest(BaseModel):
+    owner_id: str
+    tenant_id: int
+    message: str
+
+
+@router.post("/send-whatsapp-notice-service")
+async def send_whatsapp_notice_service(payload: SendNoticeServiceRequest, authorization: str = Header(None)):
+    # Service-to-service authentication using the static internal service secret.
+    # Mirrors the /whatsapp webhook's static-secret check, but uses the dedicated
+    # INTERNAL_SERVICE_KEY so the Evolution credential is never overloaded.
+    if not settings.INTERNAL_SERVICE_KEY:
+        logger.error("INTERNAL_SERVICE_KEY is not configured; rejecting service notice request.")
+        raise HTTPException(
+            status_code=503,
+            detail="Service notice endpoint is not configured."
+        )
+    if authorization != f"Bearer {settings.INTERNAL_SERVICE_KEY}":
+        logger.warning("Unauthorized service notice request blocked.")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing service authorization."
+        )
+
+    if not payload.message or not payload.message.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Message body is required."
+        )
+
+    # Resolve owner identity server-side (mirrors send-payment-rejection) and
+    # verify the owner exists and has the chatbot enabled.
+    owner = await supabase_service.get_owner_by_id(payload.owner_id)
+    if not owner:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Owner not found for ID: {payload.owner_id}"
+        )
+    if not owner.get("chatbot_enabled"):
+        raise HTTPException(
+            status_code=403,
+            detail="Chatbot is not enabled for this owner account."
+        )
+
+    owner_email = owner.get("email")
+    if not owner_email:
+        raise HTTPException(
+            status_code=400,
+            detail="Owner email not found."
+        )
+
+    # Resolve tenant identity server-side and verify it belongs to the owner.
+    tenant = await supabase_service.get_tenant_by_id(payload.tenant_id)
+    if not tenant:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Tenant not found for ID: {payload.tenant_id}"
+        )
+    if str(tenant.get("owner_id")) != str(owner.get("id")):
+        raise HTTPException(
+            status_code=403,
+            detail="Tenant does not belong to the specified owner."
+        )
+
+    phone = tenant.get("mobile_number")
+    if not phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Tenant does not have a registered mobile number."
+        )
+
+    clean_phone = phone.replace("+", "").replace(" ", "").replace("-", "")
+    if len(clean_phone) == 10:
+        clean_phone = "91" + clean_phone
+
+    success = await evolution_client.send_text_message(
+        instance_name=owner_email,
+        number=clean_phone,
+        text=payload.message
+    )
+    if success:
+        return {"status": "success"}
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send message via Evolution API"
+        )
+
+
 # ==========================================
 
 @router.get("/chatbot/status")

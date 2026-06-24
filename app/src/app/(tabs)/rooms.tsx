@@ -54,6 +54,7 @@ import {
   CalendarDays,
   ArrowRight,
   ArrowUpDown,
+  Trash2,
 } from "lucide-react-native"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
@@ -65,6 +66,7 @@ import {
   useKeyboardHeight,
 } from "@/components/ui/keyboard-aware-scroll-view"
 import { InlineSelect } from "@/components/ui/inline-select"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import {
   floorNoToLabel,
   getStatusConfig,
@@ -393,6 +395,7 @@ export default function RoomsScreen() {
   const [pgMissing, setPgMissing] = useState(false)
   const [pgId, setPgId] = useState<number | null>(null)
   const [noFloors, setNoFloors] = useState(0)
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
 
   const [editForm, setEditForm] = useState<Partial<Room>>({})
   const [filters, setFilters] = useState({
@@ -866,6 +869,54 @@ export default function RoomsScreen() {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
     } catch (_) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+    }
+  }
+
+  const handleDeleteRoom = async () => {
+    if (!selectedRoom) return
+    
+    // Check if room is empty
+    if (selectedRoom.occupiedBeds > 0) {
+      Alert.alert(
+        "Cannot Delete Room",
+        "This room has tenants assigned to it. Please move or remove all tenants before deleting the room.",
+        [{ text: "OK" }]
+      )
+      return
+    }
+
+    // Show confirmation modal
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    setDeleteConfirmVisible(true)
+  }
+
+  const confirmDeleteRoom = async () => {
+    if (!selectedRoom) return
+    
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      const { error } = await supabase
+        .from("rooms_table")
+        .delete()
+        .eq("id", Number(selectedRoom.id))
+      
+      if (error) {
+        console.error(error)
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        Alert.alert("Error", "Failed to delete the room. Please try again.")
+        return
+      }
+      
+      // Close modals and refresh data
+      setDeleteConfirmVisible(false)
+      setIsSidebarOpen(false)
+      setSelectedRoom(null)
+      await fetchData()
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    } catch (err) {
+      console.error(err)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      Alert.alert("Error", "An unexpected error occurred while deleting the room.")
     }
   }
 
@@ -1599,6 +1650,19 @@ export default function RoomsScreen() {
                       <Text className="text-sm font-bold text-orange-800 dark:text-orange-300">Move to Maintenance</Text>
                     </TouchableOpacity>
                   )}
+                  {/* Delete button - only show for empty rooms */}
+                  {selectedRoom.occupiedBeds === 0 ? (
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      accessibilityLabel="Delete room"
+                      onPress={() => void handleDeleteRoom()}
+                      activeOpacity={0.9}
+                      className="flex-row items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 py-3.5 dark:border-red-900 dark:bg-red-950/35"
+                    >
+                      <Trash2 size={18} color="#ef4444" />
+                      <Text className="text-sm font-bold text-red-700 dark:text-red-400">Delete Room</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               ) : null}
             </View>
@@ -2008,6 +2072,19 @@ export default function RoomsScreen() {
           ) : null}
         </Pressable>
       </Modal>
+
+      {/* Confirm Delete Room Modal */}
+      <ConfirmModal
+        visible={deleteConfirmVisible}
+        title="Delete Room"
+        message={`Are you sure you want to delete Room ${selectedRoom?.number || ''}? This action cannot be undone.`}
+        confirmText="Delete"
+        cancelText="Cancel"
+        isDestructive={true}
+        onConfirm={confirmDeleteRoom}
+        onCancel={() => setDeleteConfirmVisible(false)}
+        icon={<Trash2 size={24} color="#ef4444" />}
+      />
 
       {renderDetailSheet}
     </SafeAreaView>

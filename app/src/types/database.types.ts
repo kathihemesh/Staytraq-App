@@ -493,6 +493,7 @@ export type Database = {
       }
       tenants_table: {
         Row: {
+          aadhaar_number: string | null
           created_at: string
           deposit_amount: number | null
           deposit_refund_amount: number | null
@@ -500,20 +501,32 @@ export type Database = {
           exit_date: string | null
           extra_charges: number | null
           id: number
+          id_back_path: string | null
           id_documents: Json | null
+          id_front_path: string | null
+          identity_deleted_at: string | null
+          identity_msg_failed: boolean
+          identity_reminder_last_date: string | null
+          identity_request_flag: boolean
+          identity_type: "Aadhaar" | "PAN" | null
+          ignore_identity_flag: boolean
           join_date: string | null
           mobile_number: string | null
           name: string | null
           notes: string | null
           owner_id: string
+          pan_code: string | null
           payment_code: string
           pg_id: number | null
           rent_due_day: number | null
           room_id: number | null
           status: Database["public"]["Enums"]["tenant_status"]
           updated_at: string | null
+          verification_status: "Not_Started" | "In_Progress" | "Verified" | "Ignored"
+          verification_token: string | null
         }
         Insert: {
+          aadhaar_number?: string | null
           created_at?: string
           deposit_amount?: number | null
           deposit_refund_amount?: number | null
@@ -521,20 +534,32 @@ export type Database = {
           exit_date?: string | null
           extra_charges?: number | null
           id?: number
+          id_back_path?: string | null
           id_documents?: Json | null
+          id_front_path?: string | null
+          identity_deleted_at?: string | null
+          identity_msg_failed?: boolean
+          identity_reminder_last_date?: string | null
+          identity_request_flag?: boolean
+          identity_type?: string | null
+          ignore_identity_flag?: boolean
           join_date?: string | null
           mobile_number?: string | null
           name?: string | null
           notes?: string | null
           owner_id: string
+          pan_code?: string | null
           payment_code?: string
           pg_id?: number | null
           rent_due_day?: number | null
           room_id?: number | null
           status?: Database["public"]["Enums"]["tenant_status"]
           updated_at?: string | null
+          verification_status?: string
+          verification_token?: string | null
         }
         Update: {
+          aadhaar_number?: string | null
           created_at?: string
           deposit_amount?: number | null
           deposit_refund_amount?: number | null
@@ -542,18 +567,29 @@ export type Database = {
           exit_date?: string | null
           extra_charges?: number | null
           id?: number
+          id_back_path?: string | null
           id_documents?: Json | null
+          id_front_path?: string | null
+          identity_deleted_at?: string | null
+          identity_msg_failed?: boolean
+          identity_reminder_last_date?: string | null
+          identity_request_flag?: boolean
+          identity_type?: string | null
+          ignore_identity_flag?: boolean
           join_date?: string | null
           mobile_number?: string | null
           name?: string | null
           notes?: string | null
           owner_id?: string
+          pan_code?: string | null
           payment_code?: string
           pg_id?: number | null
           rent_due_day?: number | null
           room_id?: number | null
           status?: Database["public"]["Enums"]["tenant_status"]
           updated_at?: string | null
+          verification_status?: string
+          verification_token?: string | null
         }
         Relationships: [
           {

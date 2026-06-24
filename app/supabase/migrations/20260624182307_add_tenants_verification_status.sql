@@ -1,0 +1,1 @@
+ALTER TABLE public.tenants_table ADD COLUMN IF NOT EXISTS verification_status text NOT NULL DEFAULT 'Not_Started' CONSTRAINT tenants_verification_status_check CHECK (verification_status IN ('Not_Started','In_Progress','Verified','Ignored'));;

@@ -5,7 +5,11 @@ import { useLocalSearchParams, router, useFocusEffect } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
-import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User, Hotel, Edit3, Trash2, Camera, Upload, Check, AlertTriangle, Info, Maximize2, Copy, Clock, ShieldCheck, LogOut, DollarSign, Lock } from "lucide-react-native"
+import { deriveIdentityRequestFlag, maskIdentityCode, selectDisplayCode } from "@/lib/identity/verify"
+import { popupStatusPresentation, shouldShowIgnoreButton, applyIgnore, viewerHasSlideControl } from "@/lib/identity/popup"
+import { ensureVerificationToken, buildVerificationLink } from "@/lib/identity/token"
+import { sendIdentityRequest } from "@/lib/identity/message"
+import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User, Hotel, Edit3, Trash2, Camera, Upload, Check, AlertTriangle, Info, Maximize2, Copy, Clock, ShieldCheck, LogOut, DollarSign, Lock, Eye, EyeOff } from "lucide-react-native"
 import { LinearGradient } from "expo-linear-gradient"
 import Svg, { Path } from "react-native-svg"
 import * as Haptics from "expo-haptics"
@@ -28,6 +32,10 @@ const getChatbotApiUrl = () => {
   }
   return "https://staytraq.vercel.app/api/chatbot-proxy"
 }
+
+// Base path of the public tenant identity verification portal. The portal lives
+// on the web app at /identity-verify/[token], mirroring the pay-link host.
+const IDENTITY_PORTAL_BASE = "https://staytraq.vercel.app/identity-verify"
 import useTheme from "@/hooks/use-theme"
 import { FlashList } from "@shopify/flash-list"
 import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"
@@ -53,6 +61,14 @@ type Tenant = {
   status: "active" | "pending_move_in" | "notice_period" | "move_out"
   pg_id: number | null
   id_documents?: any
+  identity_request_flag?: boolean | null
+  ignore_identity_flag?: boolean | null
+  verification_status?: "Not_Started" | "In_Progress" | "Verified" | "Ignored" | null
+  identity_type?: "Aadhaar" | "PAN" | null
+  aadhaar_number?: string | null
+  pan_code?: string | null
+  id_front_path?: string | null
+  id_back_path?: string | null
   deleted_at?: string | null
   pending_deposit_deduction?: number | null
   deduction_payment_id?: number | null
@@ -201,6 +217,8 @@ export default function TenantsScreen() {
     isNew?: boolean
   }[]>([])
   const [selectedIdType, setSelectedIdType] = useState("")
+  // Identity verification request (chatbot-enabled owners): "Request identity from tenant" checkbox
+  const [requestIdentityFromTenant, setRequestIdentityFromTenant] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
 
@@ -211,6 +229,23 @@ export default function TenantsScreen() {
   const [viewerLoading, setViewerLoading] = useState(false)
   const [viewerTitle, setViewerTitle] = useState("")
 
+  // Identity section: masked code reveal toggle (reset each time the popup opens)
+  const [revealIdentityCode, setRevealIdentityCode] = useState(false)
+  // Identity section: "Ignore identity" action confirmation (distinct from the delete flow)
+  const [ignoreConfirmVisible, setIgnoreConfirmVisible] = useState(false)
+  const [isIgnoringIdentity, setIsIgnoringIdentity] = useState(false)
+
+  // Identity document viewer (front/back) — kept separate from the staytraq_docs viewer
+  // above so the two viewers never collide. Reads signed URLs from the private
+  // `identity_documents` bucket (Reqs 17.1–17.6, 18.3, 18.4).
+  const [idViewerVisible, setIdViewerVisible] = useState(false)
+  const [idViewerSide, setIdViewerSide] = useState<"front" | "back">("front")
+  const [idViewerLoading, setIdViewerLoading] = useState(false)
+  const [idFrontUrl, setIdFrontUrl] = useState<string | null>(null)
+  const [idBackUrl, setIdBackUrl] = useState<string | null>(null)
+  const [idFrontError, setIdFrontError] = useState(false)
+  const [idBackError, setIdBackError] = useState(false)
+
   // Payment History, Tab, and Room Reassignment States
   const [activeTab, setActiveTab] = useState<"details" | "history">("details")
   const [paymentHistory, setPaymentHistory] = useState<any[]>([])
@@ -219,6 +254,8 @@ export default function TenantsScreen() {
   const [paymentDetailVisible, setPaymentDetailVisible] = useState(false)
   const [changeRoomModalVisible, setChangeRoomModalVisible] = useState(false)
   const [roomChangeSearchQuery, setRoomChangeSearchQuery] = useState("")
+  const [changeRoomSelectedRoomId, setChangeRoomSelectedRoomId] = useState<number | null>(null)
+  const [changeRoomSwapTenantId, setChangeRoomSwapTenantId] = useState<number | null>(null)
   const [isUpdatingRoom, setIsUpdatingRoom] = useState(false)
   const [signedScreenshotUrl, setSignedScreenshotUrl] = useState<string | null>(null)
   const [loadingScreenshot, setLoadingScreenshot] = useState(false)
@@ -233,6 +270,14 @@ export default function TenantsScreen() {
   const [paymentMethodDropdownOpen, setPaymentMethodDropdownOpen] = useState(false)
   const [isSendingWhatsAppTenant, setIsSendingWhatsAppTenant] = useState(false)
   const [isSendingWhatsAppPayment, setIsSendingWhatsAppPayment] = useState(false)
+
+  useEffect(() => {
+    if (!changeRoomModalVisible) {
+      setChangeRoomSelectedRoomId(null)
+      setChangeRoomSwapTenantId(null)
+      setRoomChangeSearchQuery("")
+    }
+  }, [changeRoomModalVisible])
 
   useEffect(() => {
     if (!paymentDetailVisible) {
@@ -706,6 +751,16 @@ export default function TenantsScreen() {
     setDetailModalVisible(true)
     setDetailDocUrls({})
     setActiveTab("details")
+    setRevealIdentityCode(false)
+    // Reset the identity document viewer so a previously opened tenant's
+    // signed URLs / error state never leak into this tenant's view.
+    setIdViewerVisible(false)
+    setIdViewerSide("front")
+    setIdViewerLoading(false)
+    setIdFrontUrl(null)
+    setIdBackUrl(null)
+    setIdFrontError(false)
+    setIdBackError(false)
     setPaymentHistory([])
     setHistoryLoading(true)
 
@@ -745,45 +800,66 @@ export default function TenantsScreen() {
     }
   }
 
-  const handleChangeRoom = async (newRoomId: number) => {
+  const handleChangeRoom = async (newRoomId: number, swapTenantId: number | null = null) => {
     if (!selectedTenant) return
     try {
       setIsUpdatingRoom(true)
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
       const oldRoomId = selectedTenant.room_id
 
-      // 1. Update the tenant record
-      const { error: tenantErr } = await supabase
-        .from("tenants_table")
-        .update({ room_id: newRoomId })
-        .eq("id", selectedTenant.id)
+      if (swapTenantId) {
+        // Swap scenario
+        // Step 1: Update swap tenant to selected tenant's old room
+        const { error: swapErr } = await supabase
+          .from("tenants_table")
+          .update({ room_id: oldRoomId })
+          .eq("id", swapTenantId)
+        if (swapErr) throw swapErr
 
-      if (tenantErr) throw tenantErr
+        // Step 2: Update selected tenant to new room
+        const { error: tenantErr } = await supabase
+          .from("tenants_table")
+          .update({ room_id: newRoomId })
+          .eq("id", selectedTenant.id)
+        if (tenantErr) throw tenantErr
 
-      // 2. Adjust occupied beds on rooms
-      if (newRoomId !== oldRoomId) {
-        // Increment new room
-        const newRoom = rooms.find(r => r.id === newRoomId)
-        if (newRoom) {
-          await supabase
-            .from("rooms_table")
-            .update({ occupied_beds: Math.min(newRoom.occupied_beds + 1, newRoom.total_beds) })
-            .eq("id", newRoomId)
-        }
-        // Decrement old room
-        if (oldRoomId) {
-          const oldRoom = rooms.find(r => r.id === oldRoomId)
-          if (oldRoom) {
+        showToast("Rooms Swapped", `Successfully swapped rooms between ${selectedTenant.name} and the selected occupant.`, "success")
+      } else {
+        // Normal move scenario
+        const { error: tenantErr } = await supabase
+          .from("tenants_table")
+          .update({ room_id: newRoomId })
+          .eq("id", selectedTenant.id)
+        if (tenantErr) throw tenantErr
+
+        // Adjust occupied beds on rooms
+        if (newRoomId !== oldRoomId) {
+          // Increment new room
+          const newRoom = rooms.find(r => r.id === newRoomId)
+          if (newRoom) {
             await supabase
               .from("rooms_table")
-              .update({ occupied_beds: Math.max(oldRoom.occupied_beds - 1, 0) })
-              .eq("id", oldRoomId)
+              .update({ occupied_beds: Math.min(newRoom.occupied_beds + 1, newRoom.total_beds) })
+              .eq("id", newRoomId)
+          }
+          // Decrement old room
+          if (oldRoomId) {
+            const oldRoom = rooms.find(r => r.id === oldRoomId)
+            if (oldRoom) {
+              await supabase
+                .from("rooms_table")
+                .update({ occupied_beds: Math.max(oldRoom.occupied_beds - 1, 0) })
+                .eq("id", oldRoomId)
+            }
           }
         }
+
+        showToast("Room Changed", `${selectedTenant.name} has been reassigned successfully.`, "success")
       }
 
       setChangeRoomModalVisible(false)
-      showToast("Room Changed", `${selectedTenant.name} has been reassigned successfully.`, "success")
+      setChangeRoomSelectedRoomId(null)
+      setChangeRoomSwapTenantId(null)
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       
       // Re-fetch everything and update selected tenant details
@@ -852,6 +928,7 @@ export default function TenantsScreen() {
     setNotes("")
     setRoomSearchQuery("")
     setSelectedIdType("")
+    setRequestIdentityFromTenant(false)
     setIdDocs([])
     setIsSaving(false)
     setOpenDropdown(null)
@@ -874,6 +951,7 @@ export default function TenantsScreen() {
     setNotes(tenant.notes || "")
     setRoomSearchQuery("")
     setSelectedIdType("")
+    setRequestIdentityFromTenant(false)
     
     // Clear/initialize documents instantly so modal opens without lag
     const docs = (tenant.id_documents as any[]) || []
@@ -1233,6 +1311,53 @@ export default function TenantsScreen() {
     }
   }
 
+  const requestTenantIdentity = async (tenant: { id: number; name: string | null; mobile_number: string | null }) => {
+    try {
+      // Ensure a persisted, unique verification token before any link is built (Req 2.1, 2.2, 2.6).
+      const token = await ensureVerificationToken(supabase, tenant.id)
+      if (!token) {
+        // Token generation/persistence failed: record the failure and do not
+        // construct or send a link (Req 2.6). The flag stays true.
+        try {
+          await supabase
+            .from("tenants_table")
+            .update({ identity_msg_failed: true })
+            .eq("id", tenant.id)
+        } catch {
+          // Best-effort failure recording.
+        }
+        return
+      }
+
+      // Build the verification link (Req 2.4) and send it over WhatsApp (Req 3.1).
+      const link = buildVerificationLink(IDENTITY_PORTAL_BASE, token)
+      const { data: sessionData } = await supabase.auth.getSession()
+      const sessionToken = sessionData?.session?.access_token
+      if (!sessionToken) {
+        try {
+          await supabase
+            .from("tenants_table")
+            .update({ identity_msg_failed: true })
+            .eq("id", tenant.id)
+        } catch {
+          // Best-effort failure recording.
+        }
+        return
+      }
+
+      // Pass the supabase client as deps.db so delivery failures are recorded
+      // (no mobile / unsendable / all attempts failed). The flag is never cleared here.
+      await sendIdentityRequest(
+        { id: tenant.id, name: tenant.name, mobile_number: tenant.mobile_number },
+        link,
+        sessionToken,
+        { db: supabase }
+      )
+    } catch (e) {
+      console.error("Identity request failed:", e)
+    }
+  }
+
   const handleSaveTenant = async () => {
     if (!user?.id || !pgId) return
 
@@ -1352,13 +1477,47 @@ export default function TenantsScreen() {
         if (editErr) throw editErr
       } else {
         // Insert tenant
+        const identityRequestFlag = deriveIdentityRequestFlag(chatbotEnabled, requestIdentityFromTenant)
+        const insertPayload = {
+          ...tenantPayload,
+          identity_request_flag: identityRequestFlag,
+          ignore_identity_flag: false,
+          verification_status: "Not_Started",
+        }
+
         const { data: insertedData, error: insertErr } = await supabase
           .from("tenants_table")
-          .insert(tenantPayload)
+          .insert(insertPayload)
           .select()
           .single()
 
-        if (insertErr) throw insertErr
+        // Req 1.9: on insert failure, no partial record is created (single insert
+        // is atomic), retain the owner's entered form values (do not reset/close
+        // the form), show an error message, and do not proceed.
+        if (insertErr || !insertedData) {
+          console.error(insertErr)
+          setError("Tenant creation failed. Please try again.")
+          showToast(
+            "Tenant Creation Failed",
+            "We couldn't create the tenant. Your details have been kept—please try again.",
+            "error"
+          )
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+          setIsSaving(false)
+          return
+        }
+
+        // On success, when the identity request flag is true, kick off the
+        // verification token + link + WhatsApp send (Reqs 2, 3). Run it without
+        // awaiting so the WhatsApp invite popup is not blocked by the retrying
+        // sender; delivery failures are recorded on the tenant record.
+        if (identityRequestFlag) {
+          void requestTenantIdentity({
+            id: insertedData.id,
+            name: insertedData.name,
+            mobile_number: insertedData.mobile_number,
+          })
+        }
 
         // Open WhatsApp Invite popup for newly added occupant
         if (insertedData) {
@@ -1433,6 +1592,106 @@ export default function TenantsScreen() {
     setConfirmModalVisible(false)
     await handleDeleteTenant(tenantToDelete.id, tenantToDelete.roomId)
     setTenantToDelete(null)
+  }
+
+  // Document viewer (Req 17): opens a viewer initially showing the FRONT image
+  // and fetches owner-scoped signed URLs for the stored identity images from the
+  // private `identity_documents` bucket (Reqs 17.1, 17.2, 18.3, 18.4). The viewer
+  // is independent of the staytraq_docs viewer so opening/closing it leaves the
+  // identity section unchanged (Req 17.5). Per-side error state lets one image
+  // show an inline placeholder while the other still displays (Req 17.6).
+  const openIdentityViewer = async (tenant: Tenant) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+
+    const frontPath = typeof tenant.id_front_path === "string" ? tenant.id_front_path.trim() : ""
+    const backPath = typeof tenant.id_back_path === "string" ? tenant.id_back_path.trim() : ""
+
+    // Always start on the front image (Req 17.2).
+    setIdViewerSide("front")
+    setIdFrontUrl(null)
+    setIdBackUrl(null)
+    setIdFrontError(false)
+    setIdBackError(false)
+    setIdViewerLoading(true)
+    setIdViewerVisible(true)
+
+    const signOne = async (path: string): Promise<{ url: string | null; error: boolean }> => {
+      if (!path) return { url: null, error: false }
+      try {
+        const { data, error } = await supabase.storage
+          .from("identity_documents")
+          .createSignedUrl(path, 3600)
+        if (!error && data?.signedUrl) {
+          return { url: data.signedUrl, error: false }
+        }
+        return { url: null, error: true }
+      } catch (err) {
+        console.error("Error creating identity document signed URL:", err)
+        return { url: null, error: true }
+      }
+    }
+
+    const [front, back] = await Promise.all([signOne(frontPath), signOne(backPath)])
+    // A path that exists but could not be signed is surfaced as a load error so
+    // the other side can still display (Req 17.6).
+    setIdFrontUrl(front.url)
+    setIdFrontError(front.error)
+    setIdBackUrl(back.url)
+    setIdBackError(back.error)
+    setIdViewerLoading(false)
+  }
+
+  // "Ignore identity" action (Req 15): stops daily identity reminders for one
+  // tenant. Persists ignore_identity_flag=true and sets verification_status to
+  // "Ignored" when not Verified, scoped to the selected tenant only. On failure
+  // the previous flag/status are retained (no local mutation) and an error toast
+  // is shown.
+  const confirmIgnoreIdentity = async () => {
+    setIgnoreConfirmVisible(false)
+    if (!selectedTenant) return
+
+    const target = selectedTenant
+    const prevState = {
+      identity_request_flag: !!target.identity_request_flag,
+      verification_status: target.verification_status || "Not_Started",
+      ignore_identity_flag: !!target.ignore_identity_flag,
+    }
+    const nextState = applyIgnore(prevState)
+
+    setIsIgnoringIdentity(true)
+    try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      const { error: updateError } = await supabase
+        .from("tenants_table")
+        .update({
+          ignore_identity_flag: nextState.ignore_identity_flag,
+          verification_status: nextState.verification_status,
+        })
+        .eq("id", target.id)
+
+      if (updateError) throw updateError
+
+      // Persisted: reflect the change locally on the selected tenant and the list.
+      setSelectedTenant((prev) =>
+        prev && prev.id === target.id
+          ? { ...prev, ignore_identity_flag: nextState.ignore_identity_flag, verification_status: nextState.verification_status }
+          : prev
+      )
+      setTenants((prev) =>
+        prev.map((t) =>
+          t.id === target.id
+            ? { ...t, ignore_identity_flag: nextState.ignore_identity_flag, verification_status: nextState.verification_status }
+            : t
+        )
+      )
+      showToast("Reminders stopped", "Identity reminders stopped for this occupant.", "success")
+    } catch (err) {
+      // Retain previous flag/status: do not mutate local state (Req 15.6).
+      console.error("Error ignoring tenant identity:", err)
+      showToast("Action failed", "Could not stop identity reminders. Please try again.", "error")
+    } finally {
+      setIsIgnoringIdentity(false)
+    }
   }
 
   const handleDeleteTenant = async (tenantId: number, roomId: number | null) => {
@@ -2382,6 +2641,153 @@ export default function TenantsScreen() {
                       </View>
                     )}
 
+                    {/* Identity Verification (chatbot-requested identity) */}
+                    {(() => {
+                      const statusPresentation = popupStatusPresentation({
+                        identity_request_flag: !!selectedTenant.identity_request_flag,
+                        verification_status: selectedTenant.verification_status || "Not_Started",
+                        ignore_identity_flag: !!selectedTenant.ignore_identity_flag,
+                      })
+                      const displayCode = selectDisplayCode({
+                        aadhaar_number: selectedTenant.aadhaar_number,
+                        pan_code: selectedTenant.pan_code,
+                      })
+
+                      // At least one stored identity document image (Req 17.1).
+                      const hasFrontImage = typeof selectedTenant.id_front_path === "string" && selectedTenant.id_front_path.trim().length > 0
+                      const hasBackImage = typeof selectedTenant.id_back_path === "string" && selectedTenant.id_back_path.trim().length > 0
+                      const hasStoredImage = hasFrontImage || hasBackImage
+
+                      // Nothing to show: no requested-identity status, no stored code, and no stored images.
+                      if (statusPresentation === "none" && !displayCode && !hasStoredImage) {
+                        return null
+                      }
+
+                      const progressMeta = (() => {
+                        switch (statusPresentation) {
+                          case "in_progress":
+                            return {
+                              text: "Identity verification document gathering in progress",
+                              color: isDark ? "#fbbf24" : "#d97706",
+                              icon: <Clock size={14} color={isDark ? "#fbbf24" : "#d97706"} />,
+                            }
+                          case "verified":
+                            return {
+                              text: "Identity verified",
+                              color: isDark ? "#4ade80" : "#16a34a",
+                              icon: <ShieldCheck size={14} color={isDark ? "#4ade80" : "#16a34a"} />,
+                            }
+                          case "reminders_stopped":
+                            return {
+                              text: "Identity reminders stopped",
+                              color: isDark ? "#9ca3af" : "#6b7280",
+                              icon: <Info size={14} color={isDark ? "#9ca3af" : "#6b7280"} />,
+                            }
+                          default:
+                            return null
+                        }
+                      })()
+
+                      return (
+                        <View className="py-3 border-b border-border/40 dark:border-border-dark/40">
+                          <Text className="text-sm font-semibold text-muted dark:text-muted-dark mb-2.5">Identity Verification</Text>
+
+                          {/* Progress / status indication (Req 14.1, 14.2, 14.3) */}
+                          {progressMeta && (
+                            <View className="flex-row items-center gap-2 mb-3">
+                              {progressMeta.icon}
+                              <Text className="text-xs font-bold flex-1" style={{ color: progressMeta.color }}>
+                                {progressMeta.text}
+                              </Text>
+                            </View>
+                          )}
+
+                          {/* Masked identity code with Eye reveal toggle (Req 16) */}
+                          {displayCode && (
+                            <View className="bg-background dark:bg-background-dark p-3.5 rounded-2xl border border-border/60 dark:border-border-dark/60">
+                              <View className="flex-row items-center justify-between">
+                                <View className="flex-1 mr-3">
+                                  <Text className="text-[10px] font-black text-muted uppercase tracking-wider mb-1">
+                                    {displayCode.type} Number
+                                  </Text>
+                                  <Text className="text-sm font-bold text-foreground dark:text-foreground-dark tracking-wide">
+                                    {maskIdentityCode(displayCode.value)}
+                                  </Text>
+                                </View>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                    setRevealIdentityCode((prev) => !prev)
+                                  }}
+                                  className="h-9 w-9 bg-primary/10 rounded-xl items-center justify-center active:scale-95"
+                                  accessibilityLabel={revealIdentityCode ? "Hide identity number" : "Reveal identity number"}
+                                >
+                                  {revealIdentityCode ? (
+                                    <EyeOff size={16} color={isDark ? "#0091ff" : "#0071df"} />
+                                  ) : (
+                                    <Eye size={16} color={isDark ? "#0091ff" : "#0071df"} />
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+
+                              {/* Full value shown below the masked value only while revealed (Req 16.3, 16.4) */}
+                              {revealIdentityCode && (
+                                <View className="mt-2.5 pt-2.5 border-t border-border/40 dark:border-border-dark/40">
+                                  <Text className="text-[10px] font-black text-muted uppercase tracking-wider mb-1">Full Number</Text>
+                                  <Text className="text-sm font-extrabold text-primary tracking-wide">
+                                    {displayCode.value}
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                          )}
+
+                          {/* "Ignore identity" action — shown only when reminders can still be stopped (Req 15.1, 15.4, 15.5) */}
+                          {shouldShowIgnoreButton({
+                            identity_request_flag: !!selectedTenant.identity_request_flag,
+                            verification_status: selectedTenant.verification_status || "Not_Started",
+                            ignore_identity_flag: !!selectedTenant.ignore_identity_flag,
+                          }) && (
+                            <TouchableOpacity
+                              onPress={() => {
+                                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                setIgnoreConfirmVisible(true)
+                              }}
+                              disabled={isIgnoringIdentity}
+                              className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-border/60 dark:border-border-dark/60 bg-background dark:bg-background-dark active:scale-95"
+                              style={{ opacity: isIgnoringIdentity ? 0.6 : 1 }}
+                              accessibilityLabel="Ignore identity"
+                              accessibilityRole="button"
+                            >
+                              {isIgnoringIdentity ? (
+                                <ActivityIndicator size="small" color={isDark ? "#9ca3af" : "#6b7280"} />
+                              ) : (
+                                <X size={14} color={isDark ? "#9ca3af" : "#6b7280"} />
+                              )}
+                              <Text className="text-xs font-bold text-muted dark:text-muted-dark">
+                                Ignore identity
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+
+                          {/* "Show documents" — shown when ≥1 stored identity image exists (Req 17.1) */}
+                          {hasStoredImage && (
+                            <TouchableOpacity
+                              onPress={() => openIdentityViewer(selectedTenant)}
+                              className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
+                              accessibilityLabel="Show documents"
+                              accessibilityRole="button"
+                            >
+                              <Maximize2 size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                              <Text className="text-xs font-bold text-primary">
+                                Show documents
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      )
+                    })()}
+
                     {/* Identity Documents */}
                     {selectedTenant.id_documents && (selectedTenant.id_documents as any[]).length > 0 && (
                       <View className="py-3">
@@ -2918,8 +3324,27 @@ export default function TenantsScreen() {
                 </View>
               </View>
 
-              {/* Identity Documents */}
+              {/* Identity Documents / Identity Request */}
               <View className="z-30">
+                {chatbotEnabled ? (
+                  <>
+                    <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Identity Verification</Text>
+                    <TouchableOpacity
+                      onPress={() => {
+                        setRequestIdentityFromTenant((v) => !v)
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                      }}
+                      activeOpacity={0.7}
+                      className="flex-row items-center gap-3 border border-border dark:border-border-dark p-3.5 rounded-xl bg-background dark:bg-background-dark"
+                    >
+                      <View className={`h-6 w-6 rounded-md border-2 items-center justify-center ${requestIdentityFromTenant ? "bg-primary border-primary" : "border-border dark:border-border-dark"}`}>
+                        {requestIdentityFromTenant && <Check size={14} color="#ffffff" strokeWidth={3} />}
+                      </View>
+                      <Text className="flex-1 text-sm font-semibold text-foreground dark:text-foreground-dark">Request identity from tenant</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
                 <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Identity Documents (Max 2)</Text>
                 
                 {/* Document Previews */}
@@ -2947,15 +3372,22 @@ export default function TenantsScreen() {
                               {doc.name}
                             </Text>
                           </View>
-                          <TouchableOpacity
-                            onPress={() => {
-                              setIdDocs((prev) => prev.filter((_, i) => i !== idx))
-                              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                            }}
-                            className="h-8 w-8 items-center justify-center active:bg-muted/10 rounded-full"
-                          >
-                            <Trash2 size={16} color="#ef4444" />
-                          </TouchableOpacity>
+                          {doc.type === "Driving License" ? (
+                            <View className="flex-row items-center gap-1 px-2 h-8 rounded-full bg-muted/10">
+                              <Lock size={12} color="#9ca3af" />
+                              <Text className="text-[9px] font-bold text-muted uppercase tracking-wider">Read-only</Text>
+                            </View>
+                          ) : (
+                            <TouchableOpacity
+                              onPress={() => {
+                                setIdDocs((prev) => prev.filter((_, i) => i !== idx))
+                                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                              }}
+                              className="h-8 w-8 items-center justify-center active:bg-muted/10 rounded-full"
+                            >
+                              <Trash2 size={16} color="#ef4444" />
+                            </TouchableOpacity>
+                          )}
                         </View>
                       )
                     })}
@@ -2968,9 +3400,8 @@ export default function TenantsScreen() {
                     <View className="flex-1">
                       <InlineSelect
                         options={[
-                          { value: "Aadhar Card", shortLabel: "Aadhar Card" },
-                          { value: "PAN Card", shortLabel: "PAN Card" },
-                          { value: "Driving License", shortLabel: "Driving License" }
+                          { value: "Aadhaar Card", shortLabel: "Aadhaar Card" },
+                          { value: "PAN Card", shortLabel: "PAN Card" }
                         ].filter(opt => !idDocs.some(d => d.type === opt.value))}
                         value={selectedIdType}
                         onChange={setSelectedIdType}
@@ -3008,6 +3439,8 @@ export default function TenantsScreen() {
                       </TouchableOpacity>
                     </View>
                   </View>
+                )}
+                  </>
                 )}
               </View>
 
@@ -3109,6 +3542,115 @@ export default function TenantsScreen() {
         </SafeAreaView>
       </Modal>
 
+      {/* Identity Document Viewer Modal (front/back) — Req 17 */}
+      <Modal
+        animationType="none"
+        transparent={true}
+        visible={idViewerVisible}
+        onRequestClose={() => setIdViewerVisible(false)}
+      >
+        <SafeAreaView className="flex-1 bg-black justify-center items-center" edges={[]}>
+          {/* Backdrop (tap empty area to close — retains the identity section, Req 17.5) */}
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => setIdViewerVisible(false)}
+            className="absolute inset-0 bg-black justify-center items-center"
+          >
+            {/* Header overlay */}
+            <SafeAreaView className="absolute top-0 left-0 right-0 z-50 flex-row justify-between items-center px-6 py-4 bg-black/60 border-b border-white/5" edges={["top"]}>
+              <Text className="text-white text-base font-extrabold tracking-tight">
+                {idViewerSide === "front" ? "Identity — Front" : "Identity — Back"}
+              </Text>
+              <TouchableOpacity
+                onPress={() => setIdViewerVisible(false)}
+                className="h-10 w-10 bg-white/10 rounded-full items-center justify-center border border-white/10"
+                accessibilityLabel="Close document viewer"
+              >
+                <X size={20} color="#ffffff" />
+              </TouchableOpacity>
+            </SafeAreaView>
+
+            {/* Loading Indicator */}
+            {idViewerLoading && (
+              <View className="absolute items-center justify-center z-10">
+                <ActivityIndicator size="large" color="#ffffff" />
+                <Text className="text-white text-xs mt-3 opacity-60 font-medium">Retrieving document securely...</Text>
+              </View>
+            )}
+
+            {/* Image / error placeholder (tap does not close) */}
+            <TouchableOpacity
+              activeOpacity={1}
+              className="w-full h-[80%] items-center justify-center px-6"
+            >
+              {!idViewerLoading && (() => {
+                const currentUrl = idViewerSide === "front" ? idFrontUrl : idBackUrl
+                const currentError = idViewerSide === "front" ? idFrontError : idBackError
+
+                // Inline error placeholder for an image that failed to load
+                // (signing failed or the image source errored) (Req 17.6).
+                if (currentError || !currentUrl) {
+                  return (
+                    <View className="items-center justify-center">
+                      <View className="h-16 w-16 rounded-full bg-white/10 items-center justify-center border border-white/10 mb-4">
+                        <AlertTriangle size={28} color="#f87171" />
+                      </View>
+                      <Text className="text-white text-sm font-bold mb-1">Image unavailable</Text>
+                      <Text className="text-white/60 text-xs text-center">
+                        This {idViewerSide} document could not be loaded.
+                      </Text>
+                    </View>
+                  )
+                }
+
+                return (
+                  <Image
+                    source={{ uri: currentUrl }}
+                    style={{ width: "100%", height: "100%" }}
+                    resizeMode="contain"
+                    onError={() => {
+                      if (idViewerSide === "front") {
+                        setIdFrontError(true)
+                      } else {
+                        setIdBackError(true)
+                      }
+                    }}
+                  />
+                )
+              })()}
+            </TouchableOpacity>
+
+            {/* Slide control — only when BOTH images exist (Reqs 17.3, 17.4) */}
+            {selectedTenant && viewerHasSlideControl(selectedTenant.id_front_path, selectedTenant.id_back_path) && (
+              <TouchableOpacity activeOpacity={1} className="absolute bottom-12 self-center">
+                <View className="flex-row bg-white/10 rounded-full p-1 border border-white/10">
+                  <TouchableOpacity
+                    onPress={() => setIdViewerSide("front")}
+                    className={`px-6 py-2.5 rounded-full ${idViewerSide === "front" ? "bg-white" : ""}`}
+                    accessibilityLabel="Show front image"
+                    accessibilityRole="button"
+                  >
+                    <Text className={`text-xs font-extrabold ${idViewerSide === "front" ? "text-black" : "text-white"}`}>
+                      Front
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => setIdViewerSide("back")}
+                    className={`px-6 py-2.5 rounded-full ${idViewerSide === "back" ? "bg-white" : ""}`}
+                    accessibilityLabel="Show back image"
+                    accessibilityRole="button"
+                  >
+                    <Text className={`text-xs font-extrabold ${idViewerSide === "back" ? "text-black" : "text-white"}`}>
+                      Back
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            )}
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
+
       {/* Confirm Delete Tenant Modal */}
       <ConfirmModal
         visible={confirmModalVisible}
@@ -3123,6 +3665,19 @@ export default function TenantsScreen() {
           setTenantToDelete(null)
         }}
         icon={<Trash2 size={24} color="#ef4444" />}
+      />
+
+      {/* Confirm Ignore Identity Modal (distinct from the delete flow) */}
+      <ConfirmModal
+        visible={ignoreConfirmVisible}
+        title="Ignore Identity"
+        message="Stop sending daily identity verification reminders to this occupant? You can still view any documents they have already submitted."
+        confirmText="Ignore"
+        cancelText="Cancel"
+        isDestructive={false}
+        onConfirm={confirmIgnoreIdentity}
+        onCancel={() => setIgnoreConfirmVisible(false)}
+        icon={<Info size={24} color="#208aef" />}
       />
 
       {/* Move Out Flow Modal */}
@@ -3791,81 +4346,227 @@ export default function TenantsScreen() {
       >
         <View className="flex-1 bg-black/60 justify-end">
           <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[80%] border-t border-border dark:border-border-dark p-6">
-            <View className="flex-row justify-between items-center mb-6">
-              <View>
-                <Text className="text-lg font-black text-foreground dark:text-foreground-dark">Reassign Room</Text>
-                <Text className="text-xs text-muted mt-0.5 font-medium">Reassign occupant to a vacant room</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setChangeRoomModalVisible(false)}
-                className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
-              >
-                <X size={20} color="#9ca3af" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Room Search Input */}
-            <View className="flex-row items-center border border-border dark:border-border-dark bg-background dark:bg-background-dark rounded-xl px-3 py-2.5 shadow-sm mb-4">
-              <Search size={16} color="#9ca3af" className="mr-2" />
-              <TextInput
-                value={roomChangeSearchQuery}
-                onChangeText={setRoomChangeSearchQuery}
-                placeholder="Search vacant room..."
-                placeholderTextColor="#9ca3af"
-                className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
-              />
-              {roomChangeSearchQuery.length > 0 && (
-                <TouchableOpacity onPress={() => setRoomChangeSearchQuery("")}>
-                  <X size={16} color="#9ca3af" />
-                </TouchableOpacity>
-              )}
-            </View>
-
-            {/* List of Vacant Rooms */}
-            <ScrollView showsVerticalScrollIndicator={false} className="mb-6">
-              {(() => {
-                const query = roomChangeSearchQuery.toLowerCase()
-                // Filter vacant rooms (excluding their current room, since it's already their room)
-                const filtered = availableRooms.filter(r => 
-                  r.room_number.toLowerCase().includes(query) && r.id !== selectedTenant?.room_id
-                )
-
-                if (filtered.length === 0) {
-                  return (
-                    <View className="py-8 items-center justify-center">
-                      <Hotel size={32} color="#9ca3af" />
-                      <Text className="text-xs text-muted text-center font-medium mt-2">No other vacant rooms available</Text>
-                    </View>
-                  )
-                }
-
-                return filtered.map((room) => (
+            
+            {changeRoomSelectedRoomId === null ? (
+              <>
+                <View className="flex-row justify-between items-center mb-6">
+                  <View>
+                    <Text className="text-lg font-black text-foreground dark:text-foreground-dark">Reassign Room</Text>
+                    <Text className="text-xs text-muted mt-0.5 font-medium">Reassign occupant to another room</Text>
+                  </View>
                   <TouchableOpacity
-                    key={room.id}
-                    onPress={() => handleChangeRoom(room.id)}
-                    disabled={isUpdatingRoom}
-                    className="px-4 py-3.5 border-b border-border/40 dark:border-border-dark/40 flex-row justify-between items-center active:bg-muted/10 rounded-xl mb-2 bg-background/50 dark:bg-background-dark/30"
+                    onPress={() => setChangeRoomModalVisible(false)}
+                    className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
                   >
-                    <View>
-                      <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">
-                        Room {room.room_number}
-                      </Text>
-                      <Text className="text-xs text-muted mt-0.5 font-medium">
-                        {room.occupied_beds}/{room.total_beds} beds occupied · Rent: ₹{room.rent_amount.toLocaleString()}
-                      </Text>
-                    </View>
-                    <ChevronRight size={16} color="#9ca3af" />
+                    <X size={20} color="#9ca3af" />
                   </TouchableOpacity>
-                ))
-              })()}
-            </ScrollView>
+                </View>
 
-            <TouchableOpacity
-              onPress={() => setChangeRoomModalVisible(false)}
-              className="w-full border border-border dark:border-border-dark rounded-xl py-3.5 items-center justify-center bg-background dark:bg-background-dark mb-4"
-            >
-              <Text className="text-muted dark:text-muted-dark text-sm font-bold">Cancel</Text>
-            </TouchableOpacity>
+                {/* Room Search Input */}
+                <View className="flex-row items-center border border-border dark:border-border-dark bg-background dark:bg-background-dark rounded-xl px-3 py-2.5 shadow-sm mb-4">
+                  <Search size={16} color="#9ca3af" className="mr-2" />
+                  <TextInput
+                    value={roomChangeSearchQuery}
+                    onChangeText={setRoomChangeSearchQuery}
+                    placeholder="Search rooms..."
+                    placeholderTextColor="#9ca3af"
+                    className="flex-1 text-sm text-foreground dark:text-foreground-dark py-0.5"
+                  />
+                  {roomChangeSearchQuery.length > 0 && (
+                    <TouchableOpacity onPress={() => setRoomChangeSearchQuery("")}>
+                      <X size={16} color="#9ca3af" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* List of Sorted Rooms */}
+                <ScrollView showsVerticalScrollIndicator={false} className="mb-6">
+                  {(() => {
+                    const query = roomChangeSearchQuery.toLowerCase()
+                    const filtered = rooms
+                      .filter(r => 
+                        r.room_number.toLowerCase().includes(query) && r.id !== selectedTenant?.room_id
+                      )
+                      .sort((a, b) => {
+                        const availA = (a.total_beds || 0) - (a.occupied_beds || 0)
+                        const availB = (b.total_beds || 0) - (b.occupied_beds || 0)
+                        return availB - availA // vacant (high) to full (low/0)
+                      })
+
+                    if (filtered.length === 0) {
+                      return (
+                        <View className="py-8 items-center justify-center">
+                          <Hotel size={32} color="#9ca3af" />
+                          <Text className="text-xs text-muted text-center font-medium mt-2">No rooms matched your query</Text>
+                        </View>
+                      )
+                    }
+
+                    return filtered.map((room) => {
+                      const available = (room.total_beds || 0) - (room.occupied_beds || 0)
+                      const isFull = available <= 0
+
+                      return (
+                        <TouchableOpacity
+                          key={room.id}
+                          onPress={() => {
+                            if (isFull) {
+                              setChangeRoomSelectedRoomId(room.id)
+                            } else {
+                              handleChangeRoom(room.id, null)
+                            }
+                          }}
+                          disabled={isUpdatingRoom}
+                          className="px-4 py-3.5 border-b border-border/40 dark:border-border-dark/40 flex-row justify-between items-center active:bg-muted/10 rounded-xl mb-2 bg-background/50 dark:bg-background-dark/30"
+                        >
+                          <View className="flex-1 pr-2">
+                            <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">
+                              Room {room.room_number}
+                            </Text>
+                            <Text className="text-xs text-muted mt-0.5 font-medium">
+                              {room.occupied_beds}/{room.total_beds} beds occupied · Rent: ₹{room.rent_amount.toLocaleString()}
+                            </Text>
+                          </View>
+                          <View className="flex-row items-center gap-1">
+                            {isFull ? (
+                              <View className="bg-red-500/10 px-2 py-1 rounded-md border border-red-500/20">
+                                <Text className="text-[10px] font-bold text-red-500 uppercase">Swap Required</Text>
+                              </View>
+                            ) : (
+                              <Text className="text-xs font-semibold text-green-500">{available} vacant</Text>
+                            )}
+                            <ChevronRight size={16} color="#9ca3af" />
+                          </View>
+                        </TouchableOpacity>
+                      )
+                    })
+                  })()}
+                </ScrollView>
+
+                <TouchableOpacity
+                  onPress={() => setChangeRoomModalVisible(false)}
+                  className="w-full border border-border dark:border-border-dark rounded-xl py-3.5 items-center justify-center bg-background dark:bg-background-dark mb-4"
+                >
+                  <Text className="text-muted dark:text-muted-dark text-sm font-bold">Cancel</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                {(() => {
+                  const targetRoom = rooms.find(r => r.id === changeRoomSelectedRoomId)
+                  const swapCandidates = tenants.filter(t => t.room_id === changeRoomSelectedRoomId && t.status !== "move_out")
+
+                  return (
+                    <>
+                      <View className="flex-row justify-between items-center mb-6">
+                        <View className="flex-1 pr-2">
+                          <Text className="text-lg font-black text-foreground dark:text-foreground-dark">Swap Bed</Text>
+                          <Text className="text-xs text-muted mt-0.5 font-medium">
+                            Select occupant in Room {targetRoom?.room_number} to swap with
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setChangeRoomSelectedRoomId(null);
+                            setChangeRoomSwapTenantId(null);
+                          }}
+                          className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
+                        >
+                          <X size={20} color="#9ca3af" />
+                        </TouchableOpacity>
+                      </View>
+
+                      <View className="flex-row items-center bg-yellow-500/10 border border-yellow-500/20 rounded-xl p-3.5 mb-4 gap-2">
+                        <AlertTriangle size={18} color="#d97706" />
+                        <Text className="text-xs font-bold text-amber-700 dark:text-amber-500 flex-1 leading-4">
+                          Room {targetRoom?.room_number} is full. Swapping will move the selected occupant to Room {selectedTenant?.rooms_table?.room_number}.
+                        </Text>
+                      </View>
+
+                      <ScrollView showsVerticalScrollIndicator={false} className="mb-6">
+                        {swapCandidates.length === 0 ? (
+                          <View className="py-8 items-center justify-center">
+                            <User size={32} color="#9ca3af" />
+                            <Text className="text-xs text-muted text-center font-medium mt-2">No active occupants in this room</Text>
+                          </View>
+                        ) : (
+                          swapCandidates.map((candidate) => {
+                            const isSelected = changeRoomSwapTenantId === candidate.id
+                            const initials = (candidate.name || "Tenant")
+                              .split(" ")
+                              .map(n => n[0])
+                              .join("")
+                              .substring(0, 2)
+                              .toUpperCase()
+
+                            return (
+                              <TouchableOpacity
+                                key={candidate.id}
+                                onPress={() => setChangeRoomSwapTenantId(candidate.id)}
+                                className={`px-4 py-3.5 border rounded-xl mb-2 flex-row justify-between items-center ${
+                                  isSelected 
+                                    ? "border-primary bg-primary/5 dark:bg-primary/10" 
+                                    : "border-border/40 bg-background/50 dark:bg-background-dark/30"
+                                }`}
+                              >
+                                <View className="flex-row items-center flex-1 pr-3">
+                                  <View className="h-9 w-9 bg-primary/10 rounded-full items-center justify-center mr-3">
+                                    <Text className="text-primary font-bold text-xs">{initials}</Text>
+                                  </View>
+                                  <View className="flex-1">
+                                    <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">
+                                      {candidate.name}
+                                    </Text>
+                                    <Text className="text-xs text-muted mt-0.5 font-medium">
+                                      {candidate.mobile_number || "No phone"}
+                                    </Text>
+                                  </View>
+                                </View>
+                                <View className={`h-5 w-5 rounded-full border items-center justify-center ${
+                                  isSelected ? "border-primary bg-primary" : "border-border"
+                                }`}>
+                                  {isSelected && <Check size={12} color="#ffffff" strokeWidth={3} />}
+                                </View>
+                              </TouchableOpacity>
+                            )
+                          })
+                        )}
+                      </ScrollView>
+
+                      <View className="flex-row gap-3">
+                        <TouchableOpacity
+                          onPress={() => {
+                            setChangeRoomSelectedRoomId(null);
+                            setChangeRoomSwapTenantId(null);
+                          }}
+                          className="flex-1 border border-border dark:border-border-dark rounded-xl py-3.5 items-center justify-center bg-background dark:bg-background-dark"
+                        >
+                          <Text className="text-muted dark:text-muted-dark text-sm font-bold">Back</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (changeRoomSelectedRoomId) {
+                              handleChangeRoom(changeRoomSelectedRoomId, changeRoomSwapTenantId);
+                            }
+                          }}
+                          disabled={!changeRoomSwapTenantId || isUpdatingRoom}
+                          className={`flex-1 rounded-xl py-3.5 items-center justify-center ${
+                            changeRoomSwapTenantId && !isUpdatingRoom 
+                              ? "bg-primary" 
+                              : "bg-muted/20 border border-border/20 opacity-55"
+                          }`}
+                        >
+                          <Text className={changeRoomSwapTenantId && !isUpdatingRoom ? "text-white text-sm font-bold" : "text-muted text-sm font-bold"}>
+                            {isUpdatingRoom ? "Processing..." : "Confirm Swap"}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </>
+                  )
+                })()}
+              </>
+            )}
           </View>
         </View>
       </Modal>

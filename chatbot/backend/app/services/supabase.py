@@ -31,6 +31,24 @@ class SupabaseService:
                 logger.error(f"Failed to query owner by email: {e}")
         return None
 
+    async def get_owner_by_id(self, owner_id: str) -> dict:
+        """Retrieves owner matching the owner id."""
+        if not owner_id:
+            return None
+        url = f"{self.url}/rest/v1/pg_owners?id=eq.{owner_id}&select=id,name,email,chatbot_enabled,auto_reply_enabled"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, headers=self.headers, timeout=10.0)
+                if response.status_code == 200:
+                    records = response.json()
+                    if records:
+                        return records[0]
+                else:
+                    logger.error(f"Error fetching owner by id: {response.status_code} - {response.text}")
+            except Exception as e:
+                logger.error(f"Failed to query owner by id: {e}")
+        return None
+
     async def get_active_tenant(self, phone_number: str, owner_id: str) -> dict:
         """Looks up active tenant under the owner by phone number (last 10 digits match)."""
         if not phone_number or not owner_id:
@@ -360,7 +378,7 @@ class SupabaseService:
 
     async def get_tenant_by_id(self, tenant_id: int) -> dict:
         """Retrieves tenant details by tenant ID."""
-        url = f"{self.url}/rest/v1/tenants_table?id=eq.{tenant_id}&select=id,name,mobile_number"
+        url = f"{self.url}/rest/v1/tenants_table?id=eq.{tenant_id}&select=id,name,mobile_number,owner_id"
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(url, headers=self.headers, timeout=10.0)

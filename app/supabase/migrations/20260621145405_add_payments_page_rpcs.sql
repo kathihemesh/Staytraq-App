@@ -1,0 +1,152 @@
+CREATE OR REPLACE FUNCTION public.get_payments_page(
+  owner_id uuid,
+  p_month integer,
+  p_year integer,
+  status_filter text DEFAULT 'all',
+  search_term text DEFAULT '',
+  page_size integer DEFAULT 50,
+  page_offset integer DEFAULT 0
+)
+RETURNS TABLE (
+  id bigint,
+  tenant_id bigint,
+  month integer,
+  year integer,
+  rent_amount numeric,
+  extra_charges numeric,
+  total_amount numeric,
+  due_date date,
+  status text,
+  paid_at timestamptz,
+  submitted_at timestamptz,
+  verified_at timestamptz,
+  reminder_sent boolean,
+  payment_token text,
+  payment_method text,
+  payment_code text,
+  screenshot_path text,
+  utr_number text,
+  verification_notes text,
+  tenant_name text,
+  tenant_mobile_number text,
+  room_number text,
+  rent_amount_room numeric
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  WITH params AS (
+    SELECT
+      $1 AS owner_id,
+      $2 AS month,
+      $3 AS year,
+      COALESCE(NULLIF(btrim($4), ''), 'all') AS status_filter,
+      replace(
+        replace(
+          replace(NULLIF(btrim($5), ''), '\', '\\'),
+          '%', '\%'
+        ),
+        '_', '\_'
+      ) AS search_pattern,
+      LEAST(GREATEST(COALESCE($6, 50), 0), 50) AS page_size,
+      GREATEST(COALESCE($7, 0), 0) AS page_offset
+    WHERE $1 = auth.uid()
+  )
+  SELECT
+    p.id,
+    p.tenant_id,
+    p.month,
+    p.year,
+    p.rent_amount,
+    p.extra_charges,
+    p.total_amount,
+    p.due_date,
+    p.status,
+    p.paid_at,
+    p.submitted_at,
+    p.verified_at,
+    p.reminder_sent,
+    p.payment_token::text,
+    p.payment_method,
+    p.payment_code,
+    p.screenshot_path,
+    p.utr_number,
+    p.verification_notes,
+    t.name AS tenant_name,
+    t.mobile_number AS tenant_mobile_number,
+    r.room_number,
+    r.rent_amount AS rent_amount_room
+  FROM params prm
+  JOIN public.payments p ON p.owner_id = prm.owner_id
+  LEFT JOIN public.tenants_table t ON t.id = p.tenant_id
+  LEFT JOIN public.rooms_table r ON r.id = t.room_id
+  WHERE p.month = prm.month
+    AND p.year = prm.year
+    AND (prm.status_filter = 'all' OR p.status = prm.status_filter)
+    AND (
+      prm.search_pattern IS NULL
+      OR t.name ILIKE '%' || prm.search_pattern || '%' ESCAPE '\'
+      OR r.room_number ILIKE '%' || prm.search_pattern || '%' ESCAPE '\'
+      OR t.mobile_number ILIKE '%' || prm.search_pattern || '%' ESCAPE '\'
+      OR t.mobile_number_normalized ILIKE '%' || prm.search_pattern || '%' ESCAPE '\'
+      OR p.utr_number ILIKE '%' || prm.search_pattern || '%' ESCAPE '\'
+      OR p.payment_code ILIKE '%' || prm.search_pattern || '%' ESCAPE '\'
+    )
+  ORDER BY p.due_date DESC, p.id DESC
+  LIMIT (SELECT page_size FROM params)
+  OFFSET (SELECT page_offset FROM params);
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_payment_month_summary(
+  owner_id uuid,
+  p_month integer,
+  p_year integer
+)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  WITH params AS (
+    SELECT
+      $1 AS owner_id,
+      $2 AS month,
+      $3 AS year
+    WHERE $1 = auth.uid()
+  )
+  SELECT COALESCE(
+    (
+      SELECT jsonb_build_object(
+        'month', prm.month,
+        'year', prm.year,
+        'total_collected', COALESCE(SUM(p.total_amount) FILTER (WHERE p.status = 'paid'), 0),
+        'total_pending', COALESCE(SUM(p.total_amount) FILTER (WHERE p.status = 'pending'), 0),
+        'total_late', COALESCE(SUM(p.total_amount) FILTER (WHERE p.status = 'late'), 0),
+        'total_submitted', COALESCE(SUM(p.total_amount) FILTER (WHERE p.status = 'submitted'), 0)
+      )
+      FROM params prm
+      LEFT JOIN public.payments p
+        ON p.owner_id = prm.owner_id
+        AND p.month = prm.month
+        AND p.year = prm.year
+      GROUP BY prm.month, prm.year
+    ),
+    jsonb_build_object(
+      'month', p_month,
+      'year', p_year,
+      'total_collected', 0,
+      'total_pending', 0,
+      'total_late', 0,
+      'total_submitted', 0
+    )
+  );
+$$;
+
+CREATE INDEX IF NOT EXISTS payments_owner_month_year_due_date_idx
+  ON public.payments (owner_id, month, year, due_date DESC);
+
+GRANT EXECUTE ON FUNCTION public.get_payments_page(uuid, integer, integer, text, text, integer, integer) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_payment_month_summary(uuid, integer, integer) TO authenticated;;
