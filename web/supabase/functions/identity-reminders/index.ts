@@ -1,10 +1,19 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js";
-// Reuse the pure reminder-eligibility predicate so the
-// `request_flag && status != Verified && !ignore_flag` rule lives in exactly one
-// place (web/lib/identity/eligibility.ts). It is framework-free pure TypeScript,
-// so it imports cleanly into this Deno function (Reqs 13.1-13.4).
-import { isReminderEligible } from "../../../lib/identity/eligibility.ts";
+// Pure reminder-eligibility predicate, inlined so this edge function bundles
+// without a cross-directory import (mirrors web/lib/identity/eligibility.ts,
+// `request_flag && status != Verified && !ignore_flag`, Reqs 13.1-13.4).
+function isReminderEligible(tenant: {
+  identity_request_flag: boolean;
+  verification_status: string;
+  ignore_identity_flag: boolean;
+}): boolean {
+  return (
+    tenant.identity_request_flag === true &&
+    tenant.verification_status !== "Verified" &&
+    tenant.ignore_identity_flag === false
+  );
+}
 
 // Default verification-portal base path. Mirrors `buildVerificationLink` in the
 // owner app (`app/src/lib/identity/token.ts`): the token is appended as a single

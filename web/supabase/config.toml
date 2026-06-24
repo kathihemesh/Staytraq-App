@@ -9,3 +9,15 @@ entrypoint = "./functions/generate-payments/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/generate-payments/*.html" ]
+
+[functions.identity-reminders]
+enabled = true
+verify_jwt = true
+import_map = "./functions/identity-reminders/deno.json"
+entrypoint = "./functions/identity-reminders/index.ts"
+
+[functions.identity-cleanup]
+enabled = true
+verify_jwt = true
+import_map = "./functions/identity-cleanup/deno.json"
+entrypoint = "./functions/identity-cleanup/index.ts"

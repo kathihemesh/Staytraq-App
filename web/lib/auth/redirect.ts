@@ -31,7 +31,7 @@ export const PUBLIC_ROUTES = [
  * Public route prefixes (dynamic segments) that are also treated as public,
  * matching the provider's `startsWith` checks.
  */
-export const PUBLIC_ROUTE_PREFIXES = ["/pay/", "/complaint-submit/"] as const
+export const PUBLIC_ROUTE_PREFIXES = ["/pay/", "/complaint-submit/", "/identity-verify/"] as const
 
 /**
  * Routes an authenticated-but-not-onboarded user is allowed to remain on

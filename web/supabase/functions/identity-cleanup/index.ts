@@ -1,9 +1,27 @@
 import { serve } from "https://deno.land/std/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js";
-// Reuse the pure cleanup-eligibility predicate so the 15-day post-move-out rule
-// lives in exactly one place (web/lib/identity/eligibility.ts). The module is
-// framework-free pure TypeScript, so it imports cleanly into this Deno function.
-import { isCleanupEligible } from "../../../lib/identity/eligibility.ts";
+// Pure cleanup-eligibility predicate, inlined so this edge function bundles
+// without a cross-directory import (mirrors web/lib/identity/eligibility.ts,
+// exit date recorded and now >= exit_date + 15 days, Reqs 19.1-19.3).
+const CLEANUP_DELAY_DAYS = 15;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function toTimestamp(value: Date | string | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  const ms = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function isCleanupEligible(
+  exitDate: Date | string | null | undefined,
+  now: Date | string | null | undefined
+): boolean {
+  const exitMs = toTimestamp(exitDate);
+  if (exitMs === null) return false;
+  const nowMs = toTimestamp(now);
+  if (nowMs === null) return false;
+  return nowMs >= exitMs + CLEANUP_DELAY_DAYS * MS_PER_DAY;
+}
 
 const IDENTITY_BUCKET = "identity_documents";
 
