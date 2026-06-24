@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     HOST: str = "127.0.0.1"
     EVOLUTION_API_URL: str = "http://localhost:8080"
     EVOLUTION_API_KEY: str = "staytraq_chatbot_secret_key"
+    CHATBOT_WEBHOOK_URL: str = ""
     REDIS_URL: str = "redis://localhost:6379/0"
     
     # Supabase Settings

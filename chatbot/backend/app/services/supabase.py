@@ -17,7 +17,7 @@ class SupabaseService:
         """Retrieves owner matching the email (instance_name)."""
         if not email:
             return None
-        url = f"{self.url}/rest/v1/pg_owners?email=eq.{email.strip()}&select=id,name,email,chatbot_enabled"
+        url = f"{self.url}/rest/v1/pg_owners?email=eq.{email.strip()}&select=id,name,email,chatbot_enabled,auto_reply_enabled"
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(url, headers=self.headers, timeout=10.0)
@@ -371,5 +371,27 @@ class SupabaseService:
             except Exception as e:
                 logger.error(f"Error fetching tenant by id {tenant_id}: {e}")
         return None
+
+    async def update_owner_chatbot_settings(self, owner_id: str, chatbot_enabled: bool = None, auto_reply_enabled: bool = None) -> bool:
+        """Updates owner's chatbot settings in the database."""
+        url = f"{self.url}/rest/v1/pg_owners?id=eq.{owner_id}"
+        payload = {}
+        if chatbot_enabled is not None:
+            payload["chatbot_enabled"] = chatbot_enabled
+        if auto_reply_enabled is not None:
+            payload["auto_reply_enabled"] = auto_reply_enabled
+             
+        if not payload:
+            return True
+             
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.patch(url, json=payload, headers=self.headers, timeout=10.0)
+                if response.status_code in [200, 204]:
+                    return True
+                logger.error(f"Failed to update owner chatbot settings: {response.status_code} - {response.text}")
+            except Exception as e:
+                logger.error(f"Error updating owner chatbot settings: {e}")
+        return False
 
 supabase_service = SupabaseService()

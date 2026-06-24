@@ -104,4 +104,109 @@ class EvolutionClient:
                 logger.error(f"Error registering webhook: {e}")
                 return False
 
+    async def get_instance_status(self, instance_name: str) -> dict:
+        """Fetches connection status and phone number of an instance from Evolution API."""
+        url = f"{self.base_url}/instance/fetchInstances"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, headers=self.headers, timeout=10.0)
+                if response.status_code == 200:
+                    instances = response.json()
+                    for inst in instances:
+                        inst_details = inst.get("instance", {})
+                        name = inst_details.get("instanceName")
+                        if name == instance_name:
+                            status = inst_details.get("connectionStatus") or inst_details.get("status")
+                            profile = inst.get("profile") or {}
+                            number = profile.get("number") or inst.get("owner")
+                            if number and "@" in number:
+                                number = number.split("@")[0]
+                            return {
+                                "exists": True,
+                                "status": status,
+                                "number": number
+                            }
+                    # Fallback to connectionState if not in fetch list
+                    state_url = f"{self.base_url}/instance/connectionState/{instance_name}"
+                    state_response = await client.get(state_url, headers=self.headers, timeout=10.0)
+                    if state_response.status_code == 200:
+                        data = state_response.json()
+                        status = data.get("instance", {}).get("status") or data.get("connectionStatus")
+                        return {
+                            "exists": True,
+                            "status": status,
+                            "number": None
+                        }
+                    elif state_response.status_code == 404:
+                        return {"exists": False, "status": "not_created", "number": None}
+                    return {"exists": False, "status": "error", "number": None}
+                else:
+                    logger.error(f"Failed to fetch instances: {response.status_code} - {response.text}")
+                    # Fallback to connectionState
+                    state_url = f"{self.base_url}/instance/connectionState/{instance_name}"
+                    state_response = await client.get(state_url, headers=self.headers, timeout=10.0)
+                    if state_response.status_code == 200:
+                        data = state_response.json()
+                        status = data.get("instance", {}).get("status") or data.get("connectionStatus")
+                        return {
+                            "exists": True,
+                            "status": status,
+                            "number": None
+                        }
+                    elif state_response.status_code == 404:
+                        return {"exists": False, "status": "not_created", "number": None}
+                    return {"exists": False, "status": "error", "number": None}
+            except Exception as e:
+                logger.error(f"Error checking instance status: {e}")
+                return {"exists": False, "status": "error", "number": None}
+
+    async def create_instance(self, instance_name: str) -> dict:
+        """Creates an instance in Evolution API."""
+        url = f"{self.base_url}/instance/create"
+        payload = {
+            "instanceName": instance_name,
+            "token": settings.EVOLUTION_API_KEY,
+            "qrcode": True,
+            "integration": "WHATSAPP-BAILEYS"
+        }
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.post(url, json=payload, headers=self.headers, timeout=15.0)
+                if response.status_code in [200, 201]:
+                    return response.json()
+                logger.error(f"Failed to create instance: {response.status_code} - {response.text}")
+                return None
+            except Exception as e:
+                logger.error(f"Error creating instance: {e}")
+                return None
+
+    async def connect_instance(self, instance_name: str) -> dict:
+        """Retrieves connection QR code from Evolution API."""
+        url = f"{self.base_url}/instance/connect/{instance_name}"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, headers=self.headers, timeout=15.0)
+                if response.status_code == 200:
+                    return response.json()
+                logger.error(f"Failed to connect instance: {response.status_code} - {response.text}")
+                return None
+            except Exception as e:
+                logger.error(f"Error connecting instance: {e}")
+                return None
+
+    async def delete_instance(self, instance_name: str) -> bool:
+        """Deletes an instance in Evolution API."""
+        url = f"{self.base_url}/instance/delete/{instance_name}"
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.delete(url, headers=self.headers, timeout=15.0)
+                if response.status_code in [200, 204]:
+                    logger.info(f"Successfully deleted instance {instance_name}")
+                    return True
+                logger.error(f"Failed to delete instance: {response.status_code} - {response.text}")
+                return False
+            except Exception as e:
+                logger.error(f"Error deleting instance: {e}")
+                return False
+
 evolution_client = EvolutionClient()

@@ -459,6 +459,18 @@ export default function DashboardScreen() {
       setRawRooms(roomsData)
       setRawComplaints(complaintsRes.data || [])
       setChatbotEnabled(!!ownerRes.data?.chatbot_enabled)
+
+      // Fire-and-forget sync call to update chatbot connection status in DB
+      const chatbotApiUrl = getChatbotApiUrl()
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session?.access_token) {
+          fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
+            headers: {
+              "Authorization": `Bearer ${data.session.access_token}`
+            }
+          }).catch(err => console.log("Failed to sync chatbot status on boot:", err))
+        }
+      })
       setLeads(leadsRes.data || [])
       if (pgs.length > 0) {
         setPgId(pgs[0].id)

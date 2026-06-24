@@ -301,6 +301,7 @@ export type Database = {
       }
       pg_owners: {
         Row: {
+          auto_reply_enabled: boolean | null
           chatbot_enabled: boolean | null
           complaint_token: string
           created_at: string
@@ -312,6 +313,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          auto_reply_enabled?: boolean | null
           chatbot_enabled?: boolean | null
           complaint_token?: string
           created_at?: string
@@ -323,6 +325,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          auto_reply_enabled?: boolean | null
           chatbot_enabled?: boolean | null
           complaint_token?: string
           created_at?: string

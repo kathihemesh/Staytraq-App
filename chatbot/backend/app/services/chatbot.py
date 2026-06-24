@@ -409,9 +409,9 @@ class ChatbotService:
             logger.warning(f"No owner found for instance name (email): {instance_name}. Ignoring message.")
             return None
 
-        # Check if chatbot is enabled for the owner
-        if not owner_record.get("chatbot_enabled"):
-            logger.info(f"Chatbot is disabled for owner: {instance_name}. Ignoring message.")
+        # Check if chatbot is enabled and auto-replies are enabled for the owner
+        if not owner_record.get("chatbot_enabled") or not owner_record.get("auto_reply_enabled", True):
+            logger.info(f"Chatbot or auto-reply is disabled for owner: {instance_name}. Ignoring message.")
             return None
  
         owner_id = owner_record.get("id")

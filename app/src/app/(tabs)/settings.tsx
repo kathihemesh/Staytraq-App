@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Platform, LayoutAnimation, UIManager } from "react-native"
+import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Platform, LayoutAnimation, UIManager, Image } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
 import useTheme from "@/hooks/use-theme"
-import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, AlertTriangle, RefreshCw, CreditCard, Link } from "lucide-react-native"
+import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, AlertTriangle, RefreshCw, CreditCard, Link, Bot, Smartphone, Trash2, QrCode } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import Animated, { FadeIn } from "react-native-reanimated"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
@@ -45,8 +45,25 @@ export default function SettingsScreen() {
   const [paymentInstructions, setPaymentInstructions] = useState("")
   const [isMerchant, setIsMerchant] = useState(false)
   const [settingsId, setSettingsId] = useState<number | null>(null)
+
+  // Chatbot settings state
+  const [chatbotStatusLoading, setChatbotStatusLoading] = useState(true)
+  const [instanceExists, setInstanceExists] = useState(false)
+  const [connectionStatus, setConnectionStatus] = useState("not_created")
+  const [chatbotPhoneNumber, setChatbotPhoneNumber] = useState<string | null>(null)
+  const [qrCodeData, setQrCodeData] = useState<string | null>(null)
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState(true)
+  const [chatbotEnabled, setChatbotEnabled] = useState(false)
+  const [isProcessingChatbot, setIsProcessingChatbot] = useState(false)
   
   const successTimeoutRef = useRef<any>(null)
+
+  const getChatbotApiUrl = () => {
+    if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
+      return process.env.EXPO_PUBLIC_CHATBOT_API_URL
+    }
+    return "http://localhost:8000"
+  }
 
   const detectMerchantUpi = (vpa: string): boolean => {
     if (!vpa) return false
@@ -84,6 +101,153 @@ export default function SettingsScreen() {
     }
   }
 
+  const fetchChatbotStatus = useCallback(async (silent = false) => {
+    try {
+      if (!silent) setChatbotStatusLoading(true)
+      
+      const sessionRes = await supabase.auth.getSession()
+      const session = sessionRes.data.session
+      if (!session) return
+
+      // Load pg_owners data for auto_reply_enabled
+      const { data: ownerData } = await supabase
+        .from("pg_owners")
+        .select("auto_reply_enabled, chatbot_enabled")
+        .eq("id", session.user.id)
+        .maybeSingle()
+
+      if (ownerData) {
+        setAutoReplyEnabled(ownerData.auto_reply_enabled ?? true)
+        setChatbotEnabled(ownerData.chatbot_enabled ?? false)
+      }
+
+      const chatbotApiUrl = getChatbotApiUrl()
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`
+        }
+      })
+      if (res.ok) {
+        const statusData = await res.json()
+        setInstanceExists(statusData.exists)
+        setConnectionStatus(statusData.connectionStatus)
+        setChatbotPhoneNumber(statusData.phoneNumber)
+        setQrCodeData(statusData.qrCode)
+      }
+    } catch (err) {
+      console.error("Failed to load chatbot status on mobile settings:", err)
+    } finally {
+      if (!silent) setChatbotStatusLoading(false)
+    }
+  }, [])
+
+  // Polling for QR Code scanning / connection status
+  useEffect(() => {
+    fetchChatbotStatus()
+  }, [fetchChatbotStatus])
+
+  useEffect(() => {
+    if (connectionStatus !== "connected" && instanceExists) {
+      const interval = setInterval(() => {
+        fetchChatbotStatus(true)
+      }, 5000)
+      return () => clearInterval(interval)
+    }
+  }, [connectionStatus, instanceExists, fetchChatbotStatus])
+
+  const handleCreateChatbot = async () => {
+    try {
+      setIsProcessingChatbot(true)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+      setError(null)
+      
+      const sessionRes = await supabase.auth.getSession()
+      const session = sessionRes.data.session
+      if (!session) return
+
+      const chatbotApiUrl = getChatbotApiUrl()
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/create`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`
+        }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setInstanceExists(true)
+        setConnectionStatus("disconnected")
+        setQrCodeData(data.qrCode)
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      } else {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        setError("Failed to create chatbot instance on server.")
+      }
+    } catch (err) {
+      console.error("Error creating chatbot:", err)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      setError("Error calling chatbot creation API.")
+    } finally {
+      setIsProcessingChatbot(false)
+    }
+  }
+
+  const handleDeleteChatbot = async () => {
+    try {
+      setIsProcessingChatbot(true)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      setError(null)
+      
+      const sessionRes = await supabase.auth.getSession()
+      const session = sessionRes.data.session
+      if (!session) return
+
+      const chatbotApiUrl = getChatbotApiUrl()
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/delete`, {
+        method: "DELETE",
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`
+        }
+      })
+      if (res.ok) {
+        setInstanceExists(false)
+        setConnectionStatus("not_created")
+        setChatbotPhoneNumber(null)
+        setQrCodeData(null)
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      } else {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        setError("Failed to delete chatbot instance.")
+      }
+    } catch (err) {
+      console.error("Error deleting chatbot:", err)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      setError("Error calling chatbot deletion API.")
+    } finally {
+      setIsProcessingChatbot(false)
+    }
+  }
+
+  const handleToggleAutoReply = async (value: boolean) => {
+    try {
+      if (!user?.id) return
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+      setError(null)
+      
+      setAutoReplyEnabled(value)
+
+      const { error } = await supabase
+        .from("pg_owners")
+        .update({ auto_reply_enabled: value })
+        .eq("id", user.id)
+
+      if (error) throw error
+    } catch (err) {
+      console.error("Error toggling auto-reply:", err)
+      setAutoReplyEnabled(!value) // rollback
+      setError("Failed to update auto-reply settings.")
+    }
+  }
+
   // Fetch settings from database
   const fetchSettings = useCallback(async (silent = false) => {
     if (!user?.id) {
@@ -94,13 +258,29 @@ export default function SettingsScreen() {
       if (!silent) setLoading(true)
       setError(null)
 
-      const { data, error } = await supabase
-        .from("settings")
-        .select("*")
-        .eq("owner_id", user.id)
-        .maybeSingle()
+      const [settingsRes, ownerRes] = await Promise.all([
+        supabase
+          .from("settings")
+          .select("*")
+          .eq("owner_id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("pg_owners")
+          .select("auto_reply_enabled, chatbot_enabled")
+          .eq("id", user.id)
+          .maybeSingle()
+      ])
 
-      if (error) throw error
+      if (settingsRes.error) throw settingsRes.error
+      if (ownerRes.error) throw ownerRes.error
+
+      const data = settingsRes.data
+      const ownerData = ownerRes.data
+
+      if (ownerData) {
+        setAutoReplyEnabled(ownerData.auto_reply_enabled ?? true)
+        setChatbotEnabled(ownerData.chatbot_enabled ?? false)
+      }
 
       if (data) {
         setSettingsId(data.id)
@@ -554,6 +734,144 @@ export default function SettingsScreen() {
                 </>
               )}
             </TouchableOpacity>
+          </View>
+
+          {/* Section 4: Chatbot Assistant Settings */}
+          <View className="px-6 mt-6">
+            <View className="flex-row items-center mb-3">
+              <View className="mr-2">
+                <Bot size={18} color={isDark ? "#0091ff" : "#0071df"} />
+              </View>
+              <Text className="text-sm font-bold text-muted uppercase tracking-wider">WhatsApp Chatbot</Text>
+            </View>
+
+            <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
+              {chatbotStatusLoading ? (
+                <View className="py-6 items-center justify-center">
+                  <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
+                  <Text className="text-xs text-muted dark:text-muted-dark mt-2 font-semibold">Checking connection status...</Text>
+                </View>
+              ) : (
+                <View className="gap-4">
+                  {/* Status Banner */}
+                  <View className="bg-background dark:bg-background-dark/50 border border-border dark:border-border-dark p-4 rounded-2xl gap-3">
+                    <View className="flex-row justify-between items-center">
+                      <View className="flex-row items-center">
+                        <View className={`h-2.5 w-2.5 rounded-full mr-2 ${
+                          connectionStatus === "connected"
+                            ? "bg-success"
+                            : connectionStatus === "connecting"
+                            ? "bg-warning"
+                            : "bg-destructive"
+                        }`} />
+                        <Text className="text-sm font-bold text-foreground dark:text-foreground-dark capitalize">
+                          {connectionStatus === "not_created" ? "Not Configured" : connectionStatus}
+                        </Text>
+                      </View>
+                      {chatbotPhoneNumber && (
+                        <Text className="text-xs text-muted dark:text-muted-dark font-mono font-semibold">
+                          {chatbotPhoneNumber}
+                        </Text>
+                      )}
+                    </View>
+
+                    <Text className="text-xs text-muted leading-4">
+                      {connectionStatus === "connected"
+                        ? "Your chatbot assistant is online and automatically replying to tenant messages."
+                        : connectionStatus === "disconnected"
+                        ? "Instance created but not paired. Scan the QR code to pair WhatsApp."
+                        : connectionStatus === "connecting"
+                        ? "Connecting to Evolution API, please wait..."
+                        : "Connect your WhatsApp number to automate communications."}
+                    </Text>
+
+                    <View className="flex-row gap-2 mt-1">
+                      {connectionStatus === "not_created" && (
+                        <TouchableOpacity
+                          disabled={isProcessingChatbot}
+                          onPress={handleCreateChatbot}
+                          className="bg-primary px-4 py-2 rounded-xl flex-row items-center justify-center flex-1"
+                        >
+                          {isProcessingChatbot ? (
+                            <ActivityIndicator size="small" color="#ffffff" />
+                          ) : (
+                            <Text className="text-white text-xs font-bold">Create Chatbot</Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                      {instanceExists && (
+                        <TouchableOpacity
+                          disabled={isProcessingChatbot}
+                          onPress={handleDeleteChatbot}
+                          className="border border-destructive/20 bg-destructive/5 px-4 py-2 rounded-xl flex-row items-center justify-center flex-1"
+                        >
+                          {isProcessingChatbot ? (
+                            <ActivityIndicator size="small" color="#ef4444" />
+                          ) : (
+                            <Text className="text-destructive text-xs font-bold">Delete Chatbot</Text>
+                          )}
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* QR Code Section */}
+                  {connectionStatus === "disconnected" && qrCodeData && (
+                    <View className="border border-dashed border-border dark:border-border-dark p-5 rounded-2xl items-center gap-3">
+                      <View className="flex-row items-center">
+                        <View className="mr-1.5">
+                          <QrCode size={16} color={isDark ? "#0091ff" : "#0071df"} />
+                        </View>
+                        <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Scan to Pair WhatsApp</Text>
+                      </View>
+                      
+                      <View className="border border-border/40 p-2.5 bg-white rounded-xl shadow-inner">
+                        <Image 
+                          source={{ uri: qrCodeData }} 
+                          style={{ width: 180, height: 180 }}
+                          resizeMode="contain"
+                        />
+                      </View>
+
+                      <Text className="text-[10px] text-muted text-center leading-4">
+                        Open WhatsApp &gt; Settings &gt; Linked Devices &gt; Link a Device to scan.
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Auto Reply Switch */}
+                  {connectionStatus === "connected" && (
+                    <View className="flex-row justify-between items-center py-1">
+                      <View className="flex-1 mr-4">
+                        <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">AI Auto-Replies</Text>
+                        <Text className="text-[10px] text-muted leading-4 mt-0.5">
+                          Automatically respond to occupant rent queries and complaints.
+                        </Text>
+                      </View>
+
+                      <TouchableOpacity
+                        onPress={() => handleToggleAutoReply(!autoReplyEnabled)}
+                        className={`w-12 h-7 rounded-full p-0.5 flex-row items-center ${
+                          autoReplyEnabled ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
+                        }`}
+                      >
+                        {autoReplyEnabled ? (
+                          <>
+                            <View className="flex-1" />
+                            <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
+                          </>
+                        ) : (
+                          <>
+                            <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
+                            <View className="flex-1" />
+                          </>
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
           </View>
 
           {/* Section 2: Preferences (Appearance) */}

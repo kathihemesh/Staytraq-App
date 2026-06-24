@@ -298,3 +298,184 @@ async def send_payment_rejection(payload: PaymentRejectionRequest, authorization
             status_code=500,
             detail="Failed to deliver WhatsApp rejection message."
         )
+
+
+# ==========================================
+# Chatbot Management Endpoints
+# ==========================================
+
+@router.get("/chatbot/status")
+async def get_chatbot_status(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid Authorization header"
+        )
+    
+    token = authorization.split(" ")[1]
+    user_data = await supabase_service.verify_token(token)
+    if not user_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Supabase JWT token"
+        )
+        
+    owner_email = user_data.get("email")
+    if not owner_email:
+        raise HTTPException(
+            status_code=400,
+            detail="User email not found in auth token"
+        )
+        
+    owner = await supabase_service.get_owner_by_email(owner_email)
+    if not owner:
+        return {
+            "status": "error",
+            "message": "Owner profile not found in database",
+            "exists": False,
+            "connectionStatus": "not_created",
+            "phoneNumber": None,
+            "qrCode": None,
+            "chatbotEnabled": False,
+            "autoReplyEnabled": False
+        }
+
+    # Fetch status from Evolution API
+    evo_status = await evolution_client.get_instance_status(owner_email)
+    exists = evo_status.get("exists", False)
+    connection_status = evo_status.get("status", "not_created")
+    phone_number = evo_status.get("number")
+    
+    # Map Evolution connectionStatus: "open" -> "connected"
+    if exists and connection_status == "open":
+        connection_status = "connected"
+    elif exists and connection_status == "close":
+        connection_status = "disconnected"
+    elif not exists:
+        connection_status = "not_created"
+
+    # Synchronize chatbot_enabled flag in DB based on connection status
+    is_connected = (connection_status == "connected")
+    if owner.get("chatbot_enabled") != is_connected:
+        await supabase_service.update_owner_chatbot_settings(
+            owner_id=owner["id"],
+            chatbot_enabled=is_connected
+        )
+    
+    qr_code = None
+    if exists and connection_status == "disconnected":
+        # Retrieve QR code base64 to show to the user
+        qr_res = await evolution_client.connect_instance(owner_email)
+        if qr_res:
+            qr_code = qr_res.get("qrcode", {}).get("base64")
+            
+    return {
+        "status": "success",
+        "exists": exists,
+        "connectionStatus": connection_status,
+        "phoneNumber": phone_number,
+        "qrCode": qr_code,
+        "chatbotEnabled": is_connected,
+        "autoReplyEnabled": owner.get("auto_reply_enabled", True)
+    }
+
+@router.post("/chatbot/create")
+async def create_chatbot_instance(request: Request, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid Authorization header"
+        )
+    
+    token = authorization.split(" ")[1]
+    user_data = await supabase_service.verify_token(token)
+    if not user_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Supabase JWT token"
+        )
+        
+    owner_email = user_data.get("email")
+    if not owner_email:
+        raise HTTPException(
+            status_code=400,
+            detail="User email not found in auth token"
+        )
+
+    owner = await supabase_service.get_owner_by_email(owner_email)
+    if not owner:
+        raise HTTPException(
+            status_code=400,
+            detail="Owner profile not found in database"
+        )
+
+    # Check if instance already exists in Evolution API
+    evo_status = await evolution_client.get_instance_status(owner_email)
+    if not evo_status.get("exists"):
+        # Create new instance
+        create_res = await evolution_client.create_instance(owner_email)
+        if not create_res:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create chatbot instance on Evolution API"
+            )
+            
+        # Register webhook
+        webhook_url = settings.CHATBOT_WEBHOOK_URL or f"{str(request.base_url).rstrip('/')}/api/v1/whatsapp"
+        await evolution_client.register_webhook(owner_email, webhook_url)
+
+    # Fetch QR code
+    qr_res = await evolution_client.connect_instance(owner_email)
+    qr_code = None
+    if qr_res:
+        qr_code = qr_res.get("qrcode", {}).get("base64")
+        
+    return {
+        "status": "success",
+        "connectionStatus": "disconnected",
+        "qrCode": qr_code
+    }
+
+@router.delete("/chatbot/delete")
+async def delete_chatbot_instance(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid Authorization header"
+        )
+    
+    token = authorization.split(" ")[1]
+    user_data = await supabase_service.verify_token(token)
+    if not user_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Supabase JWT token"
+        )
+        
+    owner_email = user_data.get("email")
+    if not owner_email:
+        raise HTTPException(
+            status_code=400,
+            detail="User email not found in auth token"
+        )
+
+    owner = await supabase_service.get_owner_by_email(owner_email)
+    if not owner:
+        raise HTTPException(
+            status_code=400,
+            detail="Owner profile not found in database"
+        )
+
+    # Call Evolution API to delete
+    deleted = await evolution_client.delete_instance(owner_email)
+    
+    # Force set chatbot_enabled = false in DB
+    await supabase_service.update_owner_chatbot_settings(
+        owner_id=owner["id"],
+        chatbot_enabled=False
+    )
+    
+    return {
+        "status": "success",
+        "message": "Instance deleted successfully" if deleted else "Instance was not found on Evolution but database updated"
+    }

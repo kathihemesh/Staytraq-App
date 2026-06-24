@@ -449,6 +449,19 @@ export function useDashboardHome(ownerIdOverride?: string | null): UseDashboardH
     // across reloads (Req 7.3, read side).
     setDismissedActivityIds(loadDismissed(ownerId))
 
+    // Background sync chatbot status with Evolution connection status (non-blocking)
+    const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://localhost:8000"
+    supabase.auth.getSession().then(({ data }) => {
+      const accessToken = data.session?.access_token
+      if (accessToken) {
+        fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
+          headers: {
+            Authorization: `Bearer ${accessToken}`
+          }
+        }).catch(err => console.error("Failed to sync chatbot status on boot:", err))
+      }
+    })
+
     const cached = retrieveAggregates(ownerId)
     if (cached) {
       // Render the Cached_Aggregate immediately (< 100ms) ...
@@ -461,7 +474,7 @@ export function useDashboardHome(ownerIdOverride?: string | null): UseDashboardH
       setPhase("skeleton")
       void runRefetch({ isInitial: true })
     }
-  }, [isAuthenticated, ownerId, applyAggregates, runRefetch])
+  }, [isAuthenticated, ownerId, applyAggregates, runRefetch, supabase])
 
   // Reset the per-owner lifecycle when the owner changes (sign-out / switch).
   const lastOwnerRef = useRef(ownerId)
