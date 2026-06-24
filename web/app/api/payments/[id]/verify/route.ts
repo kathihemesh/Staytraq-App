@@ -100,7 +100,7 @@ export async function POST(
           .single()
 
         if (ownerData?.chatbot_enabled) {
-          const chatbotApiUrl = process.env.CHATBOT_API_URL || 'http://144.91.79.198'
+          const chatbotApiUrl = process.env.CHATBOT_API_URL || 'https://144.91.79.198.sslip.io'
           const { data: { session } } = await supabase.auth.getSession()
           const token = session?.access_token
 

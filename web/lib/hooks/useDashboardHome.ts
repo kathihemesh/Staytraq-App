@@ -450,7 +450,7 @@ export function useDashboardHome(ownerIdOverride?: string | null): UseDashboardH
     setDismissedActivityIds(loadDismissed(ownerId))
 
     // Background sync chatbot status with Evolution connection status (non-blocking)
-    const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
+    const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "https://144.91.79.198.sslip.io"
     supabase.auth.getSession().then(({ data }) => {
       const accessToken = data.session?.access_token
       if (accessToken) {

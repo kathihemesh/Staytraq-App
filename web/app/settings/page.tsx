@@ -38,7 +38,7 @@ export default function SettingsPage() {
 
 
 
-      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "https://144.91.79.198.sslip.io"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
         headers: {
           "Authorization": `Bearer ${session.access_token}`
@@ -85,7 +85,7 @@ export default function SettingsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "https://144.91.79.198.sslip.io"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/pairing-code`, {
         method: "POST",
         headers: {
@@ -116,7 +116,7 @@ export default function SettingsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "https://144.91.79.198.sslip.io"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/create`, {
         method: "POST",
         headers: {
@@ -147,7 +147,7 @@ export default function SettingsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "https://144.91.79.198.sslip.io"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/delete`, {
         method: "DELETE",
         headers: {

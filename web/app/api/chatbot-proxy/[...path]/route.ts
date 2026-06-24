@@ -17,7 +17,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
 async function proxyRequest(request: NextRequest, pathSegments: string[]) {
   // Target is the live VPS HTTP endpoint
-  const targetHost = process.env.CHATBOT_API_URL || "http://144.91.79.198"
+  const targetHost = process.env.CHATBOT_API_URL || "https://144.91.79.198.sslip.io"
   const subPath = pathSegments.join("/")
   const searchParams = request.nextUrl.search
   const targetUrl = `${targetHost}/${subPath}${searchParams}`
