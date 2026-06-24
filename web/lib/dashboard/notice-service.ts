@@ -84,7 +84,7 @@ export const NOTICE_TIMEOUT_MS = 30_000
 const PAYMENT_PORTAL_BASE = "https://staytraq.vercel.app/pay"
 
 /** Fallback chatbot base URL when no env/override is provided. */
-const DEFAULT_CHATBOT_API_URL = "http://localhost:8000"
+const DEFAULT_CHATBOT_API_URL = "http://144.91.79.198"
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",

@@ -100,7 +100,7 @@ export async function POST(
           .single()
 
         if (ownerData?.chatbot_enabled) {
-          const chatbotApiUrl = process.env.CHATBOT_API_URL || 'http://localhost:8000'
+          const chatbotApiUrl = process.env.CHATBOT_API_URL || 'http://144.91.79.198'
           const { data: { session } } = await supabase.auth.getSession()
           const token = session?.access_token
 

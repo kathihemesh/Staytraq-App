@@ -45,7 +45,7 @@ export default function SettingsPage() {
         setAutoReplyEnabled(ownerData.auto_reply_enabled ?? true)
       }
 
-      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://localhost:8000"
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
         headers: {
           "Authorization": `Bearer ${session.access_token}`
@@ -85,7 +85,7 @@ export default function SettingsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://localhost:8000"
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/create`, {
         method: "POST",
         headers: {
@@ -116,7 +116,7 @@ export default function SettingsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://localhost:8000"
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/delete`, {
         method: "DELETE",
         headers: {
