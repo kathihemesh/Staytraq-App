@@ -140,6 +140,7 @@ function TenantsPageContent() {
   const [changeRoomTenantId, setChangeRoomTenantId] = useState<number | null>(null)
   const [changeRoomNewRoomId, setChangeRoomNewRoomId] = useState("")
   const [changeRoomFloor, setChangeRoomFloor] = useState("")
+  const [changeRoomSwapTenantId, setChangeRoomSwapTenantId] = useState<number | null>(null)
   const [isChangingRoom, setIsChangingRoom] = useState(false)
 
   // Derived Values
@@ -516,49 +517,75 @@ function TenantsPageContent() {
     }
     setIsChangingRoom(true)
     try {
-      // Fetch both rooms fresh
+      // Fetch target room details fresh to determine if it is full
       const { data: newRoomData, error: newRoomErr } = await supabase
         .from("rooms_table")
         .select("total_beds, occupied_beds")
         .eq("id", newRoomId)
         .single()
       if (newRoomErr) throw newRoomErr
+
       const available = (newRoomData.total_beds || 0) - (newRoomData.occupied_beds || 0)
-      if (available <= 0) {
-        toast({ title: "Room is Full", description: "Selected room has no available beds.", variant: "destructive" })
-        setIsChangingRoom(false)
-        return
+      const isRoomFull = available <= 0
+
+      if (isRoomFull) {
+        // Swap scenario
+        if (!changeRoomSwapTenantId) {
+          toast({ title: "Validation Error", description: "Please select a tenant to swap beds with.", variant: "destructive" })
+          setIsChangingRoom(false)
+          return
+        }
+
+        // We update Tenant A (changeRoomTenant.id) to target room, and Tenant B (changeRoomSwapTenantId) to old room.
+        // Step 1: Update Tenant B (swap tenant) to Tenant A's old room
+        const { error: swapErr } = await supabase
+          .from("tenants_table")
+          .update({ room_id: changeRoomTenant.roomId })
+          .eq("id", changeRoomSwapTenantId)
+        if (swapErr) throw swapErr
+
+        // Step 2: Update Tenant A (moving tenant) to target room
+        const { error: moveErr } = await supabase
+          .from("tenants_table")
+          .update({ room_id: newRoomId })
+          .eq("id", changeRoomTenant.id)
+        if (moveErr) throw moveErr
+
+        toast({ title: "Rooms Swapped", description: `Successfully swapped rooms between ${changeRoomTenant.name} and the selected tenant.` })
+      } else {
+        // Normal move scenario
+        const { data: oldRoomData } = await supabase
+          .from("rooms_table")
+          .select("occupied_beds")
+          .eq("id", changeRoomTenant.roomId)
+          .single()
+
+        // 1. Decrement old room
+        await supabase
+          .from("rooms_table")
+          .update({ occupied_beds: Math.max(0, (oldRoomData?.occupied_beds || 1) - 1) })
+          .eq("id", changeRoomTenant.roomId)
+
+        // 2. Increment new room
+        await supabase
+          .from("rooms_table")
+          .update({ occupied_beds: (newRoomData.occupied_beds || 0) + 1 })
+          .eq("id", newRoomId)
+
+        // 3. Update tenant's room_id
+        const { error: updateErr } = await supabase
+          .from("tenants_table")
+          .update({ room_id: newRoomId })
+          .eq("id", changeRoomTenant.id)
+        if (updateErr) throw updateErr
+
+        toast({ title: "Room Changed", description: `${changeRoomTenant.name} moved to new room successfully.` })
       }
 
-      const { data: oldRoomData } = await supabase
-        .from("rooms_table")
-        .select("occupied_beds")
-        .eq("id", changeRoomTenant.roomId)
-        .single()
-
-      // 1. Decrement old room
-      await supabase
-        .from("rooms_table")
-        .update({ occupied_beds: Math.max(0, (oldRoomData?.occupied_beds || 1) - 1) })
-        .eq("id", changeRoomTenant.roomId)
-
-      // 2. Increment new room
-      await supabase
-        .from("rooms_table")
-        .update({ occupied_beds: (newRoomData.occupied_beds || 0) + 1 })
-        .eq("id", newRoomId)
-
-      // 3. Update tenant's room_id
-      const { error: updateErr } = await supabase
-        .from("tenants_table")
-        .update({ room_id: newRoomId })
-        .eq("id", changeRoomTenant.id)
-      if (updateErr) throw updateErr
-
-      toast({ title: "Room Changed", description: `${changeRoomTenant.name} moved to new room successfully.` })
       setChangeRoomTenantId(null)
       setChangeRoomNewRoomId("")
       setChangeRoomFloor("")
+      setChangeRoomSwapTenantId(null)
       fetchData()
     } catch (error: any) {
       toast({ title: "Error", description: error.message, variant: "destructive" })
@@ -1545,7 +1572,17 @@ function TenantsPageContent() {
       {/* Edit Tenant is now handled inline in the sidebar above */}
 
       {/* 3. Change Room Dialog */}
-      <Dialog open={!!changeRoomTenantId} onOpenChange={(open) => { if (!open) { setChangeRoomTenantId(null); setChangeRoomNewRoomId(""); setChangeRoomFloor(""); } }}>
+      <Dialog 
+        open={!!changeRoomTenantId} 
+        onOpenChange={(open) => { 
+          if (!open) { 
+            setChangeRoomTenantId(null); 
+            setChangeRoomNewRoomId(""); 
+            setChangeRoomFloor(""); 
+            setChangeRoomSwapTenantId(null);
+          } 
+        }}
+      >
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1558,7 +1595,14 @@ function TenantsPageContent() {
           <div className="space-y-4 py-2">
             <div className="grid gap-2">
               <Label>Filter by Floor</Label>
-              <Select value={changeRoomFloor} onValueChange={(v) => { setChangeRoomFloor(v); setChangeRoomNewRoomId(""); }}>
+              <Select 
+                value={changeRoomFloor} 
+                onValueChange={(v) => { 
+                  setChangeRoomFloor(v); 
+                  setChangeRoomNewRoomId(""); 
+                  setChangeRoomSwapTenantId(null);
+                }}
+              >
                 <SelectTrigger><SelectValue placeholder="Select a floor" /></SelectTrigger>
                 <SelectContent>
                   {Array.from(new Set(rooms.map(r => r.floor_no))).sort().map(floor => (
@@ -1571,30 +1615,116 @@ function TenantsPageContent() {
             </div>
             <div className="grid gap-2">
               <Label>Select New Room <span className="text-destructive">*</span></Label>
-              <Select value={changeRoomNewRoomId} onValueChange={setChangeRoomNewRoomId}>
+              <Select 
+                value={changeRoomNewRoomId} 
+                onValueChange={(v) => {
+                  setChangeRoomNewRoomId(v);
+                  setChangeRoomSwapTenantId(null);
+                }}
+              >
                 <SelectTrigger><SelectValue placeholder="Select a room" /></SelectTrigger>
                 <SelectContent>
                   {rooms
                     .filter(r => {
-                      const hasAvailableBeds = ((r.total_beds || 0) - (r.occupied_beds || 0)) > 0
                       const matchesFloor = r.floor_no.toString() === changeRoomFloor
                       const notCurrentRoom = r.id !== changeRoomTenant?.roomId
-                      return hasAvailableBeds && matchesFloor && notCurrentRoom
+                      return matchesFloor && notCurrentRoom
                     })
-                    .map(room => (
-                      <SelectItem key={room.id} value={room.id.toString()}>
-                        {room.room_number} ({(room.total_beds || 0) - (room.occupied_beds || 0)} beds available)
-                      </SelectItem>
-                    ))
+                    .sort((a, b) => {
+                      const availA = (a.total_beds || 0) - (a.occupied_beds || 0)
+                      const availB = (b.total_beds || 0) - (b.occupied_beds || 0)
+                      return availB - availA
+                    })
+                    .map(room => {
+                      const available = (room.total_beds || 0) - (room.occupied_beds || 0)
+                      return (
+                        <SelectItem key={room.id} value={room.id.toString()}>
+                          {room.room_number} ({available > 0 ? `${available} beds available` : "FULL - Swap required"})
+                        </SelectItem>
+                      )
+                    })
                   }
                 </SelectContent>
               </Select>
             </div>
+
+            {(() => {
+              const selectedRoom = rooms.find(r => r.id === parseInt(changeRoomNewRoomId))
+              const isRoomFull = selectedRoom ? ((selectedRoom.total_beds || 0) - (selectedRoom.occupied_beds || 0)) <= 0 : false
+              if (!isRoomFull) return null
+              
+              const swapCandidates = tenants.filter(t => t.roomId === selectedRoom.id && t.status !== 'moved_out')
+              
+              return (
+                <div className="space-y-3 pt-4 border-t animate-in fade-in slide-in-from-top-2">
+                  <Label className="text-sm font-semibold text-destructive flex items-center gap-1.5">
+                    <AlertCircle className="h-4 w-4 animate-pulse" /> Swap Required (Room is Full)
+                  </Label>
+                  <div className="text-xs text-muted-foreground">
+                    Select an occupant from Room <strong>{selectedRoom?.room_number}</strong> to swap beds with:
+                  </div>
+                  {swapCandidates.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic">No active tenants found in this room to swap with.</p>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      {swapCandidates.map((candidate) => {
+                        const isSelected = changeRoomSwapTenantId === candidate.id
+                        return (
+                          <button
+                            key={candidate.id}
+                            type="button"
+                            onClick={() => setChangeRoomSwapTenantId(candidate.id)}
+                            className={cn(
+                              "flex items-center gap-3 p-3 rounded-lg border text-left transition-all hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              isSelected
+                                ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                : "border-border bg-card"
+                            )}
+                          >
+                            <Avatar className="h-8 w-8 border">
+                              <AvatarImage src={candidate.avatar} />
+                              <AvatarFallback className="bg-primary/10 text-primary font-medium text-xs">
+                                {initials(candidate.name)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-semibold text-foreground truncate">{candidate.name}</p>
+                              <p className="text-[10px] text-muted-foreground truncate">{candidate.phone}</p>
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setChangeRoomTenantId(null)}>Cancel</Button>
-            <Button onClick={handleChangeRoom} disabled={isChangingRoom || !changeRoomNewRoomId}>
-              {isChangingRoom ? "Moving..." : "Confirm Change"}
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setChangeRoomTenantId(null);
+                setChangeRoomNewRoomId("");
+                setChangeRoomFloor("");
+                setChangeRoomSwapTenantId(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleChangeRoom} 
+              disabled={
+                isChangingRoom || 
+                !changeRoomNewRoomId || 
+                (() => {
+                  const selectedRoom = rooms.find(r => r.id === parseInt(changeRoomNewRoomId))
+                  const isRoomFull = selectedRoom ? ((selectedRoom.total_beds || 0) - (selectedRoom.occupied_beds || 0)) <= 0 : false
+                  return isRoomFull && !changeRoomSwapTenantId
+                })()
+              }
+            >
+              {isChangingRoom ? "Processing..." : "Confirm Change"}
             </Button>
           </DialogFooter>
         </DialogContent>
