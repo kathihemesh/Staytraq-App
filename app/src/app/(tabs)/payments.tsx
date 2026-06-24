@@ -83,18 +83,7 @@ const getChatbotApiUrl = () => {
   if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
     return process.env.EXPO_PUBLIC_CHATBOT_API_URL
   }
-  const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
-  if (hostUri) {
-    const ip = hostUri.split(":")[0]
-    if (ip && ip !== "localhost" && ip !== "127.0.0.1") {
-      return `http://${ip}:8000`
-    }
-  }
-  const apiUrl = process.env.EXPO_PUBLIC_API_URL
-  if (apiUrl) {
-    return `${apiUrl.replace(/\/$/, "").replace(/:\d+$/, "")}:8000`
-  }
-  return "http://10.0.2.2:8000"
+  return "http://144.91.79.198"
 }
 import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"

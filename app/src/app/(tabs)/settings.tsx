@@ -62,7 +62,7 @@ export default function SettingsScreen() {
     if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
       return process.env.EXPO_PUBLIC_CHATBOT_API_URL
     }
-    return "http://localhost:8000"
+    return "http://144.91.79.198"
   }
 
   const detectMerchantUpi = (vpa: string): boolean => {
@@ -693,6 +693,7 @@ export default function SettingsScreen() {
             </View>
 
             <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
+              {/* Part A: Group Invite Link */}
               <View>
                 <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">WhatsApp Group Invite Link</Text>
                 <TextInput
@@ -709,6 +710,159 @@ export default function SettingsScreen() {
                 <Text className="text-[10px] text-muted mt-1.5 leading-4">
                   Group invite link shared with new occupants right after adding them.
                 </Text>
+              </View>
+
+              <View className="border-t border-border/60 dark:border-border-dark/60 my-2" />
+
+              {/* Part B: Chatbot Setup */}
+              <View>
+                <View className="flex-row items-center mb-3">
+                  <View className="mr-2">
+                    <Bot size={18} color={isDark ? "#0091ff" : "#0071df"} />
+                  </View>
+                  <Text className="text-base font-bold text-foreground dark:text-foreground-dark">WhatsApp Chatbot Assistant</Text>
+                </View>
+
+                {chatbotStatusLoading ? (
+                  <View className="py-6 items-center justify-center">
+                    <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
+                    <Text className="text-xs text-muted dark:text-muted-dark mt-2 font-semibold">Checking connection status...</Text>
+                  </View>
+                ) : (
+                  <View className="gap-4">
+                    {/* Status Banner */}
+                    <View className="bg-background dark:bg-background-dark/50 border border-border dark:border-border-dark p-4 rounded-2xl gap-3">
+                      <View className="flex-row justify-between items-center">
+                        <View className="flex-row items-center">
+                          <View className={`h-2.5 w-2.5 rounded-full mr-2 ${
+                            connectionStatus === "connected"
+                              ? "bg-success"
+                              : connectionStatus === "connecting"
+                              ? "bg-warning"
+                              : "bg-destructive"
+                          }`} />
+                          <Text className="text-sm font-bold text-foreground dark:text-foreground-dark capitalize">
+                            {connectionStatus === "not_created" ? "Not Configured" : connectionStatus}
+                          </Text>
+                        </View>
+                        {chatbotPhoneNumber && (
+                          <Text className="text-xs text-muted dark:text-muted-dark font-mono font-semibold">
+                            {chatbotPhoneNumber}
+                          </Text>
+                        )}
+                      </View>
+
+                      <Text className="text-xs text-muted leading-4">
+                        {connectionStatus === "connected"
+                          ? "Your chatbot assistant is online and automatically replying to tenant messages."
+                          : connectionStatus === "disconnected"
+                          ? "Instance created but not paired. Scan the QR code to pair WhatsApp."
+                          : connectionStatus === "connecting"
+                          ? "Connecting to Evolution API, please wait..."
+                          : "Connect your WhatsApp number to automate communications."}
+                      </Text>
+
+                      <View className="flex-row gap-2 mt-1">
+                        {connectionStatus === "not_created" && (
+                          <TouchableOpacity
+                            disabled={isProcessingChatbot}
+                            onPress={handleCreateChatbot}
+                            className="bg-primary px-4 py-2 rounded-xl flex-row items-center justify-center flex-1"
+                          >
+                            {isProcessingChatbot ? (
+                              <ActivityIndicator size="small" color="#ffffff" />
+                            ) : (
+                              <Text className="text-white text-xs font-bold">Create Chatbot</Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
+                        {instanceExists && (
+                          <TouchableOpacity
+                            disabled={isProcessingChatbot}
+                            onPress={handleDeleteChatbot}
+                            className="border border-destructive/20 bg-destructive/5 px-4 py-2 rounded-xl flex-row items-center justify-center flex-1"
+                          >
+                            {isProcessingChatbot ? (
+                              <ActivityIndicator size="small" color="#ef4444" />
+                            ) : (
+                              <Text className="text-destructive text-xs font-bold">Delete Chatbot</Text>
+                            )}
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+
+                    {/* QR Code Section with detailed 5 steps */}
+                    {connectionStatus === "disconnected" && qrCodeData && (
+                      <View className="border border-dashed border-border dark:border-border-dark p-5 rounded-2xl items-center gap-3">
+                        <View className="flex-row items-center">
+                          <View className="mr-1.5">
+                            <QrCode size={16} color={isDark ? "#0091ff" : "#0071df"} />
+                          </View>
+                          <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Scan to Pair WhatsApp</Text>
+                        </View>
+                        
+                        <View className="border border-border/40 p-2.5 bg-white rounded-xl shadow-inner">
+                          <Image 
+                            source={{ uri: qrCodeData }} 
+                            style={{ width: 180, height: 180 }}
+                            resizeMode="contain"
+                          />
+                        </View>
+
+                        <View className="w-full bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-border/50 gap-1.5 mt-2">
+                          <Text className="text-xs font-bold text-foreground dark:text-foreground-dark mb-1">How to connect your WhatsApp:</Text>
+                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                            1. Open <Text className="font-semibold text-foreground dark:text-foreground-dark">WhatsApp</Text> on your phone.
+                          </Text>
+                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                            2. Tap the <Text className="font-semibold text-foreground dark:text-foreground-dark">Menu</Text> icon (top right three dots on Android) or <Text className="font-semibold text-foreground dark:text-foreground-dark">Settings</Text> (bottom right gear on iOS).
+                          </Text>
+                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                            3. Select <Text className="font-semibold text-foreground dark:text-foreground-dark">Linked Devices</Text>.
+                          </Text>
+                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                            4. Tap the <Text className="font-semibold text-foreground dark:text-foreground-dark">Link a Device</Text> button.
+                          </Text>
+                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                            5. Point your phone's camera at this screen to scan the QR code and pair.
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+
+                    {/* Auto Reply Switch */}
+                    {connectionStatus === "connected" && (
+                      <View className="flex-row justify-between items-center py-1">
+                        <View className="flex-1 mr-4">
+                          <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">AI Auto-Replies</Text>
+                          <Text className="text-[10px] text-muted leading-4 mt-0.5">
+                            Automatically respond to occupant rent queries and complaints.
+                          </Text>
+                        </View>
+
+                        <TouchableOpacity
+                          onPress={() => handleToggleAutoReply(!autoReplyEnabled)}
+                          className={`w-12 h-7 rounded-full p-0.5 flex-row items-center ${
+                            autoReplyEnabled ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
+                          }`}
+                        >
+                          {autoReplyEnabled ? (
+                            <>
+                              <View className="flex-1" />
+                              <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
+                            </>
+                          ) : (
+                            <>
+                              <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
+                              <View className="flex-1" />
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             </View>
           </View>
@@ -734,144 +888,6 @@ export default function SettingsScreen() {
                 </>
               )}
             </TouchableOpacity>
-          </View>
-
-          {/* Section 4: Chatbot Assistant Settings */}
-          <View className="px-6 mt-6">
-            <View className="flex-row items-center mb-3">
-              <View className="mr-2">
-                <Bot size={18} color={isDark ? "#0091ff" : "#0071df"} />
-              </View>
-              <Text className="text-sm font-bold text-muted uppercase tracking-wider">WhatsApp Chatbot</Text>
-            </View>
-
-            <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
-              {chatbotStatusLoading ? (
-                <View className="py-6 items-center justify-center">
-                  <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
-                  <Text className="text-xs text-muted dark:text-muted-dark mt-2 font-semibold">Checking connection status...</Text>
-                </View>
-              ) : (
-                <View className="gap-4">
-                  {/* Status Banner */}
-                  <View className="bg-background dark:bg-background-dark/50 border border-border dark:border-border-dark p-4 rounded-2xl gap-3">
-                    <View className="flex-row justify-between items-center">
-                      <View className="flex-row items-center">
-                        <View className={`h-2.5 w-2.5 rounded-full mr-2 ${
-                          connectionStatus === "connected"
-                            ? "bg-success"
-                            : connectionStatus === "connecting"
-                            ? "bg-warning"
-                            : "bg-destructive"
-                        }`} />
-                        <Text className="text-sm font-bold text-foreground dark:text-foreground-dark capitalize">
-                          {connectionStatus === "not_created" ? "Not Configured" : connectionStatus}
-                        </Text>
-                      </View>
-                      {chatbotPhoneNumber && (
-                        <Text className="text-xs text-muted dark:text-muted-dark font-mono font-semibold">
-                          {chatbotPhoneNumber}
-                        </Text>
-                      )}
-                    </View>
-
-                    <Text className="text-xs text-muted leading-4">
-                      {connectionStatus === "connected"
-                        ? "Your chatbot assistant is online and automatically replying to tenant messages."
-                        : connectionStatus === "disconnected"
-                        ? "Instance created but not paired. Scan the QR code to pair WhatsApp."
-                        : connectionStatus === "connecting"
-                        ? "Connecting to Evolution API, please wait..."
-                        : "Connect your WhatsApp number to automate communications."}
-                    </Text>
-
-                    <View className="flex-row gap-2 mt-1">
-                      {connectionStatus === "not_created" && (
-                        <TouchableOpacity
-                          disabled={isProcessingChatbot}
-                          onPress={handleCreateChatbot}
-                          className="bg-primary px-4 py-2 rounded-xl flex-row items-center justify-center flex-1"
-                        >
-                          {isProcessingChatbot ? (
-                            <ActivityIndicator size="small" color="#ffffff" />
-                          ) : (
-                            <Text className="text-white text-xs font-bold">Create Chatbot</Text>
-                          )}
-                        </TouchableOpacity>
-                      )}
-                      {instanceExists && (
-                        <TouchableOpacity
-                          disabled={isProcessingChatbot}
-                          onPress={handleDeleteChatbot}
-                          className="border border-destructive/20 bg-destructive/5 px-4 py-2 rounded-xl flex-row items-center justify-center flex-1"
-                        >
-                          {isProcessingChatbot ? (
-                            <ActivityIndicator size="small" color="#ef4444" />
-                          ) : (
-                            <Text className="text-destructive text-xs font-bold">Delete Chatbot</Text>
-                          )}
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-
-                  {/* QR Code Section */}
-                  {connectionStatus === "disconnected" && qrCodeData && (
-                    <View className="border border-dashed border-border dark:border-border-dark p-5 rounded-2xl items-center gap-3">
-                      <View className="flex-row items-center">
-                        <View className="mr-1.5">
-                          <QrCode size={16} color={isDark ? "#0091ff" : "#0071df"} />
-                        </View>
-                        <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Scan to Pair WhatsApp</Text>
-                      </View>
-                      
-                      <View className="border border-border/40 p-2.5 bg-white rounded-xl shadow-inner">
-                        <Image 
-                          source={{ uri: qrCodeData }} 
-                          style={{ width: 180, height: 180 }}
-                          resizeMode="contain"
-                        />
-                      </View>
-
-                      <Text className="text-[10px] text-muted text-center leading-4">
-                        Open WhatsApp &gt; Settings &gt; Linked Devices &gt; Link a Device to scan.
-                      </Text>
-                    </View>
-                  )}
-
-                  {/* Auto Reply Switch */}
-                  {connectionStatus === "connected" && (
-                    <View className="flex-row justify-between items-center py-1">
-                      <View className="flex-1 mr-4">
-                        <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">AI Auto-Replies</Text>
-                        <Text className="text-[10px] text-muted leading-4 mt-0.5">
-                          Automatically respond to occupant rent queries and complaints.
-                        </Text>
-                      </View>
-
-                      <TouchableOpacity
-                        onPress={() => handleToggleAutoReply(!autoReplyEnabled)}
-                        className={`w-12 h-7 rounded-full p-0.5 flex-row items-center ${
-                          autoReplyEnabled ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
-                        }`}
-                      >
-                        {autoReplyEnabled ? (
-                          <>
-                            <View className="flex-1" />
-                            <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
-                          </>
-                        ) : (
-                          <>
-                            <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
-                            <View className="flex-1" />
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                </View>
-              )}
-            </View>
           </View>
 
           {/* Section 2: Preferences (Appearance) */}

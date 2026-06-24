@@ -419,7 +419,7 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
-        {/* WhatsApp Chatbot Settings */}
+        {/* WhatsApp Integration Settings */}
         <Card className="transition-shadow hover:shadow-md">
           <CardHeader className="pb-4">
             <div className="flex items-center gap-2">
@@ -427,9 +427,9 @@ export default function SettingsPage() {
                 <Bot className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <CardTitle className="text-lg">WhatsApp Chatbot Assistant</CardTitle>
+                <CardTitle className="text-lg">WhatsApp Integration</CardTitle>
                 <CardDescription className="mt-0.5">
-                  Automate tenant replies and complaints via WhatsApp integration
+                  Automate tenant replies and manage chatbot settings via WhatsApp integration
                 </CardDescription>
               </div>
             </div>
@@ -518,13 +518,15 @@ export default function SettingsPage() {
                         className="h-48 w-48 object-contain"
                       />
                     </div>
-                    <div className="max-w-xs space-y-1">
-                      <p className="text-xs font-semibold">Instructions:</p>
-                      <p className="text-[11px] text-muted-foreground leading-normal">
-                        1. Open WhatsApp on your mobile phone.<br />
-                        2. Tap Menu or Settings &gt; Linked Devices.<br />
-                        3. Tap Link a Device and point your phone to this screen.
-                      </p>
+                    <div className="max-w-md space-y-2 text-left mt-2">
+                      <p className="text-xs font-bold text-foreground">How to connect your WhatsApp:</p>
+                      <ol className="list-decimal list-inside text-xs text-muted-foreground space-y-1.5 leading-normal">
+                        <li>Open <span className="font-semibold text-foreground">WhatsApp</span> on your mobile phone.</li>
+                        <li>Tap the <span className="font-semibold text-foreground">Menu</span> icon (three dots on Android) or <span className="font-semibold text-foreground">Settings</span> (gear icon on iOS).</li>
+                        <li>Select <span className="font-semibold text-foreground">Linked Devices</span> from the options.</li>
+                        <li>Tap the <span className="font-semibold text-foreground">Link a Device</span> button (confirm biometric access if prompted).</li>
+                        <li>Point your phone's camera at this screen to scan the QR code and pair.</li>
+                      </ol>
                     </div>
                   </div>
                 )}

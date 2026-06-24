@@ -347,11 +347,13 @@ async def get_chatbot_status(authorization: str = Header(None)):
     phone_number = evo_status.get("number")
     
     # Map Evolution connectionStatus: "open" -> "connected"
-    if exists and connection_status == "open":
-        connection_status = "connected"
-    elif exists and connection_status == "close":
-        connection_status = "disconnected"
-    elif not exists:
+    if exists:
+        if connection_status == "open":
+            connection_status = "connected"
+        else:
+            # "close", "connecting", or other non-open states are treated as disconnected (needs pairing)
+            connection_status = "disconnected"
+    else:
         connection_status = "not_created"
 
     # Synchronize chatbot_enabled flag in DB based on connection status
@@ -367,7 +369,7 @@ async def get_chatbot_status(authorization: str = Header(None)):
         # Retrieve QR code base64 to show to the user
         qr_res = await evolution_client.connect_instance(owner_email)
         if qr_res:
-            qr_code = qr_res.get("qrcode", {}).get("base64")
+            qr_code = qr_res.get("base64") or qr_res.get("qrcode", {}).get("base64")
             
     return {
         "status": "success",
@@ -428,7 +430,7 @@ async def create_chatbot_instance(request: Request, authorization: str = Header(
     qr_res = await evolution_client.connect_instance(owner_email)
     qr_code = None
     if qr_res:
-        qr_code = qr_res.get("qrcode", {}).get("base64")
+        qr_code = qr_res.get("base64") or qr_res.get("qrcode", {}).get("base64")
         
     return {
         "status": "success",
