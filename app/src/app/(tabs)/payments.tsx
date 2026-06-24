@@ -83,7 +83,7 @@ const getChatbotApiUrl = () => {
   if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
     return process.env.EXPO_PUBLIC_CHATBOT_API_URL
   }
-  return "http://144.91.79.198"
+  return "https://staytraq.vercel.app/api/chatbot-proxy"
 }
 import useTheme from "@/hooks/use-theme"
 import { KeyboardAwareScrollView, useKeyboardAwareInput, useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"
