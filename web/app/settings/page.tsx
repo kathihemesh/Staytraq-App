@@ -9,9 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { Building2, Bell, CreditCard, User, Shield, Save, Loader2, Bot, Smartphone, Trash2, Wifi, WifiOff, QrCode, AlertCircle } from "lucide-react"
+import { Building2, Bell, CreditCard, User, Shield, Save, Loader2, Bot, Smartphone, Trash2, Wifi, WifiOff, QrCode, AlertCircle, RefreshCw } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 export default function SettingsPage() {
   const [isLoading, setIsLoading] = useState(true)
@@ -24,9 +25,10 @@ export default function SettingsPage() {
   const [instanceExists, setInstanceExists] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState("not_created")
   const [chatbotPhoneNumber, setChatbotPhoneNumber] = useState<string | null>(null)
-  const [qrCodeData, setQrCodeData] = useState<string | null>(null)
-  const [autoReplyEnabled, setAutoReplyEnabled] = useState(true)
   const [isProcessingChatbot, setIsProcessingChatbot] = useState(false)
+  const [pairingPhoneNumber, setPairingPhoneNumber] = useState("")
+  const [pairingCode, setPairingCode] = useState("")
+  const [isPairingLoading, setIsPairingLoading] = useState(false)
 
   const fetchChatbotStatus = useCallback(async (silent = false) => {
     try {
@@ -34,16 +36,7 @@ export default function SettingsPage() {
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) return
 
-      // Load pg_owners data for auto_reply_enabled
-      const { data: ownerData } = await supabase
-        .from("pg_owners")
-        .select("auto_reply_enabled")
-        .eq("id", session.user.id)
-        .single()
 
-      if (ownerData) {
-        setAutoReplyEnabled(ownerData.auto_reply_enabled ?? true)
-      }
 
       const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
       const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
@@ -56,7 +49,9 @@ export default function SettingsPage() {
         setInstanceExists(statusData.exists)
         setConnectionStatus(statusData.connectionStatus)
         setChatbotPhoneNumber(statusData.phoneNumber)
-        setQrCodeData(statusData.qrCode)
+        if (statusData.connectionStatus === "connected") {
+          setPairingCode("")
+        }
       }
     } catch (err) {
       console.error("Failed to load chatbot status:", err)
@@ -79,6 +74,42 @@ export default function SettingsPage() {
     }
   }, [connectionStatus, instanceExists, fetchChatbotStatus])
 
+  const handleGeneratePairingCode = async () => {
+    if (!pairingPhoneNumber) {
+      toast.error("Please enter your phone number first.")
+      return
+    }
+
+    try {
+      setIsPairingLoading(true)
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+
+      const chatbotApiUrl = process.env.NEXT_PUBLIC_CHATBOT_API_URL || "http://144.91.79.198"
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/pairing-code`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ phoneNumber: pairingPhoneNumber })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setPairingCode(data.code)
+        toast.success("Pairing code generated successfully.")
+      } else {
+        const err = await res.json()
+        toast.error(err.detail || "Failed to generate pairing code.")
+      }
+    } catch (err) {
+      console.error("Failed to generate pairing code:", err)
+      toast.error("Failed to generate pairing code.")
+    } finally {
+      setIsPairingLoading(false)
+    }
+  }
+
   const handleCreateChatbot = async () => {
     try {
       setIsProcessingChatbot(true)
@@ -93,11 +124,11 @@ export default function SettingsPage() {
         }
       })
       if (res.ok) {
-        const data = await res.json()
         setInstanceExists(true)
         setConnectionStatus("disconnected")
-        setQrCodeData(data.qrCode)
-        toast.success("Instance created successfully. Scan the QR code to pair.")
+        setPairingCode("")
+        setPairingPhoneNumber("")
+        toast.success("Instance created successfully. Enter your phone number below to connect.")
       } else {
         const err = await res.json()
         toast.error(err.detail || "Failed to create chatbot instance")
@@ -127,7 +158,6 @@ export default function SettingsPage() {
         setInstanceExists(false)
         setConnectionStatus("not_created")
         setChatbotPhoneNumber(null)
-        setQrCodeData(null)
         toast.success("Chatbot instance deleted successfully.")
       } else {
         toast.error("Failed to delete chatbot instance.")
@@ -140,26 +170,6 @@ export default function SettingsPage() {
     }
   }
 
-  const handleToggleAutoReply = async (checked: boolean) => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      setAutoReplyEnabled(checked)
-
-      const { error } = await supabase
-        .from("pg_owners")
-        .update({ auto_reply_enabled: checked })
-        .eq("id", user.id)
-
-      if (error) throw error
-      toast.success(checked ? "AI Auto-replies enabled" : "AI Auto-replies disabled")
-    } catch (err) {
-      console.error("Error toggling auto reply:", err)
-      toast.error("Failed to save auto-reply settings")
-      setAutoReplyEnabled(!checked) // rollback
-    }
-  }
 
   // Payment Settings State
   const [rentDueDay, setRentDueDay] = useState(1)
@@ -468,7 +478,7 @@ export default function SettingsPage() {
                       {connectionStatus === "connected"
                         ? "Your chatbot assistant is online and responding to messages."
                         : connectionStatus === "disconnected"
-                        ? "Instance exists but is not connected. Scan the QR code to pair WhatsApp."
+                        ? "Instance exists but is not connected. Link with your phone number below to pair."
                         : connectionStatus === "connecting"
                         ? "Initializing connection. Please wait..."
                         : "Create an instance to start using the WhatsApp chatbot."}
@@ -503,52 +513,92 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {/* 2. QR Code Pairing Section (If Disconnected) */}
-                {connectionStatus === "disconnected" && qrCodeData && (
-                  <div className="flex flex-col items-center justify-center gap-4 rounded-xl border border-dashed p-6 text-center">
+                {/* 2. Pairing Code Section (If Disconnected) */}
+                {connectionStatus === "disconnected" && (
+                  <div className="flex flex-col gap-5 rounded-xl border border-dashed p-6">
                     <div className="flex items-center gap-2">
-                      <QrCode className="h-5 w-5 text-primary" />
-                      <span className="text-sm font-bold">Scan to Pair WhatsApp</span>
+                      <Smartphone className="h-5 w-5 text-primary" />
+                      <span className="text-sm font-bold">Link with Phone Number instead of QR</span>
                     </div>
-                    <div className="relative rounded-lg border bg-white p-3 shadow-inner">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img 
-                        src={qrCodeData} 
-                        alt="WhatsApp Pairing QR Code" 
-                        className="h-48 w-48 object-contain"
-                      />
-                    </div>
-                    <div className="max-w-md space-y-2 text-left mt-2">
-                      <p className="text-xs font-bold text-foreground">How to connect your WhatsApp:</p>
-                      <ol className="list-decimal list-inside text-xs text-muted-foreground space-y-1.5 leading-normal">
-                        <li>Open <span className="font-semibold text-foreground">WhatsApp</span> on your mobile phone.</li>
-                        <li>Tap the <span className="font-semibold text-foreground">Menu</span> icon (three dots on Android) or <span className="font-semibold text-foreground">Settings</span> (gear icon on iOS).</li>
-                        <li>Select <span className="font-semibold text-foreground">Linked Devices</span> from the options.</li>
-                        <li>Tap the <span className="font-semibold text-foreground">Link a Device</span> button (confirm biometric access if prompted).</li>
-                        <li>Point your phone's camera at this screen to scan the QR code and pair.</li>
-                      </ol>
-                    </div>
+
+                    {!pairingCode ? (
+                      <div className="flex flex-col gap-3 max-w-md">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="pairingPhone" className="text-xs font-semibold">
+                            Phone Number (with Country Code, e.g. 919876543210)
+                          </Label>
+                          <div className="flex gap-2">
+                            <Input
+                              id="pairingPhone"
+                              placeholder="e.g. 919876543210"
+                              value={pairingPhoneNumber}
+                              onChange={(e) => setPairingPhoneNumber(e.target.value)}
+                              className="bg-muted/50 focus:bg-background"
+                            />
+                            <Button 
+                              type="button" 
+                              disabled={isPairingLoading}
+                              onClick={handleGeneratePairingCode}
+                            >
+                              {isPairingLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Get Code
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-normal">
+                          Enter your WhatsApp phone number with country code (without spaces or +). 
+                          We will request an 8-character pairing code from the WhatsApp server.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-4 text-center items-center max-w-md mx-auto">
+                        <div className="space-y-1">
+                          <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Your Pairing Code</p>
+                          <div className="flex items-center justify-center gap-3">
+                            <span className="text-2xl font-extrabold font-mono bg-muted py-2 px-6 rounded-lg tracking-widest border border-primary/20 text-primary shadow-sm select-all">
+                              {pairingCode}
+                            </span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                navigator.clipboard.writeText(pairingCode)
+                                toast.success("Pairing code copied to clipboard!")
+                              }}
+                            >
+                              Copy
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="w-full text-left space-y-2 border-t pt-4">
+                          <p className="text-xs font-bold text-foreground">How to connect your WhatsApp:</p>
+                          <ol className="list-decimal list-inside text-xs text-muted-foreground space-y-1.5 leading-normal">
+                            <li>Open <span className="font-semibold text-foreground">WhatsApp</span> on your mobile phone.</li>
+                            <li>Tap the <span className="font-semibold text-foreground">Menu</span> icon (three dots on Android) or <span className="font-semibold text-foreground">Settings</span> (gear icon on iOS).</li>
+                            <li>Select <span className="font-semibold text-foreground">Linked Devices</span> from the options.</li>
+                            <li>Tap the blue <span className="font-semibold text-foreground">Link a Device</span> button (authenticate if prompted).</li>
+                            <li>Tap <span className="font-semibold text-foreground text-primary">Link with phone number instead</span> at the bottom of the camera scan screen.</li>
+                            <li>Enter the 8-character code shown above.</li>
+                          </ol>
+                        </div>
+
+                        <Button 
+                          type="button" 
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => setPairingCode("")}
+                          className="text-muted-foreground text-xs hover:text-foreground mt-1"
+                        >
+                          Use another phone number
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 )}
 
-                {/* 3. Toggles Section (If Connected) */}
-                {connectionStatus === "connected" && (
-                  <>
-                    <Separator />
-                    <div className="flex items-center justify-between py-2">
-                      <div className="space-y-0.5">
-                        <Label className="text-sm font-bold">AI Auto-Replies</Label>
-                        <p className="text-xs text-muted-foreground leading-normal max-w-lg">
-                          Let the AI Chatbot reply automatically to tenant queries, payment checks, and customer complaints.
-                        </p>
-                      </div>
-                      <Switch
-                        checked={autoReplyEnabled}
-                        onCheckedChange={handleToggleAutoReply}
-                      />
-                    </div>
-                  </>
-                )}
+
               </div>
             )}
           </CardContent>

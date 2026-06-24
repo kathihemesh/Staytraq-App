@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, Request, Header, HTTPException, status
+from pydantic import BaseModel
 from app.config import settings
 from app.services.chatbot import chatbot_service
 from app.services.evolution import evolution_client
@@ -301,8 +302,6 @@ async def send_payment_rejection(payload: PaymentRejectionRequest, authorization
 
 
 # ==========================================
-# Chatbot Management Endpoints
-# ==========================================
 
 @router.get("/chatbot/status")
 async def get_chatbot_status(authorization: str = Header(None)):
@@ -335,7 +334,6 @@ async def get_chatbot_status(authorization: str = Header(None)):
             "exists": False,
             "connectionStatus": "not_created",
             "phoneNumber": None,
-            "qrCode": None,
             "chatbotEnabled": False,
             "autoReplyEnabled": False
         }
@@ -363,23 +361,16 @@ async def get_chatbot_status(authorization: str = Header(None)):
             owner_id=owner["id"],
             chatbot_enabled=is_connected
         )
-    
-    qr_code = None
-    if exists and connection_status == "disconnected":
-        # Retrieve QR code base64 to show to the user
-        qr_res = await evolution_client.connect_instance(owner_email)
-        if qr_res:
-            qr_code = qr_res.get("base64") or qr_res.get("qrcode", {}).get("base64")
             
     return {
         "status": "success",
         "exists": exists,
         "connectionStatus": connection_status,
         "phoneNumber": phone_number,
-        "qrCode": qr_code,
         "chatbotEnabled": is_connected,
         "autoReplyEnabled": owner.get("auto_reply_enabled", True)
     }
+
 
 @router.post("/chatbot/create")
 async def create_chatbot_instance(request: Request, authorization: str = Header(None)):
@@ -425,17 +416,85 @@ async def create_chatbot_instance(request: Request, authorization: str = Header(
         # Register webhook
         webhook_url = settings.CHATBOT_WEBHOOK_URL or f"{str(request.base_url).rstrip('/')}/api/v1/whatsapp"
         await evolution_client.register_webhook(owner_email, webhook_url)
-
-    # Fetch QR code
-    qr_res = await evolution_client.connect_instance(owner_email)
-    qr_code = None
-    if qr_res:
-        qr_code = qr_res.get("base64") or qr_res.get("qrcode", {}).get("base64")
         
     return {
         "status": "success",
-        "connectionStatus": "disconnected",
-        "qrCode": qr_code
+        "connectionStatus": "disconnected"
+    }
+
+
+class PairingCodeRequest(BaseModel):
+    phoneNumber: str
+
+
+@router.post("/chatbot/pairing-code")
+async def generate_pairing_code(payload: PairingCodeRequest, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid Authorization header"
+        )
+    
+    token = authorization.split(" ")[1]
+    user_data = await supabase_service.verify_token(token)
+    if not user_data:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid Supabase JWT token"
+        )
+        
+    owner_email = user_data.get("email")
+    if not owner_email:
+        raise HTTPException(
+            status_code=400,
+            detail="User email not found in auth token"
+        )
+        
+    # Clean the phone number (digits only)
+    clean_phone = "".join(filter(str.isdigit, payload.phoneNumber))
+    if not clean_phone:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid phone number provided."
+        )
+
+    # The Evolution API only returns a pairingCode when the instance is freshly
+    # created (in 'close' state). If the instance is in 'connecting' state,
+    # it returns pairingCode: null. So we must delete + recreate first.
+    import asyncio
+    await evolution_client.delete_instance(owner_email)
+    await asyncio.sleep(2)
+    create_res = await evolution_client.create_instance(owner_email)
+    if not create_res:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to recreate chatbot instance before pairing."
+        )
+    await asyncio.sleep(1)
+
+    # Register webhook again after recreation
+    webhook_url = f"{settings.CHATBOT_WEBHOOK_URL}"
+    await evolution_client.register_webhook(owner_email, webhook_url)
+
+    # Call Evolution API to generate pairing code
+    code_res = await evolution_client.get_pairing_code(owner_email, clean_phone)
+    if not code_res:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate pairing code from Evolution API."
+        )
+
+    # Evolution API v2 returns 'pairingCode' as the 8-char code
+    pairing_code = code_res.get("pairingCode") or code_res.get("code")
+    if not pairing_code:
+        raise HTTPException(
+            status_code=500,
+            detail="No pairing code returned from Evolution API."
+        )
+
+    return {
+        "status": "success",
+        "code": pairing_code
     }
 
 @router.delete("/chatbot/delete")

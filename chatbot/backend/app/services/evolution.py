@@ -113,12 +113,10 @@ class EvolutionClient:
                 if response.status_code == 200:
                     instances = response.json()
                     for inst in instances:
-                        inst_details = inst.get("instance", {})
-                        name = inst_details.get("instanceName")
+                        name = inst.get("name") or inst.get("instance", {}).get("instanceName")
                         if name == instance_name:
-                            status = inst_details.get("connectionStatus") or inst_details.get("status")
-                            profile = inst.get("profile") or {}
-                            number = profile.get("number") or inst.get("owner")
+                            status = inst.get("connectionStatus") or inst.get("instance", {}).get("connectionStatus") or inst.get("status")
+                            number = inst.get("ownerJid") or inst.get("number") or inst.get("profile", {}).get("number")
                             if number and "@" in number:
                                 number = number.split("@")[0]
                             return {
@@ -131,7 +129,8 @@ class EvolutionClient:
                     state_response = await client.get(state_url, headers=self.headers, timeout=10.0)
                     if state_response.status_code == 200:
                         data = state_response.json()
-                        status = data.get("instance", {}).get("status") or data.get("connectionStatus")
+                        inst_info = data.get("instance", {})
+                        status = inst_info.get("state") or inst_info.get("status") or data.get("connectionStatus") or data.get("status")
                         return {
                             "exists": True,
                             "status": status,
@@ -147,7 +146,8 @@ class EvolutionClient:
                     state_response = await client.get(state_url, headers=self.headers, timeout=10.0)
                     if state_response.status_code == 200:
                         data = state_response.json()
-                        status = data.get("instance", {}).get("status") or data.get("connectionStatus")
+                        inst_info = data.get("instance", {})
+                        status = inst_info.get("state") or inst_info.get("status") or data.get("connectionStatus") or data.get("status")
                         return {
                             "exists": True,
                             "status": status,
@@ -166,7 +166,7 @@ class EvolutionClient:
         payload = {
             "instanceName": instance_name,
             "token": settings.EVOLUTION_API_KEY,
-            "qrcode": True,
+            "qrcode": False,
             "integration": "WHATSAPP-BAILEYS"
         }
         async with httpx.AsyncClient() as client:
@@ -192,6 +192,26 @@ class EvolutionClient:
                 return None
             except Exception as e:
                 logger.error(f"Error connecting instance: {e}")
+                return None
+
+    async def get_pairing_code(self, instance_name: str, phone_number: str) -> dict:
+        """Generates a WhatsApp pairing code for an instance by phone number.
+        Uses GET /instance/connect/{instance}?number={phone} as per Evolution API v2.
+        The instance must be in 'close' state (freshly created) for pairing code to work.
+        """
+        url = f"{self.base_url}/instance/connect/{instance_name}"
+        params = {"number": phone_number}
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, params=params, headers=self.headers, timeout=15.0)
+                if response.status_code in [200, 201]:
+                    data = response.json()
+                    logger.info(f"Pairing code response keys: {list(data.keys())}")
+                    return data
+                logger.error(f"Failed to generate pairing code: {response.status_code} - {response.text}")
+                return None
+            except Exception as e:
+                logger.error(f"Error generating pairing code: {e}")
                 return None
 
     async def delete_instance(self, instance_name: str) -> bool:

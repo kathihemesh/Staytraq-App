@@ -210,7 +210,7 @@ export const COLLECTED_STATUSES = ["paid", "success", "completed"] as const
 export const ACTIVE_COMPLAINT_STATUS = "Under Working"
 
 /** Tenant statuses that surface as move-out tasks. */
-export const MOVE_OUT_STATUSES = ["notice_period", "move_out"] as const
+export const MOVE_OUT_STATUSES = ["notice_period"] as const
 
 /** Tenant status that surfaces as a check-in task. */
 export const CHECK_IN_STATUS = "pending_move_in"

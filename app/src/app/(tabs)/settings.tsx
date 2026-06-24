@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from "react"
-import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Platform, LayoutAnimation, UIManager, Image } from "react-native"
+import { View, Text, TouchableOpacity, TextInput, ActivityIndicator, Platform, LayoutAnimation, UIManager, Clipboard, Alert } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
 import useTheme from "@/hooks/use-theme"
-import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, AlertTriangle, RefreshCw, CreditCard, Link, Bot, Smartphone, Trash2, QrCode } from "lucide-react-native"
+import { Settings, User, LogOut, Sun, Moon, Check, Save, Calendar, AlertTriangle, RefreshCw, CreditCard, Link, Bot, Smartphone, Trash2, Copy } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import Animated, { FadeIn } from "react-native-reanimated"
 import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/keyboard-aware-scroll-view"
@@ -28,6 +28,7 @@ export default function SettingsScreen() {
   const upiNameInput = useKeyboardAwareInput()
   const whatsappInviteLinkInput = useKeyboardAwareInput()
   const paymentInstructionsInput = useKeyboardAwareInput()
+  const pairingPhoneInput = useKeyboardAwareInput()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -51,8 +52,9 @@ export default function SettingsScreen() {
   const [instanceExists, setInstanceExists] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState("not_created")
   const [chatbotPhoneNumber, setChatbotPhoneNumber] = useState<string | null>(null)
-  const [qrCodeData, setQrCodeData] = useState<string | null>(null)
-  const [autoReplyEnabled, setAutoReplyEnabled] = useState(true)
+  const [pairingPhoneNumber, setPairingPhoneNumber] = useState("")
+  const [pairingCode, setPairingCode] = useState("")
+  const [isPairingLoading, setIsPairingLoading] = useState(false)
   const [chatbotEnabled, setChatbotEnabled] = useState(false)
   const [isProcessingChatbot, setIsProcessingChatbot] = useState(false)
   
@@ -109,15 +111,14 @@ export default function SettingsScreen() {
       const session = sessionRes.data.session
       if (!session) return
 
-      // Load pg_owners data for auto_reply_enabled
+      // Load pg_owners data for chatbot_enabled
       const { data: ownerData } = await supabase
         .from("pg_owners")
-        .select("auto_reply_enabled, chatbot_enabled")
+        .select("chatbot_enabled")
         .eq("id", session.user.id)
         .maybeSingle()
 
       if (ownerData) {
-        setAutoReplyEnabled(ownerData.auto_reply_enabled ?? true)
         setChatbotEnabled(ownerData.chatbot_enabled ?? false)
       }
 
@@ -132,7 +133,9 @@ export default function SettingsScreen() {
         setInstanceExists(statusData.exists)
         setConnectionStatus(statusData.connectionStatus)
         setChatbotPhoneNumber(statusData.phoneNumber)
-        setQrCodeData(statusData.qrCode)
+        if (statusData.connectionStatus === "connected") {
+          setPairingCode("")
+        }
       }
     } catch (err) {
       console.error("Failed to load chatbot status on mobile settings:", err)
@@ -173,10 +176,10 @@ export default function SettingsScreen() {
         }
       })
       if (res.ok) {
-        const data = await res.json()
         setInstanceExists(true)
         setConnectionStatus("disconnected")
-        setQrCodeData(data.qrCode)
+        setPairingCode("")
+        setPairingPhoneNumber("")
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       } else {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
@@ -188,6 +191,49 @@ export default function SettingsScreen() {
       setError("Error calling chatbot creation API.")
     } finally {
       setIsProcessingChatbot(false)
+    }
+  }
+
+  const handleGeneratePairingCode = async () => {
+    if (!pairingPhoneNumber) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      setError("Please enter your phone number first.")
+      return
+    }
+
+    try {
+      setIsPairingLoading(true)
+      setError(null)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+
+      const sessionRes = await supabase.auth.getSession()
+      const session = sessionRes.data.session
+      if (!session) return
+
+      const chatbotApiUrl = getChatbotApiUrl()
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/pairing-code`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${session.access_token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ phoneNumber: pairingPhoneNumber })
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setPairingCode(data.code)
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      } else {
+        const err = await res.json()
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+        setError(err.detail || "Failed to generate pairing code.")
+      }
+    } catch (err) {
+      console.error("Failed to generate pairing code on mobile:", err)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
+      setError("Failed to generate pairing code.")
+    } finally {
+      setIsPairingLoading(false)
     }
   }
 
@@ -212,7 +258,8 @@ export default function SettingsScreen() {
         setInstanceExists(false)
         setConnectionStatus("not_created")
         setChatbotPhoneNumber(null)
-        setQrCodeData(null)
+        setPairingCode("")
+        setPairingPhoneNumber("")
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       } else {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
@@ -227,26 +274,6 @@ export default function SettingsScreen() {
     }
   }
 
-  const handleToggleAutoReply = async (value: boolean) => {
-    try {
-      if (!user?.id) return
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-      setError(null)
-      
-      setAutoReplyEnabled(value)
-
-      const { error } = await supabase
-        .from("pg_owners")
-        .update({ auto_reply_enabled: value })
-        .eq("id", user.id)
-
-      if (error) throw error
-    } catch (err) {
-      console.error("Error toggling auto-reply:", err)
-      setAutoReplyEnabled(!value) // rollback
-      setError("Failed to update auto-reply settings.")
-    }
-  }
 
   // Fetch settings from database
   const fetchSettings = useCallback(async (silent = false) => {
@@ -266,7 +293,7 @@ export default function SettingsScreen() {
           .maybeSingle(),
         supabase
           .from("pg_owners")
-          .select("auto_reply_enabled, chatbot_enabled")
+          .select("chatbot_enabled")
           .eq("id", user.id)
           .maybeSingle()
       ])
@@ -278,7 +305,6 @@ export default function SettingsScreen() {
       const ownerData = ownerRes.data
 
       if (ownerData) {
-        setAutoReplyEnabled(ownerData.auto_reply_enabled ?? true)
         setChatbotEnabled(ownerData.chatbot_enabled ?? false)
       }
 
@@ -756,7 +782,7 @@ export default function SettingsScreen() {
                         {connectionStatus === "connected"
                           ? "Your chatbot assistant is online and automatically replying to tenant messages."
                           : connectionStatus === "disconnected"
-                          ? "Instance created but not paired. Scan the QR code to pair WhatsApp."
+                          ? "Instance exists but is not connected. Link with your phone number below to pair."
                           : connectionStatus === "connecting"
                           ? "Connecting to Evolution API, please wait..."
                           : "Connect your WhatsApp number to automate communications."}
@@ -792,75 +818,107 @@ export default function SettingsScreen() {
                       </View>
                     </View>
 
-                    {/* QR Code Section with detailed 5 steps */}
-                    {connectionStatus === "disconnected" && qrCodeData && (
-                      <View className="border border-dashed border-border dark:border-border-dark p-5 rounded-2xl items-center gap-3">
+                    {/* Phone Number Pairing Section */}
+                    {connectionStatus === "disconnected" && (
+                      <View className="border border-dashed border-border dark:border-border-dark p-5 rounded-2xl gap-4">
                         <View className="flex-row items-center">
                           <View className="mr-1.5">
-                            <QrCode size={16} color={isDark ? "#0091ff" : "#0071df"} />
+                            <Smartphone size={16} color={isDark ? "#0091ff" : "#0071df"} />
                           </View>
-                          <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Scan to Pair WhatsApp</Text>
-                        </View>
-                        
-                        <View className="border border-border/40 p-2.5 bg-white rounded-xl shadow-inner">
-                          <Image 
-                            source={{ uri: qrCodeData }} 
-                            style={{ width: 180, height: 180 }}
-                            resizeMode="contain"
-                          />
+                          <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Link with Phone Number instead of QR</Text>
                         </View>
 
-                        <View className="w-full bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-border/50 gap-1.5 mt-2">
-                          <Text className="text-xs font-bold text-foreground dark:text-foreground-dark mb-1">How to connect your WhatsApp:</Text>
-                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
-                            1. Open <Text className="font-semibold text-foreground dark:text-foreground-dark">WhatsApp</Text> on your phone.
-                          </Text>
-                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
-                            2. Tap the <Text className="font-semibold text-foreground dark:text-foreground-dark">Menu</Text> icon (top right three dots on Android) or <Text className="font-semibold text-foreground dark:text-foreground-dark">Settings</Text> (bottom right gear on iOS).
-                          </Text>
-                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
-                            3. Select <Text className="font-semibold text-foreground dark:text-foreground-dark">Linked Devices</Text>.
-                          </Text>
-                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
-                            4. Tap the <Text className="font-semibold text-foreground dark:text-foreground-dark">Link a Device</Text> button.
-                          </Text>
-                          <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
-                            5. Point your phone's camera at this screen to scan the QR code and pair.
-                          </Text>
-                        </View>
+                        {!pairingCode ? (
+                          <View className="gap-3">
+                            <View className="gap-1.5">
+                              <Text className="text-[11px] font-bold text-foreground dark:text-foreground-dark">
+                                Phone Number (with Country Code, e.g. 919876543210)
+                              </Text>
+                              <View className="flex-row gap-2">
+                                <TextInput
+                                  ref={pairingPhoneInput.ref}
+                                  onFocus={pairingPhoneInput.onFocus}
+                                  value={pairingPhoneNumber}
+                                  onChangeText={setPairingPhoneNumber}
+                                  placeholder="e.g. 919876543210"
+                                  placeholderTextColor="#9ca3af"
+                                  keyboardType="phone-pad"
+                                  autoCapitalize="none"
+                                  className="flex-1 border border-border dark:border-border-dark rounded-xl px-3.5 py-2 text-sm text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold h-10"
+                                />
+                                <TouchableOpacity
+                                  disabled={isPairingLoading}
+                                  onPress={handleGeneratePairingCode}
+                                  className="bg-primary px-4 rounded-xl flex-row items-center justify-center h-10"
+                                >
+                                  {isPairingLoading ? (
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                  ) : (
+                                    <Text className="text-white text-xs font-bold">Get Code</Text>
+                                  )}
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                            <Text className="text-[10px] text-muted leading-4">
+                              Enter your WhatsApp phone number with country code (without spaces or +). We will request an 8-character pairing code from the WhatsApp server.
+                            </Text>
+                          </View>
+                        ) : (
+                          <View className="items-center gap-4">
+                            <View className="items-center gap-1.5 w-full">
+                              <Text className="text-[10px] font-bold text-muted dark:text-muted-dark uppercase tracking-wider text-center w-full">Your Pairing Code</Text>
+                              <View className="flex-row items-center justify-center gap-3 w-full">
+                                <Text className="text-xl font-extrabold font-mono bg-muted dark:bg-muted-dark py-1.5 px-4 rounded-lg tracking-widest border border-primary/20 text-primary dark:text-primary-dark shadow-sm">
+                                  {pairingCode}
+                                </Text>
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    Clipboard.setString(pairingCode)
+                                    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+                                    Alert.alert("Copied", "Pairing code copied to clipboard!")
+                                  }}
+                                  className="border border-border dark:border-border-dark bg-card dark:bg-card-dark p-2 rounded-xl flex-row items-center justify-center"
+                                >
+                                  <Copy size={16} color={isDark ? "#0091ff" : "#0071df"} />
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+
+                            <View className="w-full bg-slate-50 dark:bg-slate-900/40 p-4 rounded-xl border border-border/50 gap-2">
+                              <Text className="text-xs font-bold text-foreground dark:text-foreground-dark mb-1">How to connect your WhatsApp:</Text>
+                              <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                                1. Open <Text className="font-semibold text-foreground dark:text-foreground-dark">WhatsApp</Text> on your phone.
+                              </Text>
+                              <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                                2. Tap the <Text className="font-semibold text-foreground dark:text-foreground-dark">Menu</Text> icon (top right three dots on Android) or <Text className="font-semibold text-foreground dark:text-foreground-dark">Settings</Text> (bottom right gear on iOS).
+                              </Text>
+                              <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                                3. Select <Text className="font-semibold text-foreground dark:text-foreground-dark">Linked Devices</Text>.
+                              </Text>
+                              <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                                4. Tap the <Text className="font-semibold text-foreground dark:text-foreground-dark">Link a Device</Text> button.
+                              </Text>
+                              <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                                5. Tap <Text className="font-semibold text-primary dark:text-primary-dark">Link with phone number instead</Text> at the bottom of the camera scan screen.
+                              </Text>
+                              <Text className="text-[11px] text-muted dark:text-muted-dark leading-relaxed">
+                                6. Enter the 8-character code shown above.
+                              </Text>
+                            </View>
+
+                            <TouchableOpacity
+                              onPress={() => setPairingCode("")}
+                              className="py-1"
+                            >
+                              <Text className="text-muted dark:text-muted-dark text-xs font-semibold">
+                                Use another phone number
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        )}
                       </View>
                     )}
 
-                    {/* Auto Reply Switch */}
-                    {connectionStatus === "connected" && (
-                      <View className="flex-row justify-between items-center py-1">
-                        <View className="flex-1 mr-4">
-                          <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">AI Auto-Replies</Text>
-                          <Text className="text-[10px] text-muted leading-4 mt-0.5">
-                            Automatically respond to occupant rent queries and complaints.
-                          </Text>
-                        </View>
-
-                        <TouchableOpacity
-                          onPress={() => handleToggleAutoReply(!autoReplyEnabled)}
-                          className={`w-12 h-7 rounded-full p-0.5 flex-row items-center ${
-                            autoReplyEnabled ? "bg-primary" : "bg-slate-200 dark:bg-slate-800"
-                          }`}
-                        >
-                          {autoReplyEnabled ? (
-                            <>
-                              <View className="flex-1" />
-                              <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
-                            </>
-                          ) : (
-                            <>
-                              <View className="w-6 h-6 rounded-full bg-white shadow-sm" />
-                              <View className="flex-1" />
-                            </>
-                          )}
-                        </TouchableOpacity>
-                      </View>
-                    )}
                   </View>
                 )}
               </View>

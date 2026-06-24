@@ -804,7 +804,7 @@ export default function DashboardScreen() {
     today.setHours(0, 0, 0, 0)
 
     return rawTenants.filter(t => {
-      const isLeaving = t.status === "notice_period" || t.status === "move_out"
+      const isLeaving = t.status === "notice_period"
       if (!isLeaving || !t.exit_date) return false
 
       const exitDate = new Date(t.exit_date)
@@ -1086,7 +1086,7 @@ export default function DashboardScreen() {
       const exitDate = new Date(t.exit_date)
       exitDate.setHours(0, 0, 0, 0)
       if (exitDate < today) return false
-      return isDateInRange(t.exit_date, dateRange.startDate, dateRange.endDate) && (t.status === "notice_period" || t.status === "move_out")
+      return isDateInRange(t.exit_date, dateRange.startDate, dateRange.endDate) && t.status === "notice_period"
     }).length
 
     return { checkIns, checkOuts }
@@ -1097,7 +1097,7 @@ export default function DashboardScreen() {
     today.setHours(0, 0, 0, 0)
     
     return rawTenants.filter(t => {
-      const isLeaving = t.status === "notice_period" || t.status === "move_out"
+      const isLeaving = t.status === "notice_period"
       if (!isLeaving || !t.exit_date) return false
       
       const exitDate = new Date(t.exit_date)
@@ -2412,7 +2412,7 @@ export default function DashboardScreen() {
                         key={`task-moveout-${item.id}`}
                         onPress={() => {
                           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                          router.push({ pathname: "/tenants", params: { status: "move_out", search: item.name } })
+                          router.push({ pathname: "/tenants", params: { status: "notice_period", search: item.name } })
                         }}
                         className="flex-row justify-between items-center py-2 border-b border-border/10 dark:border-border-dark/10 active:opacity-85"
                       >

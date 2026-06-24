@@ -163,6 +163,30 @@ function TenantsPageContent() {
     }
   }, [searchParams, tenants])
 
+  // Read status & search query params to apply filters
+  useEffect(() => {
+    const statusParam = searchParams.get("status")
+    const searchParam = searchParams.get("search")
+    
+    let hasParams = false
+    const url = new URL(window.location.href)
+    
+    if (statusParam) {
+      setStatusFilter(statusParam)
+      url.searchParams.delete("status")
+      hasParams = true
+    }
+    if (searchParam) {
+      setSearch(searchParam)
+      url.searchParams.delete("search")
+      hasParams = true
+    }
+    
+    if (hasParams) {
+      window.history.replaceState({}, "", url.toString())
+    }
+  }, [searchParams])
+
   // Form State for Add Tenant
   const [newTenantName, setNewTenantName] = useState("")
   const [newTenantPhone, setNewTenantPhone] = useState("")

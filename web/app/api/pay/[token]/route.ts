@@ -106,28 +106,75 @@ export async function POST(
       return NextResponse.json({ error: 'Invalid or expired payment portal link' }, { status: 404 })
     }
 
-    // 2. Directly find the active tenant by owner and normalized last-10 mobile digits.
+    // 2. Find matching tenants by owner and normalized last-10 mobile digits (including active, notice_period, move_out status).
     const { data: tenants, error: tenantsError } = await supabase
       .from('tenants_table')
       .select(`
         id,
         name,
         payment_code,
+        status,
         rooms_table (
           room_number
         )
       `)
       .eq('owner_id', linkRecord.owner_id)
       .eq('mobile_number_normalized', normalizedMobile)
-      .eq('status', 'active')
-      .limit(1)
+      .in('status', ['active', 'notice_period', 'move_out'])
 
     if (tenantsError) {
       console.error('[pay/token] Error fetching tenants:', JSON.stringify(tenantsError))
       return NextResponse.json({ error: 'Database error verifying tenant identity' }, { status: 500 })
     }
 
-    const matchedTenant = tenants?.[0]
+    if (!tenants || tenants.length === 0) {
+      return NextResponse.json({ error: 'No tenant found matching this mobile number. Please check or contact the property owner.' }, { status: 404 })
+    }
+
+    // Sort tenants to prioritize status: active > notice_period > move_out
+    const statusPriority: Record<string, number> = {
+      active: 1,
+      notice_period: 2,
+      move_out: 3,
+    }
+    const sortedTenants = [...tenants].sort((a, b) => {
+      const pA = statusPriority[a.status] || 99
+      const pB = statusPriority[b.status] || 99
+      return pA - pB
+    })
+
+    let matchedTenant = null
+    let payments: any[] = []
+
+    for (const tenant of sortedTenants) {
+      if (tenant.status === 'active' || tenant.status === 'notice_period') {
+        const { data: payData, error: payError } = await supabase
+          .from('payments')
+          .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
+          .eq('tenant_id', tenant.id)
+        if (payError) {
+          console.error('[pay/token] Error fetching payment:', JSON.stringify(payError))
+          return NextResponse.json({ error: 'Database error retrieving billing record' }, { status: 500 })
+        }
+        matchedTenant = tenant
+        payments = payData || []
+        break
+      } else if (tenant.status === 'move_out') {
+        const { data: payData, error: payError } = await supabase
+          .from('payments')
+          .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
+          .eq('tenant_id', tenant.id)
+        if (payError) {
+          console.error('[pay/token] Error fetching payment:', JSON.stringify(payError))
+          return NextResponse.json({ error: 'Database error retrieving billing record' }, { status: 500 })
+        }
+        if (payData && payData.length > 0) {
+          matchedTenant = tenant
+          payments = payData
+          break
+        }
+      }
+    }
 
     if (!matchedTenant) {
       return NextResponse.json({ error: 'No tenant found matching this mobile number. Please check or contact the property owner.' }, { status: 404 })
@@ -136,17 +183,6 @@ export async function POST(
     // Normalise room details
     const roomRaw = matchedTenant.rooms_table
     const room = Array.isArray(roomRaw) ? roomRaw[0] : roomRaw
-
-    // 3. Fetch all payment records matching this tenant
-    const { data: payments, error: payError } = await supabase
-      .from('payments')
-      .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
-      .eq('tenant_id', matchedTenant.id)
-
-    if (payError) {
-      console.error('[pay/token] Error fetching payment:', JSON.stringify(payError))
-      return NextResponse.json({ error: 'Database error retrieving billing record' }, { status: 500 })
-    }
 
     // Filter to show:
     // 1. All payments generated for the current monthly link's month/year

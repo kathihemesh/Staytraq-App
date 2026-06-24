@@ -21,6 +21,7 @@
 // current Time_Filter heading (the filter selection) is preserved (Req 6.9).
 // All colors resolve from Theme_System tokens.
 
+import Link from "next/link"
 import {
   AlertCircle,
   ArrowRight,
@@ -262,23 +263,29 @@ export function TasksSection({
               ) : (
                 <ul className="flex flex-col gap-2">
                   {moveOut.map((task) => (
-                    <li
-                      key={task.id}
-                      className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="truncate text-sm font-medium text-foreground">
-                            {task.tenantName}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Room {task.roomNumber}
-                          </span>
+                    <li key={task.id}>
+                      <Link
+                        href={`/tenants?status=notice_period&search=${encodeURIComponent(task.tenantName)}`}
+                        className="flex w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="truncate text-sm font-medium text-foreground">
+                              {task.tenantName}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              Room {task.roomNumber}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Exit {formatDate(task.date)}
+                          </p>
                         </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          Exit {formatDate(task.date)}
-                        </p>
-                      </div>
+                        <ArrowRight
+                          className="h-4 w-4 shrink-0 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                      </Link>
                     </li>
                   ))}
                 </ul>
@@ -298,23 +305,29 @@ export function TasksSection({
               ) : (
                 <ul className="flex flex-col gap-2">
                   {checkIn.map((task) => (
-                    <li
-                      key={task.id}
-                      className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <span className="truncate text-sm font-medium text-foreground">
-                            {task.tenantName}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            Room {task.roomNumber}
-                          </span>
+                    <li key={task.id}>
+                      <Link
+                        href={`/tenants?search=${encodeURIComponent(task.tenantName)}`}
+                        className="flex w-full items-center gap-3 rounded-lg border border-border bg-muted/30 p-3 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <span className="truncate text-sm font-medium text-foreground">
+                              {task.tenantName}
+                            </span>
+                            <span className="text-xs text-muted-foreground">
+                              Room {task.roomNumber}
+                            </span>
+                          </div>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Check-in {formatDate(task.date)}
+                          </p>
                         </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          Check-in {formatDate(task.date)}
-                        </p>
-                      </div>
+                        <ArrowRight
+                          className="h-4 w-4 shrink-0 text-muted-foreground"
+                          aria-hidden="true"
+                        />
+                      </Link>
                     </li>
                   ))}
                 </ul>
