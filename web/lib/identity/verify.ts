@@ -68,22 +68,31 @@ export function partialNameMatch(extractedText: string, tenantName: string): boo
 // Identity-code extractors
 // ---------------------------------------------------------------------------
 
-/** Matches a maximal run of exactly 12 digits (an Aadhaar_Number). */
-const AADHAAR_NUMBER_PATTERN = /(?<!\d)\d{12}(?!\d)/
+/**
+ * Matches a 12-digit Aadhaar_Number printed as three groups of four digits with
+ * optional separators between groups (the real-world layout is `XXXX XXXX
+ * XXXX`, e.g. "9168 9403 0315"; some prints use hyphens or no separator). The
+ * trailing `(?![\s-]{0,2}\d)` guard prevents matching the first 12 digits of a
+ * longer grouped number such as a 16-digit Virtual ID.
+ */
+const AADHAAR_NUMBER_PATTERN = /(?<!\d)\d{4}[\s-]{0,2}\d{4}[\s-]{0,2}\d{4}(?![\s-]{0,2}\d)/
 
 /** Matches a PAN_Code: five capitals, four digits, one capital. */
 const PAN_CODE_PATTERN = /[A-Z]{5}[0-9]{4}[A-Z]/
 
 /**
- * Extract the first 12-digit Aadhaar_Number from the extracted text (Reqs 9.1,
- * 9.3). Returns the first run of exactly 12 consecutive digits — a run that is
- * part of a longer digit sequence is not treated as an Aadhaar_Number — or
- * `null` when no such run is present.
+ * Extract the Aadhaar_Number from the extracted text and return it normalized
+ * to its 12 digits with separators removed (Reqs 9.1, 9.3). Real Aadhaar cards
+ * print the number as three space-separated groups of four (e.g. "9168 9403
+ * 0315"), so the matcher tolerates spaces/hyphens between groups and strips
+ * them, yielding a clean 12-digit string (e.g. "916894030315"). Returns `null`
+ * when no Aadhaar-shaped number is present.
  */
 export function extractAadhaarNumber(text: string): string | null {
   if (typeof text !== "string") return null
   const match = AADHAAR_NUMBER_PATTERN.exec(text)
-  return match ? match[0] : null
+  if (!match) return null
+  return match[0].replace(/\D/g, "")
 }
 
 /**
@@ -181,8 +190,11 @@ export function classifyAadhaar(frontText: string, backText: string, name: strin
   if (!isReadable(backText)) {
     checks.push(fail("Could not read any text from the Aadhaar back image."))
   } else {
+    // Compare the back number normalized the same way as the front, so the
+    // 4-4-4 spaced layout matches the front's normalized 12 digits.
+    const backNumber = extractAadhaarNumber(backText)
     checks.push(
-      frontNumber && containsCI(backText, frontNumber)
+      frontNumber && backNumber && backNumber === frontNumber
         ? ok()
         : fail("The Aadhaar back image does not contain the same Aadhaar number as the front image.")
     )
