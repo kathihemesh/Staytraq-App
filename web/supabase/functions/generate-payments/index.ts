@@ -16,6 +16,7 @@ serve(async () => {
       owner_id,
       rent_due_day,
       extra_charges,
+      join_date,
       rooms_table (
         rent_amount
       )
@@ -49,35 +50,38 @@ serve(async () => {
     const dueDay = tenant.rent_due_day;
     if (!dueDay) continue;
 
-    // Check two candidate months: current month and next month (handles early-month due dates correctly)
+    // Don't bill months before the tenant joined.
+    const joinDate = tenant.join_date ? new Date(tenant.join_date) : null;
+    const joinMonthStart = joinDate && !isNaN(joinDate.getTime())
+      ? new Date(joinDate.getFullYear(), joinDate.getMonth(), 1)
+      : null;
+
+    // Consider the current and next month. Unlike before, we DON'T stop at the
+    // first match: an overdue current-month record AND a near-future next-month
+    // record can both be generated in one run.
     const candidateMonths = [
       { y: today.getFullYear(), m: today.getMonth() },
       { y: today.getFullYear(), m: today.getMonth() + 1 }
     ];
 
-    let targetDueDate = null;
-    let matchFound = false;
-
     for (const cand of candidateMonths) {
       const candDate = new Date(cand.y, cand.m, dueDay);
       const candDateOnly = new Date(candDate.getFullYear(), candDate.getMonth(), candDate.getDate());
-      
+
       const diffTime = candDateOnly.getTime() - todayDate.getTime();
       const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
 
-      // Generate payment 10 days before due date or if within/past due date
-      if (diffDays <= 10) {
-        targetDueDate = candDateOnly;
-        matchFound = true;
-        break;
-      }
-    }
+      // Generate overdue (current-month) records and anything due within 10 days.
+      if (diffDays > 10) continue;
 
-    if (matchFound && targetDueDate) {
-      const month = targetDueDate.getMonth() + 1; // 1-indexed
-      const year = targetDueDate.getFullYear();
+      // Skip months before the tenant joined.
+      const candMonthStart = new Date(candDateOnly.getFullYear(), candDateOnly.getMonth(), 1);
+      if (joinMonthStart && candMonthStart < joinMonthStart) continue;
 
-      // Prevent duplicates using maybeSingle() instead of single() to avoid PGRST116 error
+      const month = candDateOnly.getMonth() + 1; // 1-indexed
+      const year = candDateOnly.getFullYear();
+
+      // Prevent duplicates.
       const { data: existing, error: existErr } = await supabase
         .from("payments")
         .select("id")
@@ -90,49 +94,50 @@ serve(async () => {
         console.error(`Error checking existing payment for ${tenant.name}:`, existErr);
         continue;
       }
+      if (existing) continue;
 
-      if (!existing) {
-        const rentAmount = tenant.rooms_table?.rent_amount || 0;
-        const extraCharges = tenant.extra_charges || 0;
-        const totalAmount = rentAmount + extraCharges;
+      const rentAmount = tenant.rooms_table?.rent_amount || 0;
+      const extraCharges = tenant.extra_charges || 0;
+      const totalAmount = rentAmount + extraCharges;
+      // A record whose due date has already passed is created as 'late'.
+      const status = candDateOnly.getTime() < todayDate.getTime() ? "late" : "pending";
+      const dueDateStr = candDateOnly.toISOString().split("T")[0];
 
-        const { data: inserted, error: insertErr } = await supabase
-          .from("payments")
+      const { data: inserted, error: insertErr } = await supabase
+        .from("payments")
+        .insert({
+          tenant_id: tenant.id,
+          owner_id: tenant.owner_id,
+          month,
+          year,
+          rent_amount: rentAmount,
+          extra_charges: extraCharges,
+          total_amount: totalAmount,
+          due_date: dueDateStr,
+          status
+        })
+        .select("id")
+        .maybeSingle();
+
+      if (insertErr) {
+        console.error(`Failed to generate payment for ${tenant.name}:`, insertErr);
+        continue;
+      }
+
+      console.log(`Payment (${status}) generated for ${tenant.name} — ${month}/${year}`);
+      generatedCount++;
+
+      if (inserted?.id) {
+        const { error: auditErr } = await supabase
+          .from("payment_audit_log")
           .insert({
-            tenant_id: tenant.id,
+            payment_id: inserted.id,
             owner_id: tenant.owner_id,
-            month,
-            year,
-            rent_amount: rentAmount,
-            extra_charges: extraCharges,
-            total_amount: totalAmount,
-            due_date: targetDueDate.toISOString().split("T")[0],
-            status: "pending"
-          })
-          .select("id")
-          .maybeSingle();
-
-        if (insertErr) {
-          console.error(`Failed to generate payment for ${tenant.name}:`, insertErr);
-        } else {
-          console.log(`Payment successfully generated for ${tenant.name}`);
-          generatedCount++;
-
-          // Log audit trail entry
-          if (inserted?.id) {
-            const { error: auditErr } = await supabase
-              .from("payment_audit_log")
-              .insert({
-                payment_id: inserted.id,
-                owner_id: tenant.owner_id,
-                action: "generated",
-                notes: `Auto-generated for ${tenant.name} — due ${targetDueDate.toISOString().split("T")[0]}`,
-              });
-
-            if (auditErr) {
-              console.error(`Audit log failed for payment ${inserted.id}:`, auditErr);
-            }
-          }
+            action: "generated",
+            notes: `Auto-generated for ${tenant.name} — due ${dueDateStr} (${status})`,
+          });
+        if (auditErr) {
+          console.error(`Audit log failed for payment ${inserted.id}:`, auditErr);
         }
       }
     }

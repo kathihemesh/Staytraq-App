@@ -236,7 +236,14 @@ export default function IdentityVerifyPage() {
         body.set('back_image', backBlob, 'back.jpg')
       }
 
-      const res = await fetch(`/api/identity-verify/${token}/submit`, { method: 'POST', body })
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 30000)
+      let res: Response
+      try {
+        res = await fetch(`/api/identity-verify/${token}/submit`, { method: 'POST', body, signal: controller.signal })
+      } finally {
+        clearTimeout(timeoutId)
+      }
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
@@ -254,8 +261,13 @@ export default function IdentityVerifyPage() {
       }
       setFailReason(json.reason || 'We could not verify your document. Please try again with a clearer photo.')
     } catch (err) {
+      const aborted = err instanceof DOMException && err.name === 'AbortError'
       console.error('[identity-verify] submit failed:', err)
-      setSubmitError('Something went wrong while submitting. Please check your connection and try again.')
+      setSubmitError(
+        aborted
+          ? 'Verification is taking longer than expected. Please refresh the page and try again.'
+          : 'Something went wrong while submitting. Please check your connection and try again.'
+      )
     } finally {
       setSubmitting(false)
     }

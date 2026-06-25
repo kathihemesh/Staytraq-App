@@ -666,8 +666,7 @@ export default function TenantsScreen() {
         total_amount: tenant.deposit_amount,
         due_date: tenant.join_date || new Date().toISOString().split("T")[0],
         status: "pending",
-        reminder_sent: false,
-        verification_notes: "Security Deposit Fee"
+        reminder_sent: false
       })
       .select("id")
       .single()
@@ -904,8 +903,7 @@ export default function TenantsScreen() {
             extra_charges: 0,
             total_amount: justAddedTenant.deposit_amount,
             due_date: justAddedTenant.join_date || new Date().toISOString().split("T")[0],
-            status: "pending",
-            verification_notes: "Security Deposit Fee"
+            status: "pending"
           })
           
         if (payErr) throw payErr
@@ -3066,16 +3064,14 @@ export default function TenantsScreen() {
                       const hasBackImage = typeof selectedTenant.id_back_path === "string" && selectedTenant.id_back_path.trim().length > 0
                       const hasStoredImage = hasFrontImage || hasBackImage
 
-                      // Nothing to show: no requested-identity status, no stored code, no stored
-                      // images, and not in the post-delete chooser state.
-                      if (
-                        statusPresentation === "none" &&
-                        !displayCode &&
-                        !hasStoredImage &&
-                        identityResetTenantId !== selectedTenant.id
-                      ) {
-                        return null
-                      }
+                      // The identity section always renders in the detail modal so the
+                      // owner can collect identity (request and/or upload) regardless of
+                      // whether the request checkbox was ticked at creation. The chooser
+                      // is shown when there is no identity activity yet, or right after a
+                      // delete.
+                      const showIdentityChooser =
+                        identityResetTenantId === selectedTenant.id ||
+                        (statusPresentation === "none" && !displayCode && !hasStoredImage)
 
                       const progressMeta = (() => {
                         switch (statusPresentation) {
@@ -3156,27 +3152,32 @@ export default function TenantsScreen() {
                             </View>
                           )}
 
-                          {identityResetTenantId === selectedTenant.id ? (
-                            /* Post-delete: owner chooses how to collect identity again (Req: request again / upload) */
+                          {showIdentityChooser ? (
+                            /* No identity activity yet (or just deleted): let the owner
+                               request identity (chatbot owners only) and/or upload manually. */
                             <View className="mt-3 gap-2.5">
                               <Text className="text-xs text-muted dark:text-muted-dark">
-                                Documents deleted. Choose how to collect identity again:
+                                {identityResetTenantId === selectedTenant.id
+                                  ? "Documents deleted. Choose how to collect identity again:"
+                                  : "Collect this tenant's identity:"}
                               </Text>
-                              <TouchableOpacity
-                                onPress={() => handleRequestIdentityAgain(selectedTenant)}
-                                disabled={isRequestingIdentityAgain}
-                                className="flex-row items-center justify-center gap-2 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
-                                style={{ opacity: isRequestingIdentityAgain ? 0.6 : 1 }}
-                                accessibilityLabel="Request identity again"
-                                accessibilityRole="button"
-                              >
-                                {isRequestingIdentityAgain ? (
-                                  <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
-                                ) : (
-                                  <Clock size={14} color={isDark ? "#0091ff" : "#0071df"} />
-                                )}
-                                <Text className="text-xs font-bold text-primary">Request again (daily)</Text>
-                              </TouchableOpacity>
+                              {chatbotEnabled && (
+                                <TouchableOpacity
+                                  onPress={() => handleRequestIdentityAgain(selectedTenant)}
+                                  disabled={isRequestingIdentityAgain}
+                                  className="flex-row items-center justify-center gap-2 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
+                                  style={{ opacity: isRequestingIdentityAgain ? 0.6 : 1 }}
+                                  accessibilityLabel="Request identity"
+                                  accessibilityRole="button"
+                                >
+                                  {isRequestingIdentityAgain ? (
+                                    <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
+                                  ) : (
+                                    <Clock size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                                  )}
+                                  <Text className="text-xs font-bold text-primary">Request identity (daily)</Text>
+                                </TouchableOpacity>
+                              )}
                               <TouchableOpacity
                                 onPress={() => handleManualIdentityUpload(selectedTenant)}
                                 disabled={isManualUploading}
@@ -3831,7 +3832,7 @@ export default function TenantsScreen() {
 
               {/* Identity Documents / Identity Request */}
               <View className="z-30">
-                {chatbotEnabled ? (
+                {chatbotEnabled && !editingTenant ? (
                   <>
                     <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Reminders</Text>
                     <TouchableOpacity

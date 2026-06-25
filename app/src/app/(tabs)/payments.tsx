@@ -312,6 +312,9 @@ export default function PaymentsScreen() {
   })
   const [sortField, setSortField] = useState<"amount" | "dueDate">("dueDate")
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc")
+  // Future months (beyond the current month) that already have payment records,
+  // so they appear as selectable options in the month filter.
+  const [futureMonths, setFutureMonths] = useState<string[]>([])
 
   // Derive the server-side filter set from the UI filter state. month/year come
   // from the `selectedMonth` "Month YYYY" string; status and search are passed
@@ -434,8 +437,39 @@ export default function PaymentsScreen() {
       list.push(`${d.toLocaleString("en-US", { month: "long" })} ${d.getFullYear()}`)
       d.setMonth(d.getMonth() - 1)
     }
-    return list
-  }, [])
+    // Prepend any future months that already have payments (latest first), deduped,
+    // so e.g. July appears while it's still June. The default stays the current month.
+    return Array.from(new Set([...futureMonths, ...list]))
+  }, [futureMonths])
+
+  // Fetch the set of future months (beyond the current month) that already have
+  // payment records, so they show up as filter options.
+  const fetchFutureMonths = useCallback(async () => {
+    if (!user?.id) return
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = now.getMonth() + 1
+    const { data, error } = await supabase
+      .from("payments")
+      .select("month, year")
+      .eq("owner_id", user.id)
+      .or(`year.gt.${y},and(year.eq.${y},month.gt.${m})`)
+    if (error || !data) return
+    const monthNames = [
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December",
+    ]
+    const seen = new Set<string>()
+    for (const r of data as { month: number; year: number }[]) {
+      if (r.month >= 1 && r.month <= 12) seen.add(`${monthNames[r.month - 1]} ${r.year}`)
+    }
+    const arr = Array.from(seen).sort((a, b) => {
+      const [am, ay] = a.split(" ")
+      const [bm, by] = b.split(" ")
+      return (parseInt(by, 10) * 12 + getMonthNumber(bm)) - (parseInt(ay, 10) * 12 + getMonthNumber(am))
+    })
+    setFutureMonths(arr)
+  }, [user?.id])
 
   const fetchPayments = useCallback(async (silent = false) => {
     if (!user?.id) {
@@ -743,10 +777,11 @@ export default function PaymentsScreen() {
         // once per focus and is cancelled on blur-before-run (no drop, no duplicate).
         const handle = scheduleAfterInteractions(() => {
           void fetchPayments(hasLoadedOnce.current)
+          void fetchFutureMonths()
         })
         return () => handle.cancel()
       }
-    }, [user?.id, fetchPayments])
+    }, [user?.id, fetchPayments, fetchFutureMonths])
   )
 
   // Filter changes (month/year/status/search) reset the offset to 0 and request the
