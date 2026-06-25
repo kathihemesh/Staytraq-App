@@ -249,6 +249,16 @@ export default function TenantsScreen() {
   // When set to the selected tenant's id, the identity section shows the
   // post-delete "Request again" / "Upload" choices instead of the normal view.
   const [identityResetTenantId, setIdentityResetTenantId] = useState<number | null>(null)
+  // Manual identity upload modal (mirrors the submission portal: type + images,
+  // no verification / OCR / id entry).
+  const [manualUploadModalVisible, setManualUploadModalVisible] = useState(false)
+  const [manualUploadTenant, setManualUploadTenant] = useState<Tenant | null>(null)
+  const [manualUploadType, setManualUploadType] = useState<"" | "Aadhaar" | "PAN">("")
+  const [manualFront, setManualFront] = useState<{ uri: string; mimeType: string } | null>(null)
+  const [manualBack, setManualBack] = useState<{ uri: string; mimeType: string } | null>(null)
+  // Themed delete-identity confirmation (replaces the native Alert).
+  const [deleteIdentityConfirmVisible, setDeleteIdentityConfirmVisible] = useState(false)
+  const [deleteIdentityTenant, setDeleteIdentityTenant] = useState<Tenant | null>(null)
 
   // Identity document viewer (front/back) — kept separate from the staytraq_docs viewer
   // above so the two viewers never collide. Reads signed URLs from the private
@@ -1962,45 +1972,77 @@ export default function TenantsScreen() {
   // behalf). Stores up to two images (front, optional back) in the private
   // `identity_documents` bucket at {owner_id}/{tenant_id}/{side}.jpg and marks
   // the tenant Verified. Reflects the change on the selected tenant + list.
-  const handleManualIdentityUpload = async (tenant: Tenant) => {
-    if (isManualUploading || !user?.id) return
+  // Manual identity upload (owner uploads on the tenant's behalf) — opens a
+  // themed modal mirroring the submission portal (type + front/back for Aadhaar,
+  // front only for PAN), with NO verification, OCR, or ID-number entry. Stores
+  // images in the private `identity_documents` bucket and marks the tenant Verified.
+  const openManualUploadModal = (tenant: Tenant) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    setManualUploadTenant(tenant)
+    setManualUploadType("")
+    setManualFront(null)
+    setManualBack(null)
+    setManualUploadModalVisible(true)
+  }
+
+  const pickManualImage = async (side: "front" | "back") => {
     try {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
       if (status !== "granted") {
-        Alert.alert("Permission Denied", "Photo library permission is required to choose images.")
+        showToast("Permission Denied", "Photo library permission is required to choose images.", "error")
         return
       }
-      const result = await ImagePicker.launchImageLibraryAsync({
-        allowsEditing: false,
-        quality: 0.8,
-        allowsMultipleSelection: true,
-        selectionLimit: 2,
-      })
+      const result = await ImagePicker.launchImageLibraryAsync({ allowsEditing: false, quality: 0.8 })
       if (result.canceled || !result.assets || result.assets.length === 0) return
+      const asset = result.assets[0]
+      const pick = { uri: asset.uri, mimeType: asset.mimeType || "image/jpeg" }
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+      if (side === "front") setManualFront(pick)
+      else setManualBack(pick)
+    } catch (e) {
+      console.error("Manual image pick error:", e)
+      showToast("Error", "Failed to select the image.", "error")
+    }
+  }
 
-      setIsManualUploading(true)
+  const submitManualUpload = async () => {
+    const tenant = manualUploadTenant
+    if (!tenant || !user?.id || isManualUploading) return
+    if (manualUploadType !== "Aadhaar" && manualUploadType !== "PAN") {
+      showToast("Select a type", "Choose Aadhaar or PAN first.", "info")
+      return
+    }
+    if (!manualFront) {
+      showToast("Front required", "Please upload the front image.", "info")
+      return
+    }
+    if (manualUploadType === "Aadhaar" && !manualBack) {
+      showToast("Back required", "Please upload the back image for Aadhaar.", "info")
+      return
+    }
+
+    setIsManualUploading(true)
+    try {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-
-      const assets = result.assets.slice(0, 2)
-      const sides: ("front" | "back")[] = ["front", "back"]
-      let frontPath: string | null = null
-      let backPath: string | null = null
-
-      for (let i = 0; i < assets.length; i++) {
-        const asset = assets[i]
-        const side = sides[i]
+      const uploadOne = async (img: { uri: string; mimeType: string }, side: "front" | "back") => {
         const path = `${user.id}/${tenant.id}/${side}.jpg`
-        const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: "base64" })
+        const base64 = await FileSystem.readAsStringAsync(img.uri, { encoding: "base64" })
         const arrayBuffer = decodeBase64(base64)
         const { error: uploadError } = await supabase.storage
           .from("identity_documents")
-          .upload(path, arrayBuffer, { contentType: asset.mimeType || "image/jpeg", upsert: true })
+          .upload(path, arrayBuffer, { contentType: img.mimeType || "image/jpeg", upsert: true })
         if (uploadError) throw uploadError
-        if (side === "front") frontPath = path
-        else backPath = path
+        return path
+      }
+
+      const frontPath = await uploadOne(manualFront, "front")
+      let backPath: string | null = null
+      if (manualUploadType === "Aadhaar" && manualBack) {
+        backPath = await uploadOne(manualBack, "back")
       }
 
       const update: Partial<Tenant> = {
+        identity_type: manualUploadType,
         id_front_path: frontPath,
         id_back_path: backPath,
         verification_status: "Verified",
@@ -2014,11 +2056,12 @@ export default function TenantsScreen() {
       setSelectedTenant((prev) => (prev && prev.id === tenant.id ? { ...prev, ...update } : prev))
       setTenants((prev) => prev.map((t) => (t.id === tenant.id ? { ...t, ...update } : t)))
       setIdentityResetTenantId((prev) => (prev === tenant.id ? null : prev))
+      setManualUploadModalVisible(false)
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       showToast("Documents Uploaded", "Identity documents saved and marked verified.", "success")
     } catch (e: any) {
       console.error("Manual identity upload failed:", e)
-      Alert.alert("Upload Failed", e?.message || "Could not upload identity documents.")
+      showToast("Upload Failed", e?.message || "Could not upload identity documents.", "error")
     } finally {
       setIsManualUploading(false)
     }
@@ -2065,7 +2108,7 @@ export default function TenantsScreen() {
       showToast("Documents Deleted", "Identity documents removed. Choose to request again or upload.", "success")
     } catch (e: any) {
       console.error("Delete identity docs failed:", e)
-      Alert.alert("Delete Failed", e?.message || "Could not delete identity documents.")
+      showToast("Delete Failed", e?.message || "Could not delete identity documents.", "error")
     } finally {
       setIsDeletingIdentity(false)
     }
@@ -2096,7 +2139,7 @@ export default function TenantsScreen() {
       showToast("Identity Requested", "A verification request was sent; daily reminders resumed.", "success")
     } catch (e: any) {
       console.error("Request identity again failed:", e)
-      Alert.alert("Error", e?.message || "Could not request identity again.")
+      showToast("Error", e?.message || "Could not request identity again.", "error")
     } finally {
       setIsRequestingIdentityAgain(false)
     }
@@ -3181,7 +3224,7 @@ export default function TenantsScreen() {
                                 </TouchableOpacity>
                               )}
                               <TouchableOpacity
-                                onPress={() => handleManualIdentityUpload(selectedTenant)}
+                                onPress={() => openManualUploadModal(selectedTenant)}
                                 disabled={isManualUploading}
                                 className="flex-row items-center justify-center gap-2 py-2.5 px-3 rounded-2xl border border-border/60 dark:border-border-dark/60 bg-background dark:bg-background-dark active:scale-95"
                                 style={{ opacity: isManualUploading ? 0.6 : 1 }}
@@ -3202,7 +3245,7 @@ export default function TenantsScreen() {
                                   is in progress — placed right above the Ignore button. */}
                               {statusPresentation === "in_progress" && (
                                 <TouchableOpacity
-                                  onPress={() => handleManualIdentityUpload(selectedTenant)}
+                                  onPress={() => openManualUploadModal(selectedTenant)}
                                   disabled={isManualUploading}
                                   className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
                                   style={{ opacity: isManualUploading ? 0.6 : 1 }}
@@ -3265,14 +3308,9 @@ export default function TenantsScreen() {
                               {hasStoredImage && (
                                 <TouchableOpacity
                                   onPress={() => {
-                                    Alert.alert(
-                                      "Delete Identity Documents",
-                                      "This permanently removes the stored identity documents and resets verification. Continue?",
-                                      [
-                                        { text: "Cancel", style: "cancel" },
-                                        { text: "Delete", style: "destructive", onPress: () => handleDeleteIdentityDocs(selectedTenant) },
-                                      ]
-                                    )
+                                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                    setDeleteIdentityTenant(selectedTenant)
+                                    setDeleteIdentityConfirmVisible(true)
                                   }}
                                   disabled={isDeletingIdentity}
                                   className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-red-500/40 bg-red-500/10 active:scale-95"
@@ -4243,6 +4281,159 @@ export default function TenantsScreen() {
         onCancel={() => setIgnoreConfirmVisible(false)}
         icon={<Info size={24} color="#208aef" />}
       />
+
+      {/* Confirm Delete Identity Documents (themed) */}
+      <ConfirmModal
+        visible={deleteIdentityConfirmVisible}
+        title="Delete Identity Documents"
+        message="This permanently removes the stored identity documents and resets verification. Continue?"
+        confirmText="Delete"
+        cancelText="Cancel"
+        isDestructive={true}
+        onConfirm={() => {
+          setDeleteIdentityConfirmVisible(false)
+          if (deleteIdentityTenant) void handleDeleteIdentityDocs(deleteIdentityTenant)
+        }}
+        onCancel={() => setDeleteIdentityConfirmVisible(false)}
+        icon={<Trash2 size={24} color="#ef4444" />}
+      />
+
+      {/* Manual Identity Upload Modal (mirrors submission portal, no verification) */}
+      <Modal
+        animationType="none"
+        transparent={true}
+        visible={manualUploadModalVisible}
+        onRequestClose={() => setManualUploadModalVisible(false)}
+      >
+        <View className="flex-1 bg-black/60 justify-end">
+          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[88%] border-t border-border dark:border-border-dark p-6">
+            <View className="flex-row justify-between items-center mb-5">
+              <View>
+                <Text className="text-lg font-black text-foreground dark:text-foreground-dark">Upload Identity</Text>
+                <Text className="text-xs text-muted dark:text-muted-dark mt-0.5 font-semibold">
+                  {manualUploadTenant?.name || "Occupant"} — manual upload, no verification
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setManualUploadModalVisible(false)}
+                className="h-10 w-10 bg-background dark:bg-background-dark border border-border dark:border-border-dark rounded-full items-center justify-center"
+              >
+                <X size={18} color="#9ca3af" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 24 }}>
+              {/* Type selection */}
+              <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Identity Type</Text>
+              <View className="flex-row gap-3 mb-5">
+                {([
+                  { type: "Aadhaar" as const, label: "Aadhaar", desc: "Front & back", icon: ShieldCheck },
+                  { type: "PAN" as const, label: "PAN", desc: "Front only", icon: CreditCard },
+                ]).map((opt) => {
+                  const Icon = opt.icon
+                  const active = manualUploadType === opt.type
+                  return (
+                    <TouchableOpacity
+                      key={opt.type}
+                      onPress={() => {
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                        setManualUploadType(opt.type)
+                        setManualBack(null)
+                      }}
+                      activeOpacity={0.8}
+                      className={`flex-1 rounded-2xl border p-4 ${
+                        active
+                          ? "border-primary bg-primary/10"
+                          : "border-border dark:border-border-dark bg-background dark:bg-background-dark"
+                      }`}
+                    >
+                      <View className={`h-9 w-9 rounded-xl items-center justify-center mb-2 ${active ? "bg-primary/20" : "bg-muted/10"}`}>
+                        <Icon size={18} color={active ? (isDark ? "#0091ff" : "#0071df") : "#9ca3af"} />
+                      </View>
+                      <Text className={`text-sm font-bold ${active ? "text-primary" : "text-foreground dark:text-foreground-dark"}`}>{opt.label}</Text>
+                      <Text className="text-[10px] text-muted dark:text-muted-dark mt-0.5">{opt.desc}</Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+
+              {/* Upload slots */}
+              {manualUploadType !== "" && (
+                <View className="gap-3">
+                  {/* Front */}
+                  <View>
+                    <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Front Image</Text>
+                    <TouchableOpacity
+                      onPress={() => pickManualImage("front")}
+                      activeOpacity={0.8}
+                      className="border border-dashed border-border dark:border-border-dark rounded-2xl bg-background dark:bg-background-dark overflow-hidden"
+                    >
+                      {manualFront ? (
+                        <Image source={{ uri: manualFront.uri }} style={{ width: "100%", height: 160 }} resizeMode="cover" />
+                      ) : (
+                        <View className="h-28 items-center justify-center gap-1.5">
+                          <Upload size={20} color="#9ca3af" />
+                          <Text className="text-xs font-semibold text-muted dark:text-muted-dark">Tap to choose front image</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    {manualFront && (
+                      <TouchableOpacity onPress={() => pickManualImage("front")} className="mt-1.5">
+                        <Text className="text-[11px] font-bold text-primary text-center">Change front image</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+
+                  {/* Back (Aadhaar only) */}
+                  {manualUploadType === "Aadhaar" && (
+                    <View>
+                      <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Back Image</Text>
+                      <TouchableOpacity
+                        onPress={() => pickManualImage("back")}
+                        activeOpacity={0.8}
+                        className="border border-dashed border-border dark:border-border-dark rounded-2xl bg-background dark:bg-background-dark overflow-hidden"
+                      >
+                        {manualBack ? (
+                          <Image source={{ uri: manualBack.uri }} style={{ width: "100%", height: 160 }} resizeMode="cover" />
+                        ) : (
+                          <View className="h-28 items-center justify-center gap-1.5">
+                            <Upload size={20} color="#9ca3af" />
+                            <Text className="text-xs font-semibold text-muted dark:text-muted-dark">Tap to choose back image</Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                      {manualBack && (
+                        <TouchableOpacity onPress={() => pickManualImage("back")} className="mt-1.5">
+                          <Text className="text-[11px] font-bold text-primary text-center">Change back image</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Submit */}
+              <TouchableOpacity
+                onPress={submitManualUpload}
+                disabled={isManualUploading || manualUploadType === ""}
+                className={`mt-6 rounded-xl h-12 flex-row items-center justify-center gap-2 ${
+                  isManualUploading || manualUploadType === "" ? "bg-primary/50" : "bg-primary active:scale-95"
+                }`}
+              >
+                {isManualUploading ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <>
+                    <Check size={16} color="#ffffff" strokeWidth={3} />
+                    <Text className="text-white text-base font-bold">Save Documents</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
 
       {/* Move Out Flow Modal */}
       <Modal
