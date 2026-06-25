@@ -1490,6 +1490,11 @@ export default function DashboardScreen() {
         const phone = payment.tenants_table.mobile_number
         const tenantName = payment.tenants_table?.name || "Tenant"
 
+        // Throttle bulk sends (3.5s gap) to avoid WhatsApp flagging the sender.
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 3500))
+        }
+
         try {
           // Get or create portal link token
           const { data: linkData, error: linkError } = await supabase
@@ -1631,6 +1636,11 @@ export default function DashboardScreen() {
         const item = noticesToRetry[i]
         const phone = item.phone
         const tenantName = item.name
+
+        // Throttle bulk sends (3.5s gap) to avoid WhatsApp flagging the sender.
+        if (i > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 3500))
+        }
 
         try {
           let cleanPhone = phone.replace(/[^0-9]/g, "")

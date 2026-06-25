@@ -80,6 +80,12 @@ export interface NoticeRecipient {
 /** Per-recipient send timeout; on elapse the recipient is marked failed (Req 11.7). */
 export const NOTICE_TIMEOUT_MS = 30_000
 
+/**
+ * Delay inserted between consecutive bulk sends so WhatsApp does not flag the
+ * sender for rapid-fire messaging.
+ */
+export const BULK_SEND_DELAY_MS = 3_500
+
 /** Tenant-facing payment portal base, identical to the mobile dashboard. */
 const PAYMENT_PORTAL_BASE = "https://staytraq.vercel.app/pay"
 
@@ -272,9 +278,13 @@ export async function sendBulkNotices(
   recipients: readonly NoticeRecipient[],
 ): Promise<BulkNoticeRun> {
   const outcomes: NoticeResult[] = []
-  for (const recipient of recipients) {
+  for (let i = 0; i < recipients.length; i++) {
+    // Throttle bulk sends (3.5s gap) to avoid WhatsApp flagging the sender.
+    if (i > 0) {
+      await new Promise((resolve) => setTimeout(resolve, BULK_SEND_DELAY_MS))
+    }
     // Awaited one-at-a-time so each recipient gets its own 30s timeout window.
-    outcomes.push(await sendSingleNotice(ctx, recipient))
+    outcomes.push(await sendSingleNotice(ctx, recipients[i]))
   }
   return summarizeBulkRun(outcomes)
 }

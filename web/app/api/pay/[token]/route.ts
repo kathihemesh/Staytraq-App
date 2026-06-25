@@ -11,6 +11,76 @@ function normalizeMobileLast10(mobileNumber: string) {
   return clean.length >= 10 ? clean.slice(-10) : null
 }
 
+/**
+ * Resolve a per-tenant payment-portal token (tenants_table.payment_portal_token)
+ * into the same payload the mobile-verification POST returns, plus the owner's
+ * settings and pg name. Returns null when the token does not match a tenant, so
+ * the caller can fall through to a 404. This powers the unique per-tenant link
+ * sent by the daily reminder scheduler: it skips mobile verification and shows
+ * the tenant's outstanding dues directly.
+ */
+async function resolveTenantTokenPayload(
+  supabase: ReturnType<typeof createAdminClient>,
+  token: string
+) {
+  const { data: tenant } = await supabase
+    .from('tenants_table')
+    .select('id, name, owner_id, payment_code, status, rooms_table ( room_number )')
+    .eq('payment_portal_token', token)
+    .maybeSingle()
+
+  if (!tenant) return null
+
+  const [{ data: settings }, { data: pgDetails }, { data: payData }] = await Promise.all([
+    supabase
+      .from('settings')
+      .select('upi_id, upi_name, payment_instructions, is_merchant')
+      .eq('owner_id', tenant.owner_id)
+      .maybeSingle(),
+    supabase
+      .from('pg_details')
+      .select('pg_name')
+      .eq('owner_id', tenant.owner_id)
+      .maybeSingle(),
+    supabase
+      .from('payments')
+      .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
+      .eq('tenant_id', tenant.id),
+  ])
+
+  const roomRaw = (tenant as { rooms_table?: unknown }).rooms_table
+  const room = Array.isArray(roomRaw) ? roomRaw[0] : (roomRaw as { room_number?: string } | null)
+
+  // Show every outstanding invoice (anything not yet paid), most-recent first.
+  const activePayments = (payData || [])
+    .filter((p) => p.status !== 'paid')
+    .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
+
+  const mappedPayments = activePayments.map((payment) => ({
+    id: payment.id,
+    amount: payment.total_amount,
+    status: payment.status,
+    due_date: payment.due_date,
+    month: payment.month,
+    year: payment.year,
+    verification_notes: payment.verification_notes || null,
+    payment_code: payment.payment_code,
+  }))
+
+  return {
+    valid: true,
+    mode: 'tenant' as const,
+    pg_name: pgDetails?.pg_name || null,
+    settings: settings || null,
+    tenant: {
+      name: tenant.name || 'Tenant',
+      room_number: room?.room_number || 'Unknown',
+      payment_code: tenant.payment_code || 'ST-XXXXXX',
+    },
+    payments: mappedPayments,
+  }
+}
+
 // GET: Validates the public portal token and returns the owner's payment settings + month details
 export async function GET(
   request: Request,
@@ -24,15 +94,18 @@ export async function GET(
 
     const supabase = createAdminClient()
 
-    // 1. Fetch monthly payment link matching the portal_token
-    const { data: linkRecord, error: linkError } = await supabase
+    // 1. Fetch monthly payment link matching the portal_token (owner grouped portal)
+    const { data: linkRecord } = await supabase
       .from('monthly_payment_links')
       .select('owner_id, month, year')
       .eq('portal_token', token)
-      .single()
+      .maybeSingle()
 
-    if (linkError || !linkRecord) {
-      console.error('[pay/token] Error fetching monthly link:', JSON.stringify(linkError))
+    // 1a. Not an owner portal token → try a per-tenant payment-portal token,
+    //     which resolves the tenant's dues directly (no mobile verification).
+    if (!linkRecord) {
+      const tenantPayload = await resolveTenantTokenPayload(supabase, token)
+      if (tenantPayload) return NextResponse.json(tenantPayload)
       return NextResponse.json({ error: 'Invalid or expired payment portal link' }, { status: 404 })
     }
 
@@ -60,6 +133,7 @@ export async function GET(
 
     return NextResponse.json({
       valid: true,
+      mode: 'portal',
       month: linkRecord.month,
       year: linkRecord.year,
       settings: settings || null,

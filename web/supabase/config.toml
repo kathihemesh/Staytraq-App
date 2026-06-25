@@ -21,3 +21,9 @@ enabled = true
 verify_jwt = true
 import_map = "./functions/identity-cleanup/deno.json"
 entrypoint = "./functions/identity-cleanup/index.ts"
+
+[functions.payment-reminders]
+enabled = true
+verify_jwt = true
+import_map = "./functions/payment-reminders/deno.json"
+entrypoint = "./functions/payment-reminders/index.ts"

@@ -55,6 +55,9 @@ export default function TenantPaymentPage() {
   const [state, setState] = useState<PaymentState>('loading')
   const [data, setData] = useState<PaymentData | null>(null)
   const [selectedPayment, setSelectedPayment] = useState<PaymentData['payments'][0] | null>(null)
+  // Direct (per-tenant) mode: the link is a per-tenant payment-portal token, so
+  // the mobile-verification step is skipped and dues are shown immediately.
+  const [directMode, setDirectMode] = useState(false)
   
   // Verification state
   const [mobileNumber, setMobileNumber] = useState('')
@@ -80,6 +83,33 @@ export default function TenantPaymentPage() {
         }
 
         const json = await res.json()
+
+        // Per-tenant payment-portal token: skip verification and show dues now.
+        if (json.mode === 'tenant') {
+          setDirectMode(true)
+          const tPayments = (json.payments || []) as PaymentData['payments']
+          setData({
+            portalMonth: undefined,
+            portalYear: undefined,
+            pgName: json.pg_name,
+            tenant: json.tenant,
+            payments: tPayments,
+            settings: json.settings,
+          })
+          if (tPayments.length === 0) {
+            setSelectedPayment(null)
+            setState('no_dues')
+          } else if (tPayments.length === 1) {
+            const sp = tPayments[0]
+            setSelectedPayment(sp)
+            setState(sp.status === 'paid' ? 'paid' : sp.status === 'submitted' ? 'submitted' : 'pending')
+          } else {
+            setSelectedPayment(null)
+            setState('select_invoice')
+          }
+          return
+        }
+
         setData({
           portalMonth: json.month,
           portalYear: json.year,
@@ -99,6 +129,24 @@ export default function TenantPaymentPage() {
       validatePortal()
     }
   }, [token])
+
+  // In direct (per-tenant) mode there is no verification step. If any "back"/
+  // "exit" control tries to route to the mobile-entry form, bounce straight back
+  // to the tenant's dues view instead.
+  useEffect(() => {
+    if (!directMode || state !== 'verify_identity') return
+    const pays = data?.payments || []
+    if (pays.length === 0) {
+      setState('no_dues')
+    } else if (pays.length > 1) {
+      setSelectedPayment(null)
+      setState('select_invoice')
+    } else {
+      const sp = pays[0]
+      setSelectedPayment(sp)
+      setState(sp.status === 'paid' ? 'paid' : sp.status === 'submitted' ? 'submitted' : 'pending')
+    }
+  }, [directMode, state, data])
 
   // 2. Identity Verification Lookup by Mobile Number
   const handleVerifyIdentity = async (e: React.FormEvent) => {
