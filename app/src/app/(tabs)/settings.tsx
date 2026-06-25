@@ -29,6 +29,8 @@ export default function SettingsScreen() {
   const whatsappInviteLinkInput = useKeyboardAwareInput()
   const paymentInstructionsInput = useKeyboardAwareInput()
   const pairingPhoneInput = useKeyboardAwareInput()
+  const pgNameInput = useKeyboardAwareInput()
+  const ownerNameInput = useKeyboardAwareInput()
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -46,6 +48,9 @@ export default function SettingsScreen() {
   const [paymentInstructions, setPaymentInstructions] = useState("")
   const [isMerchant, setIsMerchant] = useState(false)
   const [settingsId, setSettingsId] = useState<number | null>(null)
+  // Personal information (PG name + owner name)
+  const [pgName, setPgName] = useState("")
+  const [ownerName, setOwnerName] = useState("")
 
   // Chatbot settings state
   const [chatbotStatusLoading, setChatbotStatusLoading] = useState(true)
@@ -285,7 +290,7 @@ export default function SettingsScreen() {
       if (!silent) setLoading(true)
       setError(null)
 
-      const [settingsRes, ownerRes] = await Promise.all([
+      const [settingsRes, ownerRes, pgRes] = await Promise.all([
         supabase
           .from("settings")
           .select("*")
@@ -293,8 +298,13 @@ export default function SettingsScreen() {
           .maybeSingle(),
         supabase
           .from("pg_owners")
-          .select("chatbot_enabled")
+          .select("chatbot_enabled, name")
           .eq("id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("pg_details")
+          .select("pg_name")
+          .eq("owner_id", user.id)
           .maybeSingle()
       ])
 
@@ -306,7 +316,9 @@ export default function SettingsScreen() {
 
       if (ownerData) {
         setChatbotEnabled(ownerData.chatbot_enabled ?? false)
+        setOwnerName(ownerData.name ?? "")
       }
+      setPgName(pgRes.data?.pg_name ?? "")
 
       if (data) {
         setSettingsId(data.id)
@@ -432,6 +444,24 @@ export default function SettingsScreen() {
         if (data) setSettingsId(data.id)
       }
 
+      // Persist personal information (PG name + owner name).
+      if (pgName.trim()) {
+        const { error: pgErr } = await supabase
+          .from("pg_details")
+          .update({ pg_name: pgName.trim() })
+          .eq("owner_id", user.id)
+        if (pgErr) throw pgErr
+      }
+      {
+        if (ownerName.trim()) {
+          const { error: ownerErr } = await supabase
+            .from("pg_owners")
+            .update({ name: ownerName.trim() })
+            .eq("id", user.id)
+          if (ownerErr) throw ownerErr
+        }
+      }
+
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       
       if (successTimeoutRef.current) {
@@ -544,6 +574,50 @@ export default function SettingsScreen() {
               <Text className="text-success text-xs font-bold flex-1">Settings updated successfully!</Text>
             </Animated.View>
           )}
+
+          {/* Section: Personal Information */}
+          <View className="px-6 mt-6">
+            <View className="flex-row items-center mb-3">
+              <View className="mr-2">
+                <User size={18} color={isDark ? "#0091ff" : "#0071df"} />
+              </View>
+              <Text className="text-sm font-bold text-muted uppercase tracking-wider">Personal Information</Text>
+            </View>
+
+            <View className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-3xl p-5 shadow-sm gap-4">
+              <View>
+                <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">PG Name</Text>
+                <TextInput
+                  ref={pgNameInput.ref}
+                  onFocus={pgNameInput.onFocus}
+                  value={pgName}
+                  onChangeText={setPgName}
+                  placeholder="e.g. Sunrise Residency"
+                  placeholderTextColor="#9ca3af"
+                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
+                />
+                <Text className="text-[10px] text-muted mt-1.5 leading-4">
+                  Shown to tenants on payment, identity and complaint pages, and in reminder messages.
+                </Text>
+              </View>
+
+              <View>
+                <Text className="text-sm font-bold text-foreground dark:text-foreground-dark mb-2">Owner Name</Text>
+                <TextInput
+                  ref={ownerNameInput.ref}
+                  onFocus={ownerNameInput.onFocus}
+                  value={ownerName}
+                  onChangeText={setOwnerName}
+                  placeholder="e.g. John Doe"
+                  placeholderTextColor="#9ca3af"
+                  className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark font-semibold"
+                />
+                <Text className="text-[10px] text-muted mt-1.5 leading-4">
+                  Your name as the property owner.
+                </Text>
+              </View>
+            </View>
+          </View>
 
           {/* Section 1: Rental Policy Rules */}
           <View className="px-6 mt-6">
