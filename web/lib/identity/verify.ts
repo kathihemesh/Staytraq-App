@@ -35,7 +35,11 @@ export type CheckResult = { ok: true } | { ok: false; reason: string }
  */
 export function containsCI(text: string, phrase: string): boolean {
   if (typeof text !== "string" || typeof phrase !== "string") return false
-  return text.toLowerCase().includes(phrase.toLowerCase())
+  // Collapse all whitespace runs (including the line breaks OCR frequently
+  // inserts mid-phrase, e.g. "Permanent Account\nNumber Card") to single
+  // spaces before comparing, so a marker split across lines still matches.
+  const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim()
+  return normalize(text).includes(normalize(phrase))
 }
 
 /**
@@ -96,14 +100,34 @@ export function extractAadhaarNumber(text: string): string | null {
 }
 
 /**
- * Extract the first PAN_Code matching `[A-Z]{5}[0-9]{4}[A-Z]` from the extracted
- * text (Reqs 10.1, 10.2). Returns the matched code, or `null` when no match is
- * present. The match is case-sensitive: a PAN_Code is printed in capitals.
+ * Extract a PAN_Code matching `[A-Z]{5}[0-9]{4}[A-Z]` from the extracted text
+ * (Reqs 10.1, 10.2). Matching is case-insensitive and tolerant of the common
+ * OCR "O"/"0" confusion within the code's letter/digit blocks, returning the
+ * corrected uppercase PAN, or `null` when no PAN-shaped code is present.
  */
 export function extractPanCode(text: string): string | null {
   if (typeof text !== "string") return null
-  const match = PAN_CODE_PATTERN.exec(text)
-  return match ? match[0] : null
+  const upper = text.toUpperCase()
+
+  // Fast path: a clean PAN read exactly as 5 letters, 4 digits, 1 letter.
+  const direct = PAN_CODE_PATTERN.exec(upper)
+  if (direct) return direct[0]
+
+  // OCR-tolerant pass: scan 10-character alphanumeric tokens and correct the
+  // most common confusion — the letter "O" read in place of the digit "0"
+  // (and vice-versa) — within each block, then accept only if the corrected
+  // token is a valid PAN. This recognizes e.g. "BYQPHO946F" as "BYQPH0946F".
+  const tokenPattern = /[A-Z0-9]{10}/g
+  let match: RegExpExecArray | null
+  while ((match = tokenPattern.exec(upper)) !== null) {
+    const t = match[0]
+    const corrected =
+      t.slice(0, 5).replace(/0/g, "O") + // first 5 must be letters
+      t.slice(5, 9).replace(/O/g, "0") + // next 4 must be digits
+      t.slice(9, 10).replace(/0/g, "O") // last 1 must be a letter
+    if (/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(corrected)) return corrected
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
