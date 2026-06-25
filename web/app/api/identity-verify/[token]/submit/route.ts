@@ -53,7 +53,10 @@ async function verifyWithOpenAI(args: {
   const { type, name, images } = args
   const requirements =
     type === 'Aadhaar'
-      ? 'an Indian Aadhaar card. The front must show "Government of India", a 12-digit Aadhaar number, and the holder\'s name. If a back image is provided, it must show the same 12-digit number and "Unique Identification Authority of India".'
+      ? 'an Indian Aadhaar card. The front must show "Government of India", a 12-digit Aadhaar number, and the holder\'s name. ' +
+        'When a back image is provided, it MUST be the back of the SAME Aadhaar card: it must show "Unique Identification Authority of India" ' +
+        'and the EXACT SAME 12-digit Aadhaar number as the front. If the back shows a different 12-digit number than the front (i.e. the front ' +
+        'and back are from two different Aadhaar cards), fail with pass=false and a reason saying the front and back belong to different Aadhaar cards.'
       : 'an Indian PAN card. It must show "Permanent Account Number", a PAN code formatted as five letters, four digits, then one letter, and the holder\'s name.'
   const idShape =
     type === 'Aadhaar'
@@ -61,18 +64,24 @@ async function verifyWithOpenAI(args: {
       : 'the 10-character PAN code in uppercase'
 
   const systemPrompt =
-    'You are a strict identity-document verifier. You are shown image(s) of an identity ' +
+    'You are a lenient identity-document verifier. You are shown image(s) of an identity ' +
     'document along with the expected document type and the tenant name. Decide whether the ' +
     'image is a genuine, fully readable document of the expected type, and whether the name on ' +
-    'the document matches the tenant name (allow minor differences: transliteration, initials, ' +
-    'middle names, and word ordering). Respond ONLY with a single compact JSON object, no prose.'
+    'the document plausibly belongs to the tenant. Be GENEROUS about name matching — pass the ' +
+    'name check if ANY of these hold: the tenant name matches the full name, OR the tenant name ' +
+    'is a subset/part of the document name (e.g. only the first name, only the last name, or ' +
+    'without the surname/initials), OR the document name contains the tenant name, OR they share ' +
+    'a significant name token. Also allow transliteration differences, initials, middle names, ' +
+    'extra/abbreviated names, and word ordering. For example, tenant name "Hemesh" should MATCH a ' +
+    'document name "KATHI HEMESH REDDY". Only fail the name check when there is no meaningful ' +
+    'overlap at all (clearly a different person). Respond ONLY with a single compact JSON object, no prose.'
 
   const userText =
     `Expected document type: ${type} — ${requirements}\n` +
     `Tenant name to match: "${name}"\n\n` +
     'Return JSON with exactly these fields:\n' +
     '{\n' +
-    `  "pass": boolean,            // true only if it is a genuine ${type}, readable, and the name matches\n` +
+    `  "pass": boolean,            // true only if it is a genuine ${type}, readable, and the name plausibly belongs to the tenant (partial/subset name match is acceptable)\n` +
     '  "id_type": "Aadhaar" | "PAN" | "unknown",\n' +
     `  "id_number": string | null, // when pass is true, ${idShape}; otherwise null\n` +
     '  "reason": string            // when pass is false, one short friendly sentence the tenant can act on ' +

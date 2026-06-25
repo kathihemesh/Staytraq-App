@@ -4,7 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js";
 // Daily payment-reminder scheduler.
 //
 // For every tenant with at least one unpaid bill (status not "paid"/"submitted")
-// that is within the reminder window — due within the next 3 days, due today, or
+// that is within the reminder window — due within the next 2 days, due today, or
 // overdue — this sends ONE combined WhatsApp reminder per calendar day listing
 // all such bills with their per-bill status (upcoming / due today / late by N).
 // Each tenant gets a unique payment link (a per-tenant payment-portal token) that
@@ -14,7 +14,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js";
 // because edge functions cannot bundle a cross-directory import). A 3.5s delay is
 // inserted between sends so WhatsApp does not flag the sender.
 
-const REMINDER_LEAD_DAYS = 3;
+const REMINDER_LEAD_DAYS = 2;
 const SEND_DELAY_MS = 3500;
 
 const MONTH_NAMES = [

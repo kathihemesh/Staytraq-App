@@ -14,7 +14,7 @@
 //     REMINDER_LEAD_DAYS days, due today, or overdue.
 //   - All of a tenant's in-window bills are combined into ONE message per day.
 
-export const REMINDER_LEAD_DAYS = 3
+export const REMINDER_LEAD_DAYS = 2
 
 export const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
