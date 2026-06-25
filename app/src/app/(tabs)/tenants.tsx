@@ -666,8 +666,9 @@ export default function TenantsScreen() {
         total_amount: tenant.deposit_amount,
         due_date: tenant.join_date || new Date().toISOString().split("T")[0],
         status: "pending",
-        reminder_sent: false
-      })
+        reminder_sent: false,
+        is_deposit: true
+      } as never)
       .select("id")
       .single()
 
@@ -903,8 +904,9 @@ export default function TenantsScreen() {
             extra_charges: 0,
             total_amount: justAddedTenant.deposit_amount,
             due_date: justAddedTenant.join_date || new Date().toISOString().split("T")[0],
-            status: "pending"
-          })
+            status: "pending",
+            is_deposit: true
+          } as never)
           
         if (payErr) throw payErr
       }

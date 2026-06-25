@@ -81,13 +81,14 @@ serve(async () => {
       const month = candDateOnly.getMonth() + 1; // 1-indexed
       const year = candDateOnly.getFullYear();
 
-      // Prevent duplicates.
+      // Prevent duplicate rent records (ignore deposit records for this month).
       const { data: existing, error: existErr } = await supabase
         .from("payments")
         .select("id")
         .eq("tenant_id", tenant.id)
         .eq("month", month)
         .eq("year", year)
+        .eq("is_deposit", false)
         .maybeSingle();
 
       if (existErr) {

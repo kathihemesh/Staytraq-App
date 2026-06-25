@@ -384,6 +384,9 @@ export default function PaymentsScreen() {
   const [formStatus, setFormStatus] = useState<Payment["status"]>("pending")
   const [formPaymentMethod, setFormPaymentMethod] = useState("")
   const [formUtrNumber, setFormUtrNumber] = useState("")
+  // When adding a record manually, lets the owner mark it as a deposit / non-rent
+  // charge so the auto rent generator does not treat it as the month's rent.
+  const [formIsDeposit, setFormIsDeposit] = useState(false)
   const [formPaymentDate, setFormPaymentDate] = useState("")
   const [formError, setFormError] = useState<string | null>(null)
   const [selectedTenantIds, setSelectedTenantIds] = useState<number[]>([])
@@ -1246,6 +1249,7 @@ export default function PaymentsScreen() {
     setFormPaymentMethod("UPI")
     setFormUtrNumber("")
     setFormPaymentDate("")
+    setFormIsDeposit(false)
     setFormError(null)
     setFormModalVisible(true)
   }
@@ -1369,7 +1373,8 @@ export default function PaymentsScreen() {
             year: currentYear,
             due_date: formDueDate,
             status: finalStatus,
-            owner_id: user.id
+            owner_id: user.id,
+            is_deposit: formIsDeposit
           }
         })
 
@@ -2733,6 +2738,27 @@ export default function PaymentsScreen() {
                     />
                   )}
                 </View>
+              )}
+
+              {/* Deposit / non-rent toggle (new records only). Marks the record so the
+                  automatic monthly rent generator never treats it as the month's rent. */}
+              {!editingPayment && (
+                <TouchableOpacity
+                  onPress={() => {
+                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                    setFormIsDeposit((v) => !v)
+                  }}
+                  activeOpacity={0.7}
+                  className="flex-row items-center gap-3 border border-border dark:border-border-dark p-3.5 rounded-xl bg-background dark:bg-background-dark mt-1"
+                >
+                  <View className={`h-6 w-6 rounded-md border-2 items-center justify-center ${formIsDeposit ? "bg-primary border-primary" : "border-border dark:border-border-dark"}`}>
+                    {formIsDeposit && <Check size={14} color="#ffffff" strokeWidth={3} />}
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-sm font-semibold text-foreground dark:text-foreground-dark">Deposit / non-rent charge</Text>
+                    <Text className="text-xs text-muted dark:text-muted-dark mt-0.5">Keeps this separate so the monthly rent record is still generated automatically.</Text>
+                  </View>
+                </TouchableOpacity>
               )}
             </KeyboardAwareScrollView>
 
