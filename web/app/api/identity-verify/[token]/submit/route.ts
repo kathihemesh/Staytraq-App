@@ -64,32 +64,43 @@ async function verifyWithOpenAI(args: {
       : 'the 10-character PAN code in uppercase'
 
   const systemPrompt =
-    'You are a lenient identity-document verifier. You are shown image(s) of an identity ' +
-    'document along with the expected document type and the tenant name. Decide whether the ' +
-    'image is a genuine, fully readable document of the expected type, and whether the name on ' +
-    'the document plausibly belongs to the tenant. Be GENEROUS about name matching — pass the ' +
-    'name check if ANY of these hold: the tenant name matches the full name, OR the tenant name ' +
-    'is a subset/part of the document name (e.g. only the first name, only the last name, or ' +
-    'without the surname/initials), OR the document name contains the tenant name, OR they share ' +
-    'a significant name token. Also allow transliteration differences, initials, middle names, ' +
-    'extra/abbreviated names, and word ordering. For example, tenant name "Hemesh" should MATCH a ' +
-    'document name "KATHI HEMESH REDDY". Only fail the name check when there is no meaningful ' +
-    'overlap at all (clearly a different person). Respond ONLY with a single compact JSON object, no prose.'
+    'You are an identity-document verifier. You are shown one or more LABELLED image(s) of an ' +
+    'identity document along with the expected document type and the tenant name.\n\n' +
+    'DOCUMENT AUTHENTICITY (be strict): every image is labelled (FRONT or BACK). Each labelled image ' +
+    'MUST be a genuine photo of that exact side of the expected document. If ANY provided image is NOT ' +
+    'a real photo of that document side — for example a screenshot, an app/wallet screen, a random or ' +
+    'unrelated photo, a blank image, a duplicate of the other side, or a different document — you MUST ' +
+    'fail (pass=false) and say which image is invalid. Do NOT pass just because one image is valid; ALL ' +
+    'provided images must be valid sides of the SAME physical document.\n\n' +
+    'NAME MATCHING (be generous): pass the name check if ANY of these hold: the tenant name matches the ' +
+    'full name, OR the tenant name is a subset/part of the document name (e.g. only the first name, only ' +
+    'the last name, or without the surname/initials), OR the document name contains the tenant name, OR ' +
+    'they share a significant name token. Also allow transliteration differences, initials, middle names, ' +
+    'extra/abbreviated names, and word ordering. For example, tenant name "Hemesh" should MATCH a document ' +
+    'name "KATHI HEMESH REDDY". Only fail the name check when there is no meaningful overlap at all.\n\n' +
+    'Respond ONLY with a single compact JSON object, no prose.'
 
   const userText =
     `Expected document type: ${type} — ${requirements}\n` +
     `Tenant name to match: "${name}"\n\n` +
+    (type === 'Aadhaar'
+      ? 'You are given a FRONT image and a BACK image. BOTH must be genuine photos of the same Aadhaar card, ' +
+        'and the 12-digit number on the back must equal the one on the front. If the BACK image is not an ' +
+        'actual Aadhaar back (e.g. a screenshot or unrelated photo), fail.\n\n'
+      : '') +
     'Return JSON with exactly these fields:\n' +
     '{\n' +
-    `  "pass": boolean,            // true only if it is a genuine ${type}, readable, and the name plausibly belongs to the tenant (partial/subset name match is acceptable)\n` +
+    `  "pass": boolean,            // true only if EVERY provided image is a genuine ${type} side, readable, and the name plausibly belongs to the tenant (partial/subset name match is acceptable)\n` +
     '  "id_type": "Aadhaar" | "PAN" | "unknown",\n' +
     `  "id_number": string | null, // when pass is true, ${idShape}; otherwise null\n` +
     '  "reason": string            // when pass is false, one short friendly sentence the tenant can act on ' +
-    '(e.g. wrong document type, blurry/unreadable, rotated, glare, or the name does not match). When pass is true, "ok".\n' +
+    '(e.g. wrong document type, the back image is not an Aadhaar, blurry/unreadable, rotated, glare, front/back numbers differ, or the name does not match). When pass is true, "ok".\n' +
     '}'
 
   const content: Array<Record<string, unknown>> = [{ type: 'text', text: userText }]
   for (const img of images) {
+    const label = img.label === 'back' ? 'BACK' : 'FRONT'
+    content.push({ type: 'text', text: `${label} image of the ${type}:` })
     content.push({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })
   }
 
