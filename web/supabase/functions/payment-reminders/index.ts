@@ -124,9 +124,10 @@ function selectReminderBills(bills: DueBill[], today: string, leadDays: number):
   return views;
 }
 
-function buildPaymentReminderMessage(name: string, views: ReminderBillView[], link: string): string {
+function buildPaymentReminderMessage(name: string, views: ReminderBillView[], link: string, pgName?: string | null): string {
   if (views.length === 0) return "";
   const tenantName = (name ?? "").trim() || "Tenant";
+  const pg = (pgName ?? "").trim() || "your PG";
   const count = views.length;
   const noun = count === 1 ? "pending payment" : "pending payments";
   const lines = views
@@ -134,7 +135,7 @@ function buildPaymentReminderMessage(name: string, views: ReminderBillView[], li
     .join("\n");
   return (
     `Hi ${tenantName},\n\n` +
-    `You have ${count} ${noun} on Staytraq:\n\n` +
+    `You have ${count} ${noun} for ${pg}:\n\n` +
     `${lines}\n\n` +
     `View all your dues and pay securely here:\n${link}\n\n` +
     `If you've already paid, please ignore this message. Thank you!`
@@ -278,6 +279,19 @@ serve(async () => {
     });
   }
 
+  // Resolve each owner's PG name so messages use it in place of the brand name.
+  const ownerIds = [...new Set([...groups.values()].map((g) => String(g.owner_id)))];
+  const pgByOwner = new Map<string, string>();
+  if (ownerIds.length > 0) {
+    const { data: pgRows } = await supabase
+      .from("pg_details")
+      .select("owner_id, pg_name")
+      .in("owner_id", ownerIds);
+    for (const r of pgRows || []) {
+      if (r.pg_name) pgByOwner.set(String(r.owner_id), r.pg_name);
+    }
+  }
+
   let sentCount = 0;
   let failedCount = 0;
   let skippedCount = 0;
@@ -328,7 +342,12 @@ serve(async () => {
     }
 
     const link = buildPaymentLink(portalBase, token);
-    const message = buildPaymentReminderMessage(tenant.name ?? "", views, link);
+    const message = buildPaymentReminderMessage(
+      tenant.name ?? "",
+      views,
+      link,
+      pgByOwner.get(String(tenant.owner_id)) ?? null
+    );
 
     let ok = false;
     try {

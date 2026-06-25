@@ -166,6 +166,11 @@ export default function IdentityVerifyPage() {
     const file = e.target.files?.[0]
     if (!file) return
     clearResultMessages()
+    if (file.type && !file.type.startsWith('image/')) {
+      setSubmitError('Please select an image (photo) of your document.')
+      e.target.value = ''
+      return
+    }
     // Replacing the front clears any back image (front-before-back ordering).
     setBackPreviewUrl(null)
     setBackFile(null)
@@ -178,6 +183,11 @@ export default function IdentityVerifyPage() {
     const file = e.target.files?.[0]
     if (!file) return
     clearResultMessages()
+    if (file.type && !file.type.startsWith('image/')) {
+      setSubmitError('Please select an image (photo) of your document.')
+      e.target.value = ''
+      return
+    }
     setBackFile(file)
     setBackPreviewUrl(URL.createObjectURL(file))
   }
@@ -528,7 +538,7 @@ export default function IdentityVerifyPage() {
                       onRemove={handleRemoveFront}
                       disabled={submitting}
                     />
-                    <input ref={frontInputRef} type="file" accept="image/*" className="hidden" onChange={handleFrontChange} />
+                    <input ref={frontInputRef} type="file" className="hidden" onChange={handleFrontChange} />
 
                     {controls.back && (
                       <>
@@ -540,7 +550,7 @@ export default function IdentityVerifyPage() {
                           disabled={!backUploadEnabled || submitting}
                           disabledHint="Upload the front image first"
                         />
-                        <input ref={backInputRef} type="file" accept="image/*" className="hidden" onChange={handleBackChange} disabled={!backUploadEnabled} />
+                        <input ref={backInputRef} type="file" className="hidden" onChange={handleBackChange} disabled={!backUploadEnabled} />
                       </>
                     )}
                   </CardContent>

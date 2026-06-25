@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CheckCircle2, AlertCircle, Loader2, Phone, ArrowLeft, MessageSquare, ShieldCheck, PenTool } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Loader2, Phone, ArrowLeft, MessageSquare, ShieldCheck, PenTool, ImagePlus, X } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -34,6 +34,56 @@ export default function TenantComplaintPage() {
   const [complaintMessage, setComplaintMessage] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [pastComplaints, setPastComplaints] = useState<any[]>([])
+  // Attached images (max 5, ≤5MB each). Each carries an object-URL preview.
+  const [images, setImages] = useState<{ file: File; url: string }[]>([])
+  const MAX_IMAGES = 5
+
+  // Revoke any outstanding object URLs on unmount (ref avoids stale closure).
+  const imagesRef = useRef<{ file: File; url: string }[]>([])
+  imagesRef.current = images
+  useEffect(() => {
+    return () => {
+      imagesRef.current.forEach((img) => URL.revokeObjectURL(img.url))
+    }
+  }, [])
+
+  const handleImagesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    e.target.value = ''
+    if (files.length === 0) return
+    setImages((prev) => {
+      const room = MAX_IMAGES - prev.length
+      if (room <= 0) {
+        toast.error(`You can attach up to ${MAX_IMAGES} images.`)
+        return prev
+      }
+      const accepted: { file: File; url: string }[] = []
+      for (const f of files) {
+        if (accepted.length >= room) {
+          toast.error(`You can attach up to ${MAX_IMAGES} images.`)
+          break
+        }
+        if (!f.type.startsWith('image/')) {
+          toast.error('Only image files can be attached.')
+          continue
+        }
+        if (f.size > 5 * 1024 * 1024) {
+          toast.error(`${f.name} is larger than 5MB.`)
+          continue
+        }
+        accepted.push({ file: f, url: URL.createObjectURL(f) })
+      }
+      return [...prev, ...accepted]
+    })
+  }
+
+  const removeImage = (idx: number) => {
+    setImages((prev) => {
+      const item = prev[idx]
+      if (item) URL.revokeObjectURL(item.url)
+      return prev.filter((_, i) => i !== idx)
+    })
+  }
 
   // 1. Initial Load: Check if complaint portal token is valid
   useEffect(() => {
@@ -105,13 +155,14 @@ export default function TenantComplaintPage() {
 
     setIsSubmitting(true)
     try {
+      const body = new FormData()
+      body.set('mobile_number', mobileNumber)
+      body.set('complaint_message', complaintMessage)
+      images.forEach((img) => body.append('images', img.file, img.file.name))
+
       const res = await fetch(`/api/complaint-submit/${token}/submit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mobile_number: mobileNumber,
-          complaint_message: complaintMessage
-        })
+        body
       })
 
       if (!res.ok) {
@@ -119,6 +170,8 @@ export default function TenantComplaintPage() {
         throw new Error(errData.error || 'Failed to submit complaint')
       }
 
+      images.forEach((img) => URL.revokeObjectURL(img.url))
+      setImages([])
       toast.success('Complaint submitted successfully')
       setState('submitted')
     } catch (error: any) {
@@ -297,6 +350,43 @@ export default function TenantComplaintPage() {
                       <div className="text-right text-[10px] text-neutral-500 font-medium">
                         {complaintMessage.length} / 500 characters
                       </div>
+                    </div>
+
+                    {/* Attach images (optional) */}
+                    <div className="space-y-2">
+                      <Label className="text-neutral-300">Attach photos (optional)</Label>
+                      <div className="grid grid-cols-4 gap-2">
+                        {images.map((img, idx) => (
+                          <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-neutral-800 bg-neutral-950">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={img.url} alt={`attachment ${idx + 1}`} className="h-full w-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => removeImage(idx)}
+                              disabled={isSubmitting}
+                              className="absolute top-1 right-1 h-5 w-5 rounded-full bg-black/70 text-white flex items-center justify-center hover:bg-black"
+                              aria-label="Remove image"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                        {images.length < MAX_IMAGES && (
+                          <label className="aspect-square rounded-lg border border-dashed border-neutral-700 bg-neutral-950 flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-red-500/60 transition-colors">
+                            <ImagePlus className="h-5 w-5 text-neutral-500" />
+                            <span className="text-[9px] text-neutral-500 font-medium">Add</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              multiple
+                              className="hidden"
+                              onChange={handleImagesSelected}
+                              disabled={isSubmitting}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-neutral-500">Up to {MAX_IMAGES} images, 5MB each.</p>
                     </div>
                   </CardContent>
 

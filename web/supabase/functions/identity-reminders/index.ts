@@ -36,11 +36,12 @@ function buildVerificationLink(base: string, token: string): string {
  * `buildIdentityMessage` (`app/src/lib/identity/message.ts`) so reminders read
  * identically to the creation-time message (Reqs 13.5).
  */
-function buildIdentityMessage(name: string, link: string): string {
+function buildIdentityMessage(name: string, link: string, pgName?: string | null): string {
   const tenantName = (name ?? "").trim() || "Tenant";
+  const pg = (pgName ?? "").trim() || "your PG";
   return (
     `Hi ${tenantName},\n\n` +
-    `Your property owner has requested that you verify your identity on Staytraq.\n\n` +
+    `Your property owner has requested that you verify your identity for ${pg}.\n\n` +
     `Please open the secure link below to upload your identity document. ` +
     `Your documents are encrypted and visible only to your property owner:\n${link}\n\n` +
     `Thank you!`
@@ -104,6 +105,19 @@ serve(async () => {
   if (error) {
     console.error("Error fetching tenants for identity reminders:", error);
     return new Response(JSON.stringify(error), { status: 500 });
+  }
+
+  // Resolve each owner's PG name so messages use it in place of the brand name.
+  const ownerIds = [...new Set((tenants || []).map((t) => String(t.owner_id)))];
+  const pgByOwner = new Map<string, string>();
+  if (ownerIds.length > 0) {
+    const { data: pgRows } = await supabase
+      .from("pg_details")
+      .select("owner_id, pg_name")
+      .in("owner_id", ownerIds);
+    for (const r of pgRows || []) {
+      if (r.pg_name) pgByOwner.set(String(r.owner_id), r.pg_name);
+    }
   }
 
   let sentCount = 0;
@@ -178,7 +192,11 @@ serve(async () => {
     }
 
     const link = buildVerificationLink(portalBase, tenant.verification_token);
-    const message = buildIdentityMessage(tenant.name ?? "", link);
+    const message = buildIdentityMessage(
+      tenant.name ?? "",
+      link,
+      pgByOwner.get(String(tenant.owner_id)) ?? null
+    );
 
     // Deliver via the chatbot backend's service-authenticated endpoint. The
     // scheduler has no per-owner JWT, so it authenticates with the static

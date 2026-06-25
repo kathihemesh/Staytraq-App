@@ -161,15 +161,18 @@ export function selectReminderBills(
 /**
  * Build the combined, dynamic reminder message for one tenant. Always names the
  * tenant, states the number of bills due, lists each bill with its status, and
- * embeds the single payment link. Returns "" when there are no bills to show.
+ * embeds the single payment link. When the owner's PG name is known it is used
+ * in place of the generic brand name. Returns "" when there are no bills to show.
  */
 export function buildPaymentReminderMessage(
   name: string,
   views: ReadonlyArray<ReminderBillView>,
   link: string,
+  pgName?: string | null,
 ): string {
   if (views.length === 0) return ""
   const tenantName = (name ?? "").trim() || "Tenant"
+  const pg = (pgName ?? "").trim() || "your PG"
   const count = views.length
   const noun = count === 1 ? "pending payment" : "pending payments"
 
@@ -179,7 +182,7 @@ export function buildPaymentReminderMessage(
 
   return (
     `Hi ${tenantName},\n\n` +
-    `You have ${count} ${noun} on Staytraq:\n\n` +
+    `You have ${count} ${noun} for ${pg}:\n\n` +
     `${lines}\n\n` +
     `View all your dues and pay securely here:\n${link}\n\n` +
     `If you've already paid, please ignore this message. Thank you!`
@@ -196,8 +199,9 @@ export function summarizeTenantReminder(
   today: string | Date,
   link: string,
   leadDays: number = REMINDER_LEAD_DAYS,
+  pgName?: string | null,
 ): { message: string; count: number; views: ReminderBillView[] } | null {
   const views = selectReminderBills(bills, today, leadDays)
   if (views.length === 0) return null
-  return { message: buildPaymentReminderMessage(name, views, link), count: views.length, views }
+  return { message: buildPaymentReminderMessage(name, views, link, pgName), count: views.length, views }
 }

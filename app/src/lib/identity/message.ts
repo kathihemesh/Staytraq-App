@@ -47,17 +47,21 @@ export interface SendIdentityRequestDeps {
   timeoutMs?: number
   /** Maximum total attempts; defaults to {@link MAX_SEND_ATTEMPTS}. */
   maxAttempts?: number
+  /** The owner's PG name, embedded in the message in place of the brand name. */
+  pgName?: string | null
 }
 
 /**
  * Build the identity-request message. It always embeds the tenant name and the
- * verification link (Reqs 3.6, 13.5).
+ * verification link (Reqs 3.6, 13.5). When the owner's PG name is known it is
+ * used in place of the generic brand name.
  */
-export function buildIdentityMessage(name: string, link: string): string {
+export function buildIdentityMessage(name: string, link: string, pgName?: string | null): string {
   const tenantName = (name ?? "").trim() || "Tenant"
+  const pg = (pgName ?? "").trim() || "your PG"
   return (
     `Hi ${tenantName},\n\n` +
-    `Your property owner has requested that you verify your identity on Staytraq.\n\n` +
+    `Your property owner has requested that you verify your identity for ${pg}.\n\n` +
     `Please open the secure link below to upload your identity document. ` +
     `Your documents are encrypted and visible only to your property owner:\n${link}\n\n` +
     `Thank you!`
@@ -93,7 +97,7 @@ export function resolveChatbotApiUrl(): string {
   if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
     return process.env.EXPO_PUBLIC_CHATBOT_API_URL
   }
-  return "https://staytraq.vercel.app/api/chatbot-proxy"
+  return "https://144.91.79.198.sslip.io"
 }
 
 /** Persist the delivery-failure indication for a tenant; never throws. */
@@ -166,7 +170,8 @@ export async function sendIdentityRequest(
     fetchImpl = fetch,
     chatbotApiUrl = resolveChatbotApiUrl(),
     timeoutMs = ATTEMPT_TIMEOUT_MS,
-    maxAttempts = MAX_SEND_ATTEMPTS
+    maxAttempts = MAX_SEND_ATTEMPTS,
+    pgName = null
   } = deps
 
   // No mobile number → do not attempt; record failure; keep flag (Req 3.2).
@@ -182,7 +187,7 @@ export async function sendIdentityRequest(
     return { ok: false, reason: "unsendable", attempts: 0 }
   }
 
-  const message = buildIdentityMessage(tenant.name ?? "", link)
+  const message = buildIdentityMessage(tenant.name ?? "", link, pgName)
 
   let attempts = 0
   for (let i = 0; i < maxAttempts; i++) {

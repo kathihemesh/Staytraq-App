@@ -62,6 +62,7 @@ type Complaint = {
   owner_response: string | null
   created_at: string
   updated_at: string
+  image_paths?: string[] | null
 }
 
 const { width } = Dimensions.get("window")
@@ -101,6 +102,12 @@ export default function ComplaintsScreen() {
   const [selectedComplaint, setSelectedComplaint] = useState<Complaint | null>(null)
   const [updatedStatus, setUpdatedStatus] = useState<Complaint["status"]>("Under Working")
   const [ownerResponseText, setOwnerResponseText] = useState("")
+  // Attached complaint images (signed URLs fetched when the detail modal opens)
+  const [complaintImageUrls, setComplaintImageUrls] = useState<string[]>([])
+  const [complaintImagesLoading, setComplaintImagesLoading] = useState(false)
+  // Fullscreen image viewer
+  const [imageViewerVisible, setImageViewerVisible] = useState(false)
+  const [viewerImageUrl, setViewerImageUrl] = useState<string | null>(null)
   const [isSavingDetails, setIsSavingDetails] = useState(false)
 
   // Filters
@@ -166,7 +173,7 @@ export default function ComplaintsScreen() {
       const [complaintsResult, ownerResult] = await Promise.all([
         supabase
           .from("complaints")
-          .select("id, owner_id, complaint_message, status, owner_response, created_at, updated_at")
+          .select("id, owner_id, complaint_message, status, owner_response, created_at, updated_at, image_paths")
           .eq("owner_id", user.id)
           .order("created_at", { ascending: false }),
         supabase
@@ -177,7 +184,7 @@ export default function ComplaintsScreen() {
       ])
 
       if (complaintsResult.error) throw complaintsResult.error
-      setComplaints((complaintsResult.data || []) as Complaint[])
+      setComplaints((complaintsResult.data || []) as unknown as Complaint[])
 
       if (ownerResult.error) throw ownerResult.error
 
@@ -328,6 +335,28 @@ export default function ComplaintsScreen() {
     setUpdatedStatus(complaint.status)
     setOwnerResponseText(complaint.owner_response || "")
     setDetailModalVisible(true)
+
+    // Resolve signed URLs for any attached images from the private bucket.
+    setComplaintImageUrls([])
+    const paths = Array.isArray(complaint.image_paths) ? complaint.image_paths.filter(Boolean) : []
+    if (paths.length > 0) {
+      setComplaintImagesLoading(true)
+      void (async () => {
+        try {
+          const signed = await Promise.all(
+            paths.map(async (p) => {
+              const { data } = await supabase.storage.from("complaint_images").createSignedUrl(p, 3600)
+              return data?.signedUrl || null
+            })
+          )
+          setComplaintImageUrls(signed.filter((u): u is string => !!u))
+        } catch (e) {
+          console.error("Error signing complaint images:", e)
+        } finally {
+          setComplaintImagesLoading(false)
+        }
+      })()
+    }
   }
 
   // Stats computed
@@ -871,6 +900,39 @@ export default function ComplaintsScreen() {
                 </SafeText>
               </ScrollView>
 
+              {/* Attached Photos (tenant-submitted) */}
+              {(complaintImagesLoading || complaintImageUrls.length > 0) && (
+                <View className="mb-5">
+                  <Text className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500 mb-2.5">
+                    Attached Photos
+                  </Text>
+                  {complaintImagesLoading ? (
+                    <View className="py-4 items-center justify-center">
+                      <ActivityIndicator size="small" color={isDark ? "#cbd5e1" : "#475569"} />
+                    </View>
+                  ) : (
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                      {complaintImageUrls.map((url, idx) => (
+                        <Pressable
+                          key={idx}
+                          onPress={() => {
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                            setViewerImageUrl(url)
+                            setImageViewerVisible(true)
+                          }}
+                          style={({ pressed }) => [{ opacity: pressed ? 0.8 : 1 }]}
+                        >
+                          <Image
+                            source={{ uri: url }}
+                            className="w-20 h-20 rounded-xl bg-slate-100 dark:bg-slate-800"
+                          />
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  )}
+                </View>
+              )}
+
               {/* Status Selector */}
               <View className="mb-5">
                 <Text className="text-[10px] font-extrabold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500 mb-2.5">
@@ -965,6 +1027,30 @@ export default function ComplaintsScreen() {
           </KeyboardAvoidingView>
           {renderToast()}
         </View>
+      </Modal>
+
+      {/* Fullscreen complaint image viewer */}
+      <Modal
+        visible={imageViewerVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImageViewerVisible(false)}
+      >
+        <Pressable
+          className="flex-1 bg-black/90 items-center justify-center"
+          onPress={() => setImageViewerVisible(false)}
+        >
+          <Pressable
+            className="absolute top-12 right-5 z-10 h-10 w-10 rounded-full bg-white/10 items-center justify-center"
+            style={({ pressed }) => [{ opacity: pressed ? 0.7 : 1 }]}
+            onPress={() => setImageViewerVisible(false)}
+          >
+            <X size={20} color="#ffffff" />
+          </Pressable>
+          {viewerImageUrl && (
+            <Image source={{ uri: viewerImageUrl }} style={{ width: "92%", height: "80%" }} resizeMode="contain" />
+          )}
+        </Pressable>
       </Modal>
 
       {/* Confirm Regenerate Link Modal */}

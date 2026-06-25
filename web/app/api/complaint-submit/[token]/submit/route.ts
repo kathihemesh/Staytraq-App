@@ -12,12 +12,30 @@ export async function POST(
       return NextResponse.json({ error: 'Portal token is required' }, { status: 400 })
     }
 
-    const { mobile_number, complaint_message } = await request.json()
+    const formData = await request.formData()
+    const mobile_number = (formData.get('mobile_number') as string | null) || ''
+    const complaint_message = (formData.get('complaint_message') as string | null) || ''
+    const imageFiles = formData.getAll('images').filter((f): f is File => f instanceof File && f.size > 0)
+
     if (!mobile_number) {
       return NextResponse.json({ error: 'Registered mobile number is required' }, { status: 400 })
     }
     if (!complaint_message || !complaint_message.trim()) {
       return NextResponse.json({ error: 'Complaint message is required' }, { status: 400 })
+    }
+
+    const MAX_IMAGES = 5
+    const MAX_BYTES = 5 * 1024 * 1024
+    if (imageFiles.length > MAX_IMAGES) {
+      return NextResponse.json({ error: `You can attach at most ${MAX_IMAGES} images.` }, { status: 400 })
+    }
+    for (const f of imageFiles) {
+      if (f.size > MAX_BYTES) {
+        return NextResponse.json({ error: 'Each image must be 5MB or smaller.' }, { status: 400 })
+      }
+      if (f.type && !f.type.startsWith('image/')) {
+        return NextResponse.json({ error: 'Only image files can be attached.' }, { status: 400 })
+      }
     }
 
     const supabase = createAdminClient()
@@ -84,20 +102,49 @@ export async function POST(
       }, { status: 429 })
     }
 
-    // 4. Insert complaint record
+    // 4. Upload any attached images to the private complaint_images bucket.
+    //    Path layout: {owner_id}/{folder}/{i}.{ext} (owner-scoped RLS). Uploads
+    //    use the service-role admin client and bypass storage RLS.
+    const uploadedPaths: string[] = []
+    if (imageFiles.length > 0) {
+      const folder = `${ownerRecord.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i]
+        const ext = ((file.name?.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '')) || 'jpg'
+        const path = `${folder}/${i}.${ext}`
+        const { error: uploadError } = await supabase.storage
+          .from('complaint_images')
+          .upload(path, file, { cacheControl: '3600', contentType: file.type || 'image/jpeg', upsert: true })
+        if (uploadError) {
+          console.error('[complaint-submit/submit] Error uploading image:', JSON.stringify(uploadError))
+          if (uploadedPaths.length > 0) {
+            await supabase.storage.from('complaint_images').remove(uploadedPaths)
+          }
+          return NextResponse.json({ error: 'Failed to upload complaint image' }, { status: 500 })
+        }
+        uploadedPaths.push(path)
+      }
+    }
+
+    // 5. Insert complaint record
     const sanitizedMessage = stripHtml(complaint_message.trim())
-    
+
     const { error: insertError } = await supabase
       .from('complaints')
       .insert({
         owner_id: ownerRecord.id,
         tenant_phone: tenantPhoneDb,
         complaint_message: sanitizedMessage,
-        status: 'Under Working'
+        status: 'Under Working',
+        image_paths: uploadedPaths.length > 0 ? uploadedPaths : null
       })
 
     if (insertError) {
       console.error('[complaint-submit/submit] Error inserting complaint:', JSON.stringify(insertError))
+      // Roll back any uploaded images so we don't leave orphaned objects.
+      if (uploadedPaths.length > 0) {
+        await supabase.storage.from('complaint_images').remove(uploadedPaths)
+      }
       return NextResponse.json({ error: 'Failed to submit complaint' }, { status: 500 })
     }
 

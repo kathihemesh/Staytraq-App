@@ -30,7 +30,7 @@ const getChatbotApiUrl = () => {
   if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
     return process.env.EXPO_PUBLIC_CHATBOT_API_URL
   }
-  return "https://staytraq.vercel.app/api/chatbot-proxy"
+  return "https://144.91.79.198.sslip.io"
 }
 
 // Base path of the public tenant identity verification portal. The portal lives
@@ -241,6 +241,14 @@ export default function TenantsScreen() {
   // Identity section: "Ignore identity" action confirmation (distinct from the delete flow)
   const [ignoreConfirmVisible, setIgnoreConfirmVisible] = useState(false)
   const [isIgnoringIdentity, setIsIgnoringIdentity] = useState(false)
+  // Manual identity document management (owner-side): upload on the tenant's
+  // behalf, delete stored documents completely, or re-request via daily reminders.
+  const [isManualUploading, setIsManualUploading] = useState(false)
+  const [isDeletingIdentity, setIsDeletingIdentity] = useState(false)
+  const [isRequestingIdentityAgain, setIsRequestingIdentityAgain] = useState(false)
+  // When set to the selected tenant's id, the identity section shows the
+  // post-delete "Request again" / "Upload" choices instead of the normal view.
+  const [identityResetTenantId, setIdentityResetTenantId] = useState<number | null>(null)
 
   // Identity document viewer (front/back) — kept separate from the staytraq_docs viewer
   // above so the two viewers never collide. Reads signed URLs from the private
@@ -668,6 +676,52 @@ export default function TenantsScreen() {
     return data?.id ?? null
   }
 
+  // Ensure the tenant has a persisted, unique per-tenant payment-portal token
+  // (mirrors web/lib/payments/token.ts). This backs a unique payment link that
+  // skips the grouped portal's phone-number verification and shows the tenant's
+  // dues directly. Returns null on persistent failure.
+  const ensurePaymentPortalToken = async (tenantId: number): Promise<string | null> => {
+    const db = supabase as any
+    const { data: existingRow, error: readErr } = await db
+      .from("tenants_table")
+      .select("payment_portal_token")
+      .eq("id", tenantId)
+      .maybeSingle()
+    if (readErr) return null
+    if (existingRow?.payment_portal_token) return existingRow.payment_portal_token as string
+
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    const gen = () => {
+      let out = ""
+      for (let i = 0; i < 22; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)]
+      return out
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = gen()
+      const { data, error } = await db
+        .from("tenants_table")
+        .update({ payment_portal_token: candidate })
+        .is("payment_portal_token", null)
+        .eq("id", tenantId)
+        .select("payment_portal_token")
+        .maybeSingle()
+      if (error) {
+        if (error.code === "23505") continue // unique collision — retry
+        return null
+      }
+      if (data?.payment_portal_token) return data.payment_portal_token as string
+      // Row not updated — token set concurrently; re-read.
+      const { data: cur } = await db
+        .from("tenants_table")
+        .select("payment_portal_token")
+        .eq("id", tenantId)
+        .maybeSingle()
+      return (cur?.payment_portal_token as string | undefined) ?? null
+    }
+    return null
+  }
+
   // Build ONE tailored onboarding message covering exactly the intents the owner
   // selected (identity verification, security deposit, WhatsApp group invite).
   // A single greeting is used; when more than one intent is present they are
@@ -675,11 +729,10 @@ export default function TenantsScreen() {
   // a short paragraph. Returns "" when no intent applies.
   const buildOnboardingMessage = (
     tenant: Tenant,
-    opts: { identityLink?: string | null; includeDeposit?: boolean; whatsappInviteLink?: string | null },
+    opts: { identityLink?: string | null; includeDeposit?: boolean; depositPayUrl?: string | null; whatsappInviteLink?: string | null },
   ) => {
     const tenantName = (tenant.name || "").trim() || "Tenant"
     const pg = pgName ? pgName : "our PG"
-    const payUrl = `https://staytraq.vercel.app/pay/${portalToken}`
 
     const items: string[] = []
     if (opts.identityLink) {
@@ -689,6 +742,9 @@ export default function TenantsScreen() {
       )
     }
     if (opts.includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
+      // Per-tenant payment link (no phone-number verification). Fall back to the
+      // grouped owner portal link only if a per-tenant token could not be created.
+      const payUrl = opts.depositPayUrl || `https://staytraq.vercel.app/pay/${portalToken}`
       items.push(
         `*Security deposit payment*\n` +
         `A security deposit fee of ₹${tenant.deposit_amount} has been added to your account. Please pay it using this secure payment link:\n${payUrl}`
@@ -762,6 +818,7 @@ export default function TenantsScreen() {
   ) => {
     // 1. Create the deposit payment record first (when requested).
     let depositPaymentId: number | null = null
+    let depositPayUrl: string | null = null
     if (wantsDeposit) {
       try {
         depositPaymentId = await createSecurityDepositPayment(tenant)
@@ -769,6 +826,9 @@ export default function TenantsScreen() {
         console.error("Failed to create security deposit payment record:", err)
         showToast("Deposit Record Failed", "Couldn't create the deposit payment record.", "error")
       }
+      // Per-tenant payment link (skips the grouped phone-number verification).
+      const payToken = await ensurePaymentPortalToken(tenant.id)
+      if (payToken) depositPayUrl = `https://staytraq.vercel.app/pay/${payToken}`
     }
 
     // 2. Identity-only: reuse the dedicated retrying identity sender.
@@ -800,6 +860,7 @@ export default function TenantsScreen() {
     const message = buildOnboardingMessage(tenant, {
       identityLink,
       includeDeposit: wantsDeposit,
+      depositPayUrl,
       whatsappInviteLink,
     })
     if (!message) return
@@ -1545,7 +1606,7 @@ export default function TenantsScreen() {
         { id: tenant.id, name: tenant.name, mobile_number: tenant.mobile_number },
         link,
         sessionToken,
-        { db: supabase }
+        { db: supabase, pgName }
       )
     } catch (e) {
       console.error("Identity request failed:", e)
@@ -1894,6 +1955,150 @@ export default function TenantsScreen() {
       showToast("Action failed", "Could not stop identity reminders. Please try again.", "error")
     } finally {
       setIsIgnoringIdentity(false)
+    }
+  }
+
+  // Manual identity upload (owner uploads document image(s) on the tenant's
+  // behalf). Stores up to two images (front, optional back) in the private
+  // `identity_documents` bucket at {owner_id}/{tenant_id}/{side}.jpg and marks
+  // the tenant Verified. Reflects the change on the selected tenant + list.
+  const handleManualIdentityUpload = async (tenant: Tenant) => {
+    if (isManualUploading || !user?.id) return
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+      if (status !== "granted") {
+        Alert.alert("Permission Denied", "Photo library permission is required to choose images.")
+        return
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        allowsEditing: false,
+        quality: 0.8,
+        allowsMultipleSelection: true,
+        selectionLimit: 2,
+      })
+      if (result.canceled || !result.assets || result.assets.length === 0) return
+
+      setIsManualUploading(true)
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+
+      const assets = result.assets.slice(0, 2)
+      const sides: ("front" | "back")[] = ["front", "back"]
+      let frontPath: string | null = null
+      let backPath: string | null = null
+
+      for (let i = 0; i < assets.length; i++) {
+        const asset = assets[i]
+        const side = sides[i]
+        const path = `${user.id}/${tenant.id}/${side}.jpg`
+        const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: "base64" })
+        const arrayBuffer = decodeBase64(base64)
+        const { error: uploadError } = await supabase.storage
+          .from("identity_documents")
+          .upload(path, arrayBuffer, { contentType: asset.mimeType || "image/jpeg", upsert: true })
+        if (uploadError) throw uploadError
+        if (side === "front") frontPath = path
+        else backPath = path
+      }
+
+      const update: Partial<Tenant> = {
+        id_front_path: frontPath,
+        id_back_path: backPath,
+        verification_status: "Verified",
+      }
+      const { error: updErr } = await supabase
+        .from("tenants_table")
+        .update(update as never)
+        .eq("id", tenant.id)
+      if (updErr) throw updErr
+
+      setSelectedTenant((prev) => (prev && prev.id === tenant.id ? { ...prev, ...update } : prev))
+      setTenants((prev) => prev.map((t) => (t.id === tenant.id ? { ...t, ...update } : t)))
+      setIdentityResetTenantId((prev) => (prev === tenant.id ? null : prev))
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      showToast("Documents Uploaded", "Identity documents saved and marked verified.", "success")
+    } catch (e: any) {
+      console.error("Manual identity upload failed:", e)
+      Alert.alert("Upload Failed", e?.message || "Could not upload identity documents.")
+    } finally {
+      setIsManualUploading(false)
+    }
+  }
+
+  // Delete the tenant's stored identity documents completely: removes the bucket
+  // objects and clears the stored paths/code, resetting verification so the owner
+  // can choose to request again (daily) or upload manually.
+  const handleDeleteIdentityDocs = async (tenant: Tenant) => {
+    if (isDeletingIdentity) return
+    setIsDeletingIdentity(true)
+    try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+
+      const paths: string[] = []
+      if (typeof tenant.id_front_path === "string" && tenant.id_front_path.trim()) paths.push(tenant.id_front_path)
+      if (typeof tenant.id_back_path === "string" && tenant.id_back_path.trim()) paths.push(tenant.id_back_path)
+      if (paths.length > 0) {
+        const { error: rmErr } = await supabase.storage.from("identity_documents").remove(paths)
+        // Best-effort: a storage removal failure should not block clearing the record.
+        if (rmErr) console.error("Error removing identity documents:", rmErr)
+      }
+
+      const update: Partial<Tenant> = {
+        id_front_path: null,
+        id_back_path: null,
+        identity_type: null,
+        aadhaar_number: null,
+        pan_code: null,
+        verification_status: "Not_Started",
+        identity_request_flag: false,
+        ignore_identity_flag: false,
+      }
+      const { error: updErr } = await supabase
+        .from("tenants_table")
+        .update(update as never)
+        .eq("id", tenant.id)
+      if (updErr) throw updErr
+
+      setSelectedTenant((prev) => (prev && prev.id === tenant.id ? { ...prev, ...update } : prev))
+      setTenants((prev) => prev.map((t) => (t.id === tenant.id ? { ...t, ...update } : t)))
+      setIdentityResetTenantId(tenant.id)
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      showToast("Documents Deleted", "Identity documents removed. Choose to request again or upload.", "success")
+    } catch (e: any) {
+      console.error("Delete identity docs failed:", e)
+      Alert.alert("Delete Failed", e?.message || "Could not delete identity documents.")
+    } finally {
+      setIsDeletingIdentity(false)
+    }
+  }
+
+  // Re-enable daily identity requests for a tenant and send one immediately.
+  const handleRequestIdentityAgain = async (tenant: Tenant) => {
+    if (isRequestingIdentityAgain) return
+    setIsRequestingIdentityAgain(true)
+    try {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+      const update: Partial<Tenant> = {
+        identity_request_flag: true,
+        ignore_identity_flag: false,
+        verification_status: "Not_Started",
+      }
+      const { error: updErr } = await supabase
+        .from("tenants_table")
+        .update(update as never)
+        .eq("id", tenant.id)
+      if (updErr) throw updErr
+
+      setSelectedTenant((prev) => (prev && prev.id === tenant.id ? { ...prev, ...update } : prev))
+      setTenants((prev) => prev.map((t) => (t.id === tenant.id ? { ...t, ...update } : t)))
+      setIdentityResetTenantId((prev) => (prev === tenant.id ? null : prev))
+      // Send a request now; daily reminders resume via the request flag.
+      void requestTenantIdentity({ id: tenant.id, name: tenant.name, mobile_number: tenant.mobile_number })
+      showToast("Identity Requested", "A verification request was sent; daily reminders resumed.", "success")
+    } catch (e: any) {
+      console.error("Request identity again failed:", e)
+      Alert.alert("Error", e?.message || "Could not request identity again.")
+    } finally {
+      setIsRequestingIdentityAgain(false)
     }
   }
 
@@ -2861,8 +3066,14 @@ export default function TenantsScreen() {
                       const hasBackImage = typeof selectedTenant.id_back_path === "string" && selectedTenant.id_back_path.trim().length > 0
                       const hasStoredImage = hasFrontImage || hasBackImage
 
-                      // Nothing to show: no requested-identity status, no stored code, and no stored images.
-                      if (statusPresentation === "none" && !displayCode && !hasStoredImage) {
+                      // Nothing to show: no requested-identity status, no stored code, no stored
+                      // images, and not in the post-delete chooser state.
+                      if (
+                        statusPresentation === "none" &&
+                        !displayCode &&
+                        !hasStoredImage &&
+                        identityResetTenantId !== selectedTenant.id
+                      ) {
                         return null
                       }
 
@@ -2945,47 +3156,138 @@ export default function TenantsScreen() {
                             </View>
                           )}
 
-                          {/* "Ignore identity" action — shown only when reminders can still be stopped (Req 15.1, 15.4, 15.5) */}
-                          {shouldShowIgnoreButton({
-                            identity_request_flag: !!selectedTenant.identity_request_flag,
-                            verification_status: selectedTenant.verification_status || "Not_Started",
-                            ignore_identity_flag: !!selectedTenant.ignore_identity_flag,
-                          }) && (
-                            <TouchableOpacity
-                              onPress={() => {
-                                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-                                setIgnoreConfirmVisible(true)
-                              }}
-                              disabled={isIgnoringIdentity}
-                              className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-border/60 dark:border-border-dark/60 bg-background dark:bg-background-dark active:scale-95"
-                              style={{ opacity: isIgnoringIdentity ? 0.6 : 1 }}
-                              accessibilityLabel="Ignore identity"
-                              accessibilityRole="button"
-                            >
-                              {isIgnoringIdentity ? (
-                                <ActivityIndicator size="small" color={isDark ? "#9ca3af" : "#6b7280"} />
-                              ) : (
-                                <X size={14} color={isDark ? "#9ca3af" : "#6b7280"} />
+                          {identityResetTenantId === selectedTenant.id ? (
+                            /* Post-delete: owner chooses how to collect identity again (Req: request again / upload) */
+                            <View className="mt-3 gap-2.5">
+                              <Text className="text-xs text-muted dark:text-muted-dark">
+                                Documents deleted. Choose how to collect identity again:
+                              </Text>
+                              <TouchableOpacity
+                                onPress={() => handleRequestIdentityAgain(selectedTenant)}
+                                disabled={isRequestingIdentityAgain}
+                                className="flex-row items-center justify-center gap-2 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
+                                style={{ opacity: isRequestingIdentityAgain ? 0.6 : 1 }}
+                                accessibilityLabel="Request identity again"
+                                accessibilityRole="button"
+                              >
+                                {isRequestingIdentityAgain ? (
+                                  <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
+                                ) : (
+                                  <Clock size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                                )}
+                                <Text className="text-xs font-bold text-primary">Request again (daily)</Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                onPress={() => handleManualIdentityUpload(selectedTenant)}
+                                disabled={isManualUploading}
+                                className="flex-row items-center justify-center gap-2 py-2.5 px-3 rounded-2xl border border-border/60 dark:border-border-dark/60 bg-background dark:bg-background-dark active:scale-95"
+                                style={{ opacity: isManualUploading ? 0.6 : 1 }}
+                                accessibilityLabel="Upload identity documents manually"
+                                accessibilityRole="button"
+                              >
+                                {isManualUploading ? (
+                                  <ActivityIndicator size="small" color={isDark ? "#9ca3af" : "#6b7280"} />
+                                ) : (
+                                  <Upload size={14} color={isDark ? "#9ca3af" : "#6b7280"} />
+                                )}
+                                <Text className="text-xs font-bold text-muted dark:text-muted-dark">Upload manually</Text>
+                              </TouchableOpacity>
+                            </View>
+                          ) : (
+                            <>
+                              {/* Manual upload (owner uploads on the tenant's behalf) while collection
+                                  is in progress — placed right above the Ignore button. */}
+                              {statusPresentation === "in_progress" && (
+                                <TouchableOpacity
+                                  onPress={() => handleManualIdentityUpload(selectedTenant)}
+                                  disabled={isManualUploading}
+                                  className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
+                                  style={{ opacity: isManualUploading ? 0.6 : 1 }}
+                                  accessibilityLabel="Upload identity documents manually"
+                                  accessibilityRole="button"
+                                >
+                                  {isManualUploading ? (
+                                    <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
+                                  ) : (
+                                    <Upload size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                                  )}
+                                  <Text className="text-xs font-bold text-primary">Upload documents manually</Text>
+                                </TouchableOpacity>
                               )}
-                              <Text className="text-xs font-bold text-muted dark:text-muted-dark">
-                                Ignore identity
-                              </Text>
-                            </TouchableOpacity>
-                          )}
 
-                          {/* "Show documents" — shown when ≥1 stored identity image exists (Req 17.1) */}
-                          {hasStoredImage && (
-                            <TouchableOpacity
-                              onPress={() => openIdentityViewer(selectedTenant)}
-                              className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
-                              accessibilityLabel="Show documents"
-                              accessibilityRole="button"
-                            >
-                              <Maximize2 size={14} color={isDark ? "#0091ff" : "#0071df"} />
-                              <Text className="text-xs font-bold text-primary">
-                                Show documents
-                              </Text>
-                            </TouchableOpacity>
+                              {/* "Ignore identity" action — shown only when reminders can still be stopped (Req 15.1, 15.4, 15.5) */}
+                              {shouldShowIgnoreButton({
+                                identity_request_flag: !!selectedTenant.identity_request_flag,
+                                verification_status: selectedTenant.verification_status || "Not_Started",
+                                ignore_identity_flag: !!selectedTenant.ignore_identity_flag,
+                              }) && (
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                                    setIgnoreConfirmVisible(true)
+                                  }}
+                                  disabled={isIgnoringIdentity}
+                                  className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-border/60 dark:border-border-dark/60 bg-background dark:bg-background-dark active:scale-95"
+                                  style={{ opacity: isIgnoringIdentity ? 0.6 : 1 }}
+                                  accessibilityLabel="Ignore identity"
+                                  accessibilityRole="button"
+                                >
+                                  {isIgnoringIdentity ? (
+                                    <ActivityIndicator size="small" color={isDark ? "#9ca3af" : "#6b7280"} />
+                                  ) : (
+                                    <X size={14} color={isDark ? "#9ca3af" : "#6b7280"} />
+                                  )}
+                                  <Text className="text-xs font-bold text-muted dark:text-muted-dark">
+                                    Ignore identity
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+
+                              {/* "Show documents" — shown when ≥1 stored identity image exists (Req 17.1) */}
+                              {hasStoredImage && (
+                                <TouchableOpacity
+                                  onPress={() => openIdentityViewer(selectedTenant)}
+                                  className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-primary/40 bg-primary/10 active:scale-95"
+                                  accessibilityLabel="Show documents"
+                                  accessibilityRole="button"
+                                >
+                                  <Maximize2 size={14} color={isDark ? "#0091ff" : "#0071df"} />
+                                  <Text className="text-xs font-bold text-primary">
+                                    Show documents
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+
+                              {/* "Delete documents" — remove the stored identity images completely */}
+                              {hasStoredImage && (
+                                <TouchableOpacity
+                                  onPress={() => {
+                                    Alert.alert(
+                                      "Delete Identity Documents",
+                                      "This permanently removes the stored identity documents and resets verification. Continue?",
+                                      [
+                                        { text: "Cancel", style: "cancel" },
+                                        { text: "Delete", style: "destructive", onPress: () => handleDeleteIdentityDocs(selectedTenant) },
+                                      ]
+                                    )
+                                  }}
+                                  disabled={isDeletingIdentity}
+                                  className="flex-row items-center justify-center gap-2 mt-3 py-2.5 px-3 rounded-2xl border border-red-500/40 bg-red-500/10 active:scale-95"
+                                  style={{ opacity: isDeletingIdentity ? 0.6 : 1 }}
+                                  accessibilityLabel="Delete documents"
+                                  accessibilityRole="button"
+                                >
+                                  {isDeletingIdentity ? (
+                                    <ActivityIndicator size="small" color="#ef4444" />
+                                  ) : (
+                                    <Trash2 size={14} color="#ef4444" />
+                                  )}
+                                  <Text className="text-xs font-bold text-red-500">
+                                    Delete documents
+                                  </Text>
+                                </TouchableOpacity>
+                              )}
+                            </>
                           )}
                         </View>
                       )
@@ -3388,7 +3690,7 @@ export default function TenantsScreen() {
                     defaultTriggerLabel="Select Day..."
                     isDark={isDark}
                     accent="neutral"
-                    overlay={false}
+                    overlay={true}
                     open={openDropdown === "rent-due-day"}
                     onOpenChange={(o) => {
                       void Haptics.selectionAsync()
@@ -3531,7 +3833,7 @@ export default function TenantsScreen() {
               <View className="z-30">
                 {chatbotEnabled ? (
                   <>
-                    <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Identity Verification</Text>
+                    <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Reminders</Text>
                     <TouchableOpacity
                       onPress={() => {
                         setRequestIdentityFromTenant((v) => !v)

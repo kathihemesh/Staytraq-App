@@ -64,7 +64,7 @@ export default function SettingsScreen() {
     if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
       return process.env.EXPO_PUBLIC_CHATBOT_API_URL
     }
-    return "https://staytraq.vercel.app/api/chatbot-proxy"
+    return "https://144.91.79.198.sslip.io"
   }
 
   const detectMerchantUpi = (vpa: string): boolean => {
