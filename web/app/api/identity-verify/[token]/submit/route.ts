@@ -1,47 +1,134 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { classifyAadhaar, classifyPan, type IdentityType, type VerificationOutcome } from '@/lib/identity/verify'
-import { acceptBack } from '@/lib/identity/portal'
+import type { IdentityType } from '@/lib/identity/verify'
 
-// Private bucket holding encrypted identity document images. Path layout is
-// {owner_id}/{tenant_id}/{front|back}.{ext} (Req 18.1).
+// Private bucket holding the identity document images. Path layout is
+// {owner_id}/{tenant_id}/{front|back}.jpg (Req 18.1).
 const IDENTITY_BUCKET = 'identity_documents'
 
-// Derive a safe file extension from an uploaded image's name, falling back to
-// jpg when the client supplies a name without one.
-function fileExtension(file: File): string {
-  const parts = file.name.split('.')
-  const ext = parts.length > 1 ? parts.pop() : undefined
-  const clean = (ext || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-  return clean.length > 0 ? clean : 'jpg'
-}
+// Same OpenAI model the chatbot uses for auto-replies. Overridable via env.
+const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'
 
 // POST: receives the tenant's identity submission for the public verification
-// portal. The portal runs tesseract.js OCR on the uploaded images client-side
-// and posts the extracted text alongside the image files. This route is the
-// authoritative verifier: it re-runs the pure classification rules over the
-// supplied text and, only on a fully-passing submission, writes the encrypted
-// images to the private identity_documents bucket and persists the identity
-// type, image references, and identity code in a single update. Any storage or
-// encryption failure rejects the whole submission with no partial object and no
-// status/reference change (Reqs 7.3, 9.5, 10.6, 12.1, 12.2, 12.3, 12.4, 18.1,
-// 18.2).
+// portal. The portal compresses the images client-side and posts them here on
+// SUBMIT (not on upload, to avoid per-image model cost). This route is the
+// authoritative verifier: it asks the OpenAI vision model to confirm the image
+// is a genuine document of the selected type, that it is readable, and that the
+// holder name matches the tenant; the model returns the extracted ID number on
+// success or a human-readable reason on failure. Only on a passing result are
+// the images stored to the private `identity_documents` bucket and the identity
+// type + code + references + Verified status persisted in one update. Any
+// storage failure rejects the whole submission with no partial object/state.
 //
 // Request contract (multipart/form-data):
-//   identity_type : "Aadhaar" | "PAN"            (required)
-//   consent       : "true"                        (required — mandatory consent)
-//   front_text    : string  OCR text of front image (required)
-//   back_text     : string  OCR text of back image  (Aadhaar only)
-//   front_image   : File    front document image    (required)
-//   back_image    : File    back document image      (Aadhaar only)
+//   identity_type : "Aadhaar" | "PAN"   (required)
+//   consent       : "true"               (required)
+//   front_image   : File  (required; JPEG, compressed client-side)
+//   back_image    : File  (Aadhaar only)
 //
-// Response (200): { success: true, status: "Verified" | "In_Progress", reasons: string[] }
-// On a guarded failure (storage/encryption) the route returns a 5xx error and
-// makes no status/reference change so the portal may retry (Req 12.5).
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ token: string }> }
-) {
+// Response (200): { success: true, status: "Verified" | "In_Progress", reason?: string }
+
+interface VisionResult {
+  pass: boolean
+  idType: string | null
+  idNumber: string | null
+  reason: string
+}
+
+async function fileToDataUrl(file: File): Promise<string> {
+  const buf = Buffer.from(await file.arrayBuffer())
+  const mime = file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg'
+  return `data:${mime};base64,${buf.toString('base64')}`
+}
+
+/** Ask the OpenAI vision model to verify the document. */
+async function verifyWithOpenAI(args: {
+  type: IdentityType
+  name: string
+  images: { label: string; dataUrl: string }[]
+}): Promise<VisionResult | { error: string }> {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) return { error: 'OPENAI_API_KEY is not configured' }
+
+  const { type, name, images } = args
+  const requirements =
+    type === 'Aadhaar'
+      ? 'an Indian Aadhaar card. The front must show "Government of India", a 12-digit Aadhaar number, and the holder\'s name. If a back image is provided, it must show the same 12-digit number and "Unique Identification Authority of India".'
+      : 'an Indian PAN card. It must show "Permanent Account Number", a PAN code formatted as five letters, four digits, then one letter, and the holder\'s name.'
+  const idShape =
+    type === 'Aadhaar'
+      ? 'the 12-digit Aadhaar number as digits only (no spaces)'
+      : 'the 10-character PAN code in uppercase'
+
+  const systemPrompt =
+    'You are a strict identity-document verifier. You are shown image(s) of an identity ' +
+    'document along with the expected document type and the tenant name. Decide whether the ' +
+    'image is a genuine, fully readable document of the expected type, and whether the name on ' +
+    'the document matches the tenant name (allow minor differences: transliteration, initials, ' +
+    'middle names, and word ordering). Respond ONLY with a single compact JSON object, no prose.'
+
+  const userText =
+    `Expected document type: ${type} — ${requirements}\n` +
+    `Tenant name to match: "${name}"\n\n` +
+    'Return JSON with exactly these fields:\n' +
+    '{\n' +
+    `  "pass": boolean,            // true only if it is a genuine ${type}, readable, and the name matches\n` +
+    '  "id_type": "Aadhaar" | "PAN" | "unknown",\n' +
+    `  "id_number": string | null, // when pass is true, ${idShape}; otherwise null\n` +
+    '  "reason": string            // when pass is false, one short friendly sentence the tenant can act on ' +
+    '(e.g. wrong document type, blurry/unreadable, rotated, glare, or the name does not match). When pass is true, "ok".\n' +
+    '}'
+
+  const content: Array<Record<string, unknown>> = [{ type: 'text', text: userText }]
+  for (const img of images) {
+    content.push({ type: 'image_url', image_url: { url: img.dataUrl, detail: 'high' } })
+  }
+
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        temperature: 0,
+        max_tokens: 300,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content },
+        ],
+      }),
+    })
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      console.error('[identity-verify/submit] OpenAI error', res.status, detail.slice(0, 500))
+      return { error: `OpenAI request failed (${res.status})` }
+    }
+
+    const json = await res.json()
+    const raw = json?.choices?.[0]?.message?.content
+    if (typeof raw !== 'string') return { error: 'Empty verification response' }
+
+    const parsed = JSON.parse(raw)
+    return {
+      pass: parsed?.pass === true,
+      idType: typeof parsed?.id_type === 'string' ? parsed.id_type : null,
+      idNumber: typeof parsed?.id_number === 'string' ? parsed.id_number : null,
+      reason: typeof parsed?.reason === 'string' ? parsed.reason : '',
+    }
+  } catch (err) {
+    console.error('[identity-verify/submit] OpenAI call/parse failed:', err)
+    return { error: 'Verification service error' }
+  }
+}
+
+/** Normalize the extracted code for storage: digits-only for Aadhaar, uppercase for PAN. */
+function normalizeIdNumber(type: IdentityType, raw: string): string {
+  return type === 'Aadhaar' ? raw.replace(/\D/g, '') : raw.replace(/\s/g, '').toUpperCase()
+}
+
+export async function POST(request: Request, { params }: { params: Promise<{ token: string }> }) {
   try {
     const { token } = await params
     if (!token) {
@@ -49,44 +136,20 @@ export async function POST(
     }
 
     const formData = await request.formData()
-    const identityType = (formData.get('identity_type') as string | null)?.trim() as
-      | IdentityType
-      | null
-      | undefined
+    const identityType = (formData.get('identity_type') as string | null)?.trim() as IdentityType | null
     const consent = (formData.get('consent') as string | null) === 'true'
-    const frontText = (formData.get('front_text') as string | null) ?? ''
-    const backText = (formData.get('back_text') as string | null) ?? ''
     const frontImage = formData.get('front_image') as File | null
     const backImage = formData.get('back_image') as File | null
 
-    // Validate the selected identity type (only Aadhaar / PAN are accepted).
     if (identityType !== 'Aadhaar' && identityType !== 'PAN') {
-      return NextResponse.json(
-        { error: 'A valid identity type (Aadhaar or PAN) is required' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'A valid identity type (Aadhaar or PAN) is required' }, { status: 400 })
     }
-
-    // Consent is mandatory; the server enforces it even though the portal also
-    // gates the submit button (Req 11.2, 11.5).
     if (!consent) {
       return NextResponse.json({ error: 'Consent is required to submit identity documents' }, { status: 400 })
     }
 
     const hasFront = !!frontImage && frontImage.size > 0
     const hasBack = !!backImage && backImage.size > 0
-
-    // Reject a back image submitted without a completed front image (Req 7.3).
-    // `acceptBack` returns false when the front has not completed; in that case a
-    // supplied back image must not be stored.
-    if (hasBack && !acceptBack({ type: identityType, frontCompleted: hasFront, backUploaded: hasBack })) {
-      return NextResponse.json(
-        { error: 'The front image must be uploaded before the back image.' },
-        { status: 400 }
-      )
-    }
-
-    // Enforce the document images required by the selected type (Req 11.6).
     if (!hasFront) {
       return NextResponse.json({ error: 'A front document image is required' }, { status: 400 })
     }
@@ -96,8 +159,6 @@ export async function POST(
 
     const supabase = createAdminClient()
 
-    // Resolve the single tenant bound to this verification token. The partial
-    // unique index guarantees at most one match (Req 4.2).
     const { data: tenant, error: tenantError } = await supabase
       .from('tenants_table')
       .select('id, name, owner_id, verification_status')
@@ -108,78 +169,69 @@ export async function POST(
       console.error('[identity-verify/submit] Error fetching tenant:', JSON.stringify(tenantError))
       return NextResponse.json({ error: 'Database error validating verification link' }, { status: 500 })
     }
-
     if (!tenant) {
       return NextResponse.json({ error: 'Invalid or expired verification link' }, { status: 404 })
     }
-
-    // A tenant that has already verified does not resubmit (Req 4.3).
     if (tenant.verification_status === 'Verified') {
       return NextResponse.json({ error: 'This identity has already been verified' }, { status: 409 })
     }
 
-    // Run the authoritative pure classification over the extracted OCR text.
-    const outcome: VerificationOutcome =
-      identityType === 'Aadhaar'
-        ? classifyAadhaar(frontText, backText, tenant.name || '')
-        : classifyPan(frontText, tenant.name || '')
+    // ---- Verify with the OpenAI vision model ----
+    const images: { label: string; dataUrl: string }[] = [
+      { label: 'front', dataUrl: await fileToDataUrl(frontImage as File) },
+    ]
+    if (identityType === 'Aadhaar' && backImage) {
+      images.push({ label: 'back', dataUrl: await fileToDataUrl(backImage) })
+    }
 
-    // On anything short of a fully-passing submission, store nothing — no images,
-    // no identity code, no type, no references — and only record the in-progress
-    // status (Reqs 9.7, 9.8, 9.9, 10.4, 10.5, 12.2). The portal uses the returned
-    // reasons to show the failure details (Reqs 9.6, 10.7).
-    if (outcome.status !== 'Verified') {
+    const result = await verifyWithOpenAI({ type: identityType, name: tenant.name || '', images })
+    if ('error' in result) {
+      // The verification service is unavailable; do not change state, allow retry.
+      return NextResponse.json(
+        { error: 'The verification service is temporarily unavailable. Please try again in a moment.' },
+        { status: 502 }
+      )
+    }
+
+    const idNumber = result.idNumber ? normalizeIdNumber(identityType, result.idNumber) : ''
+    const idLooksValid =
+      identityType === 'Aadhaar' ? /^\d{12}$/.test(idNumber) : /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(idNumber)
+
+    // Treat a "pass" with a missing/garbled ID as a soft failure so we never
+    // store an invalid code.
+    if (!result.pass || !idLooksValid) {
+      const reason =
+        (result.reason && result.reason.trim()) ||
+        `We couldn't verify the uploaded image as a valid ${identityType}. Please try again with a clear, upright photo.`
       const { error: progressErr } = await supabase
         .from('tenants_table')
         .update({ verification_status: 'In_Progress' })
         .eq('id', tenant.id)
-
       if (progressErr) {
         console.error('[identity-verify/submit] Error updating In_Progress status:', JSON.stringify(progressErr))
         return NextResponse.json({ error: 'Failed to record submission' }, { status: 500 })
       }
-
-      return NextResponse.json({ success: true, status: 'In_Progress', reasons: outcome.reasons })
+      return NextResponse.json({ success: true, status: 'In_Progress', reason })
     }
 
-    // ---- Full success: write encrypted images, then persist atomically ----
-    //
-    // Upload the document images to the private bucket. The whole submission is
-    // rejected on any storage failure, leaving no partial object and no
-    // status/reference change. We track successfully uploaded paths so that a
-    // later failure (a second image or the DB write) can roll the storage back
-    // before returning, guaranteeing no orphaned/partial object (Reqs 12.4,
-    // 18.2).
+    // ---- Passed: store images, then persist atomically. ----
     const uploadedPaths: string[] = []
-
-    const uploadImage = async (
-      image: File,
-      side: 'front' | 'back'
-    ): Promise<{ path: string } | { error: string }> => {
-      const path = `${tenant.owner_id}/${tenant.id}/${side}.${fileExtension(image)}`
+    const uploadImage = async (image: File, side: 'front' | 'back'): Promise<{ path: string } | { error: string }> => {
+      const path = `${tenant.owner_id}/${tenant.id}/${side}.jpg`
       const { error: uploadError } = await supabase.storage
         .from(IDENTITY_BUCKET)
-        .upload(path, image, {
-          cacheControl: '3600',
-          contentType: image.type || 'image/jpeg',
-          upsert: true,
-        })
-
+        .upload(path, image, { cacheControl: '3600', contentType: image.type || 'image/jpeg', upsert: true })
       if (uploadError) {
         console.error(`[identity-verify/submit] Error uploading ${side} image:`, JSON.stringify(uploadError))
         return { error: uploadError.message }
       }
-
       uploadedPaths.push(path)
       return { path }
     }
-
     const rollbackStorage = async () => {
       if (uploadedPaths.length > 0) {
         const { error: removeErr } = await supabase.storage.from(IDENTITY_BUCKET).remove(uploadedPaths)
-        if (removeErr) {
-          console.error('[identity-verify/submit] Error rolling back uploaded images:', JSON.stringify(removeErr))
-        }
+        if (removeErr) console.error('[identity-verify/submit] Error rolling back images:', JSON.stringify(removeErr))
       }
     }
 
@@ -188,34 +240,26 @@ export async function POST(
       await rollbackStorage()
       return NextResponse.json({ error: 'Failed to store the submitted document' }, { status: 500 })
     }
-
     let backPath: string | null = null
-    if (identityType === 'Aadhaar') {
-      const backResult = await uploadImage(backImage as File, 'back')
+    if (identityType === 'Aadhaar' && backImage) {
+      const backResult = await uploadImage(backImage, 'back')
       if ('error' in backResult) {
-        // No partial object: remove the front image we just stored.
         await rollbackStorage()
         return NextResponse.json({ error: 'Failed to store the submitted document' }, { status: 500 })
       }
       backPath = backResult.path
     }
 
-    // Persist the identity type, image references, identity code, and Verified
-    // status in a single update so the record is never left partially written
-    // (Reqs 12.1, 12.3). If this write fails, roll back the stored images so no
-    // orphaned object remains and the status is unchanged (Req 12.4).
-    const updatePayload: Record<string, unknown> = {
-      identity_type: identityType,
-      id_front_path: frontResult.path,
-      id_back_path: backPath,
-      verification_status: 'Verified',
-      aadhaar_number: identityType === 'Aadhaar' ? outcome.code : null,
-      pan_code: identityType === 'PAN' ? outcome.code : null,
-    }
-
     const { error: updateError } = await supabase
       .from('tenants_table')
-      .update(updatePayload)
+      .update({
+        identity_type: identityType,
+        id_front_path: frontResult.path,
+        id_back_path: backPath,
+        verification_status: 'Verified',
+        aadhaar_number: identityType === 'Aadhaar' ? idNumber : null,
+        pan_code: identityType === 'PAN' ? idNumber : null,
+      })
       .eq('id', tenant.id)
 
     if (updateError) {
@@ -224,7 +268,7 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to record submission' }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true, status: 'Verified', reasons: [] })
+    return NextResponse.json({ success: true, status: 'Verified' })
   } catch (error) {
     console.error('[identity-verify/submit] POST unhandled error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
