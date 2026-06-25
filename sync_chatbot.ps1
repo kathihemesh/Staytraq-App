@@ -1,4 +1,4 @@
-# SSH configuration
+    # SSH configuration
 $vpsIp = "144.91.79.198"
 $username = "root"
 $remotePath = "/opt/staytraq/chatbot"

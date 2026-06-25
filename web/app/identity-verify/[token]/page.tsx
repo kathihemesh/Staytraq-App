@@ -117,6 +117,10 @@ export default function IdentityVerifyPage() {
   const [submitting, setSubmitting] = useState(false)
   const [guardMessage, setGuardMessage] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  // Diagnostic: the raw OCR text from the most recent image, surfaced on
+  // failure so the tenant (and support) can see exactly what was read.
+  const [detectedText, setDetectedText] = useState('')
+  const [showDetected, setShowDetected] = useState(false)
 
   const frontInputRef = useRef<HTMLInputElement | null>(null)
   const backInputRef = useRef<HTMLInputElement | null>(null)
@@ -156,11 +160,61 @@ export default function IdentityVerifyPage() {
     setBackPreview(url)
   }
 
+  // Downscale/upscale to a legible size, convert to grayscale, and apply a mild
+  // contrast stretch on a canvas before OCR. Phone photos of cards are often
+  // too large, low-contrast, or noisy for tesseract to read raw; this markedly
+  // improves recognition. (It does NOT fix rotation — tesseract.js does not
+  // auto-rotate, so the user must upload an upright image.)
+  const preprocessToCanvas = (file: File): Promise<HTMLCanvasElement> =>
+    new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file)
+      const img = new Image()
+      img.onload = () => {
+        URL.revokeObjectURL(url)
+        const longest = Math.max(img.width, img.height) || 1
+        const MAX = 2000
+        const MIN = 1300
+        let scale = 1
+        if (longest > MAX) scale = MAX / longest
+        else if (longest < MIN) scale = MIN / longest
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Could not get a 2D canvas context'))
+          return
+        }
+        ctx.drawImage(img, 0, 0, w, h)
+        try {
+          const imageData = ctx.getImageData(0, 0, w, h)
+          const a = imageData.data
+          for (let i = 0; i < a.length; i += 4) {
+            const gray = 0.299 * a[i] + 0.587 * a[i + 1] + 0.114 * a[i + 2]
+            const c = Math.min(255, Math.max(0, (gray - 128) * 1.25 + 128))
+            a[i] = a[i + 1] = a[i + 2] = c
+          }
+          ctx.putImageData(imageData, 0, 0)
+        } catch {
+          // If reading pixels fails for any reason, fall back to the drawn image.
+        }
+        resolve(canvas)
+      }
+      img.onerror = () => {
+        URL.revokeObjectURL(url)
+        reject(new Error('Could not load the selected image'))
+      }
+      img.src = url
+    })
+
   const runOcr = async (file: File): Promise<string> => {
+    const canvas = await preprocessToCanvas(file)
     const { createWorker } = await import('tesseract.js')
     const worker = await createWorker('eng')
     try {
-      const ret = await worker.recognize(file)
+      const ret = await worker.recognize(canvas)
       return ret.data.text ?? ''
     } finally {
       await worker.terminate()
@@ -189,6 +243,8 @@ export default function IdentityVerifyPage() {
     setFailReason(null)
     setGuardMessage(null)
     setSubmitError(null)
+    setDetectedText('')
+    setShowDetected(false)
     if (frontInputRef.current) frontInputRef.current.value = ''
     if (backInputRef.current) backInputRef.current.value = ''
   }
@@ -222,6 +278,7 @@ export default function IdentityVerifyPage() {
       const text = await runOcr(file)
       if (runId !== ocrRunId.current) return // a newer upload superseded this one
       setFrontText(text)
+      setDetectedText(text)
 
       if (selectedType === 'PAN') {
         if (!isReadable(text) || !extractPanCode(text) || !containsCI(text, PAN_MARKER)) {
@@ -274,6 +331,7 @@ export default function IdentityVerifyPage() {
       const text = await runOcr(file)
       if (runId !== ocrRunId.current) return
       setBackText(text)
+      setDetectedText(text)
 
       const backNum = extractAadhaarNumber(text)
       if (
@@ -579,6 +637,60 @@ export default function IdentityVerifyPage() {
                 </CardContent>
               </Card>
 
+              {/* Photo guidance — what passes vs. what fails (OCR needs a clean image) */}
+              {controls.front && (
+                <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-2xl">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-white text-base">How to photograph your {selectedType}</CardTitle>
+                    <CardDescription className="text-neutral-400">
+                      Verification reads the text on your card, so the photo must be clear and upright.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="rounded-xl border border-green-500/30 bg-green-500/5 p-3">
+                        <div className="mb-2 flex items-center gap-1.5">
+                          <CheckCircle2 className="h-4 w-4 text-green-400" />
+                          <span className="text-xs font-semibold text-green-300">Allowed</span>
+                        </div>
+                        <ul className="space-y-1.5">
+                          {[
+                            'Upright & flat (not rotated/tilted)',
+                            'Whole card inside the frame',
+                            'Bright, even lighting',
+                            'Sharp and in focus',
+                          ].map((t) => (
+                            <li key={t} className="flex items-start gap-1.5 text-[11px] text-neutral-300">
+                              <Check className="mt-0.5 h-3 w-3 flex-shrink-0 text-green-400" />
+                              <span>{t}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-3">
+                        <div className="mb-2 flex items-center gap-1.5">
+                          <AlertCircle className="h-4 w-4 text-red-400" />
+                          <span className="text-xs font-semibold text-red-300">Not allowed</span>
+                        </div>
+                        <ul className="space-y-1.5">
+                          {[
+                            'Sideways or upside-down',
+                            'Cropped / part of card cut off',
+                            'Glare, shadows or reflections',
+                            'Blurry, dark or far away',
+                          ].map((t) => (
+                            <li key={t} className="flex items-start gap-1.5 text-[11px] text-neutral-300">
+                              <X className="mt-0.5 h-3 w-3 flex-shrink-0 text-red-400" />
+                              <span>{t}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Upload controls + live verification */}
               {controls.front && (
                 <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-2xl">
@@ -638,9 +750,30 @@ export default function IdentityVerifyPage() {
                       </div>
                     )}
                     {verifyStatus === 'failed' && failReason && (
-                      <div className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 p-3">
-                        <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" />
-                        <p className="text-sm text-red-200">{failReason}</p>
+                      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-3">
+                        <div className="flex items-start gap-2">
+                          <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0 text-red-500" />
+                          <div className="flex-1">
+                            <p className="text-sm text-red-200">{failReason}</p>
+                            <p className="mt-1 text-[11px] text-red-200/70">
+                              Tip: use an upright, flat, well-lit photo of the whole card — no rotation, glare, or blur.
+                            </p>
+                            {detectedText.trim().length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setShowDetected((v) => !v)}
+                                className="mt-2 text-[11px] font-medium text-red-200/80 underline underline-offset-2 hover:text-red-100"
+                              >
+                                {showDetected ? 'Hide detected text' : 'Show detected text'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        {showDetected && detectedText.trim().length > 0 && (
+                          <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-neutral-950/70 p-2 text-[10px] leading-snug text-neutral-300">
+                            {detectedText}
+                          </pre>
+                        )}
                       </div>
                     )}
                   </CardContent>
