@@ -222,6 +222,10 @@ export default function TenantsScreen() {
   // Deposit payment request (chatbot-enabled owners): "Create deposit payment record & send reminder"
   // checkbox, shown directly below the identity checkbox in the add-tenant form.
   const [requestDepositPayment, setRequestDepositPayment] = useState(false)
+  // WhatsApp invite (chatbot-enabled owners): "Include WhatsApp group invite link"
+  // checkbox. When checked (and an invite link is configured), the onboarding
+  // message also invites the tenant to join the owner's WhatsApp group.
+  const [includeWhatsappInvite, setIncludeWhatsappInvite] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [openDropdown, setOpenDropdown] = useState<string | null>(null)
 
@@ -664,27 +668,52 @@ export default function TenantsScreen() {
     return data?.id ?? null
   }
 
-  const buildDepositPaymentMessage = (tenant: Tenant) => {
+  // Build ONE tailored onboarding message covering exactly the intents the owner
+  // selected (identity verification, security deposit, WhatsApp group invite).
+  // A single greeting is used; when more than one intent is present they are
+  // enumerated as a numbered checklist, otherwise the single item is written as
+  // a short paragraph. Returns "" when no intent applies.
+  const buildOnboardingMessage = (
+    tenant: Tenant,
+    opts: { identityLink?: string | null; includeDeposit?: boolean; whatsappInviteLink?: string | null },
+  ) => {
     const tenantName = (tenant.name || "").trim() || "Tenant"
-    const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
-    return (
-      `Hi ${tenantName},\n\n` +
-      `A security deposit payment record has been created for ₹${tenant.deposit_amount || 0}.\n\n` +
-      `Please pay the deposit fees using this secure payment link:\n${portalUrl}\n\n` +
-      `Thank you!`
-    )
-  }
+    const pg = pgName ? pgName : "our PG"
+    const payUrl = `https://staytraq.vercel.app/pay/${portalToken}`
 
-  const buildCombinedIdentityDepositMessage = (tenant: Tenant, identityLink: string) => {
-    const tenantName = (tenant.name || "").trim() || "Tenant"
-    const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
+    const items: string[] = []
+    if (opts.identityLink) {
+      items.push(
+        `*Identity verification*\n` +
+        `Your property owner has requested that you verify your identity. Please open this secure link to upload your identity document (encrypted and visible only to your property owner):\n${opts.identityLink}`
+      )
+    }
+    if (opts.includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
+      items.push(
+        `*Security deposit payment*\n` +
+        `A security deposit fee of ₹${tenant.deposit_amount} has been added to your account. Please pay it using this secure payment link:\n${payUrl}`
+      )
+    }
+    if (opts.whatsappInviteLink) {
+      items.push(
+        `*Join our WhatsApp group*\n` +
+        `Stay updated with announcements by joining our community group:\n${opts.whatsappInviteLink}`
+      )
+    }
+
+    if (items.length === 0) return ""
+
+    const greeting = `Hi ${tenantName},\n\nWelcome to ${pg}! 🎉`
+
+    if (items.length === 1) {
+      return `${greeting}\n\n${items[0]}\n\nThank you!`
+    }
+
+    const numbered = items.map((it, i) => `${i + 1}. ${it}`).join("\n\n")
     return (
-      `Hi ${tenantName},\n\n` +
-      `Please complete the following two items for your Staytraq onboarding:\n\n` +
-      `1. Identity verification\n` +
-      `Your property owner has requested that you verify your identity. Please open this secure link to upload your identity document:\n${identityLink}\n\n` +
-      `2. Security deposit payment\n` +
-      `A security deposit payment record has been created for ₹${tenant.deposit_amount || 0}. Please pay the deposit fees using this secure payment link:\n${portalUrl}\n\n` +
+      `${greeting}\n\n` +
+      `Please complete the following to finish your onboarding:\n\n` +
+      `${numbered}\n\n` +
       `Thank you!`
     )
   }
@@ -718,56 +747,20 @@ export default function TenantsScreen() {
     return response.ok
   }
 
-  const sendDepositReminder = async (tenant: Tenant, paymentId: number | null) => {
-    const { data: sessionData } = await supabase.auth.getSession()
-    const sessionToken = sessionData?.session?.access_token
-    if (!sessionToken) return false
-
-    const sent = await sendChatbotNotice(tenant, buildDepositPaymentMessage(tenant), sessionToken)
-    if (sent && paymentId) {
-      await supabase.from("payments").update({ reminder_sent: true }).eq("id", paymentId)
-    }
-    return sent
-  }
-
-  const sendCombinedIdentityDepositNotice = async (tenant: Tenant, paymentId: number | null) => {
-    const token = await ensureVerificationToken(supabase, tenant.id)
-    if (!token) {
-      await markIdentityMessageFailed(tenant.id)
-      return false
-    }
-
-    const { data: sessionData } = await supabase.auth.getSession()
-    const sessionToken = sessionData?.session?.access_token
-    if (!sessionToken) {
-      await markIdentityMessageFailed(tenant.id)
-      return false
-    }
-
-    const identityLink = buildVerificationLink(IDENTITY_PORTAL_BASE, token)
-    const sent = await sendChatbotNotice(tenant, buildCombinedIdentityDepositMessage(tenant, identityLink), sessionToken)
-    if (!sent) {
-      await markIdentityMessageFailed(tenant.id)
-      return false
-    }
-
-    if (paymentId) {
-      await supabase.from("payments").update({ reminder_sent: true }).eq("id", paymentId)
-    }
-    return true
-  }
-
   // Drive the chatbot-enabled onboarding notices for a newly added tenant based
-  // on the two add-tenant form checkboxes (identity verification, deposit
-  // payment record). When both are requested a SINGLE combined message is sent;
-  // when only one is requested the matching single-purpose message is sent.
-  // The deposit payment record is always created first (when requested and the
-  // deposit amount is positive) so any message links to a real ledger entry.
+  // on the add-tenant form checkboxes (identity verification, deposit payment
+  // record, WhatsApp invite link). All selected intents are delivered in a
+  // SINGLE tailored message with one greeting — never separate welcome messages.
+  // The deposit payment record (when requested with a positive amount) is always
+  // created first so the message links to a real ledger entry. Identity-only
+  // sends reuse the dedicated retrying sender for delivery reliability.
   const handleChatbotOnboardingNotices = async (
     tenant: Tenant,
     wantsIdentity: boolean,
     wantsDeposit: boolean,
+    wantsInvite: boolean,
   ) => {
+    // 1. Create the deposit payment record first (when requested).
     let depositPaymentId: number | null = null
     if (wantsDeposit) {
       try {
@@ -778,17 +771,55 @@ export default function TenantsScreen() {
       }
     }
 
-    if (wantsIdentity && wantsDeposit) {
-      // Single message carrying both the identity verification and deposit notices.
-      void sendCombinedIdentityDepositNotice(tenant, depositPaymentId)
-    } else if (wantsIdentity) {
+    // 2. Identity-only: reuse the dedicated retrying identity sender.
+    if (wantsIdentity && !wantsDeposit && !wantsInvite) {
       void requestTenantIdentity({
         id: tenant.id,
         name: tenant.name,
         mobile_number: tenant.mobile_number,
       })
-    } else if (wantsDeposit) {
-      void sendDepositReminder(tenant, depositPaymentId)
+      return
+    }
+
+    // 3. Resolve the identity link (when identity is one of several intents).
+    let identityLink: string | null = null
+    if (wantsIdentity) {
+      const token = await ensureVerificationToken(supabase, tenant.id)
+      if (token) {
+        identityLink = buildVerificationLink(IDENTITY_PORTAL_BASE, token)
+      } else {
+        // Token generation failed — record it and drop the identity item rather
+        // than blocking the rest of the message.
+        await markIdentityMessageFailed(tenant.id)
+      }
+    }
+
+    const whatsappInviteLink = wantsInvite ? (ownerSettings?.whatsapp_invite_link || null) : null
+
+    // 4. Build the single tailored message; nothing to send if no item applies.
+    const message = buildOnboardingMessage(tenant, {
+      identityLink,
+      includeDeposit: wantsDeposit,
+      whatsappInviteLink,
+    })
+    if (!message) return
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const sessionToken = sessionData?.session?.access_token
+    if (!sessionToken) {
+      if (identityLink) await markIdentityMessageFailed(tenant.id)
+      return
+    }
+
+    const sent = await sendChatbotNotice(tenant, message, sessionToken)
+    if (!sent) {
+      if (identityLink) await markIdentityMessageFailed(tenant.id)
+      return
+    }
+
+    // 5. On success, mark the deposit reminder as sent.
+    if (depositPaymentId) {
+      await supabase.from("payments").update({ reminder_sent: true }).eq("id", depositPaymentId)
     }
   }
 
@@ -1089,6 +1120,7 @@ export default function TenantsScreen() {
     setRequestIdentityFromTenant(false)
     setCreateDepositPayment(false)
     setRequestDepositPayment(false)
+    setIncludeWhatsappInvite(false)
     setIdDocs([])
     setIsSaving(false)
     setOpenDropdown(null)
@@ -1113,6 +1145,7 @@ export default function TenantsScreen() {
     setSelectedIdType("")
     setRequestIdentityFromTenant(false)
     setRequestDepositPayment(false)
+    setIncludeWhatsappInvite(false)
     
     // Clear/initialize documents instantly so modal opens without lag
     const docs = (tenant.id_documents as any[]) || []
@@ -1684,10 +1717,11 @@ export default function TenantsScreen() {
               requestDepositPayment &&
               !!insertedData.deposit_amount &&
               insertedData.deposit_amount > 0
+            const wantsInvite = includeWhatsappInvite && !!ownerSettings?.whatsapp_invite_link
 
             // Run without awaiting so the form closes promptly; delivery/record
             // failures are surfaced via toast / recorded on the tenant.
-            void handleChatbotOnboardingNotices(insertedData, wantsIdentity, wantsDeposit)
+            void handleChatbotOnboardingNotices(insertedData, wantsIdentity, wantsDeposit, wantsInvite)
           } else {
             // Non-chatbot owners: manual WhatsApp invite popup (unchanged).
             setCreateDepositPayment(insertedData.deposit_amount ? insertedData.deposit_amount > 0 : false)
@@ -3534,6 +3568,34 @@ export default function TenantsScreen() {
                               {depositDisabled
                                 ? "Enter a deposit amount above to enable this."
                                 : `Adds a pending deposit fee of ₹${depositValue} and sends a payment reminder.`}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      )
+                    })()}
+
+                    {(() => {
+                      const inviteLink = ownerSettings?.whatsapp_invite_link
+                      const inviteDisabled = !inviteLink
+                      return (
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (inviteDisabled) return
+                            setIncludeWhatsappInvite((v) => !v)
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          }}
+                          activeOpacity={inviteDisabled ? 1 : 0.7}
+                          className={`flex-row items-center gap-3 border border-border dark:border-border-dark p-3.5 rounded-xl bg-background dark:bg-background-dark mt-2.5 ${inviteDisabled ? "opacity-50" : ""}`}
+                        >
+                          <View className={`h-6 w-6 rounded-md border-2 items-center justify-center ${includeWhatsappInvite && !inviteDisabled ? "bg-primary border-primary" : "border-border dark:border-border-dark"}`}>
+                            {includeWhatsappInvite && !inviteDisabled && <Check size={14} color="#ffffff" strokeWidth={3} />}
+                          </View>
+                          <View className="flex-1">
+                            <Text className="text-sm font-semibold text-foreground dark:text-foreground-dark">Include WhatsApp group invite link</Text>
+                            <Text className="text-xs text-muted dark:text-muted-dark mt-0.5">
+                              {inviteDisabled
+                                ? "Set a WhatsApp invite link in Settings to enable this."
+                                : "Invites the tenant to join your WhatsApp group."}
                             </Text>
                           </View>
                         </TouchableOpacity>
