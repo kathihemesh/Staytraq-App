@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -29,6 +29,15 @@ export default function SettingsPage() {
   const [pairingPhoneNumber, setPairingPhoneNumber] = useState("")
   const [pairingCode, setPairingCode] = useState("")
   const [isPairingLoading, setIsPairingLoading] = useState(false)
+  // Last number used to pair, for one-tap reconnect (no re-typing).
+  const [savedChatbotPhone, setSavedChatbotPhone] = useState("")
+
+  // Refs mirror the latest pairing state for use inside the polled status fetch
+  // (which has a stable identity and would otherwise read stale values).
+  const pairingCodeRef = useRef("")
+  const isPairingLoadingRef = useRef(false)
+  useEffect(() => { pairingCodeRef.current = pairingCode }, [pairingCode])
+  useEffect(() => { isPairingLoadingRef.current = isPairingLoading }, [isPairingLoading])
 
   const fetchChatbotStatus = useCallback(async (silent = false) => {
     try {
@@ -46,6 +55,16 @@ export default function SettingsPage() {
       })
       if (res.ok) {
         const statusData = await res.json()
+        // While a pairing code is being generated or is on screen, the backend
+        // briefly deletes+recreates the instance, so a poll can momentarily see
+        // "not_created". Ignore that transient downgrade so the pairing section
+        // and code aren't wiped mid-flow.
+        if (
+          statusData.connectionStatus === "not_created" &&
+          (isPairingLoadingRef.current || pairingCodeRef.current)
+        ) {
+          return
+        }
         setInstanceExists(statusData.exists)
         setConnectionStatus(statusData.connectionStatus)
         setChatbotPhoneNumber(statusData.phoneNumber)
@@ -64,6 +83,27 @@ export default function SettingsPage() {
     fetchChatbotStatus()
   }, [fetchChatbotStatus])
 
+  // Load the previously-used pairing number once, so the owner can reconnect
+  // without re-typing it.
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const { data } = await supabase
+        .from("pg_owners")
+        .select("chatbot_phone")
+        .eq("id", session.user.id)
+        .maybeSingle()
+      const saved = (data as { chatbot_phone?: string | null } | null)?.chatbot_phone
+      if (active && saved) {
+        setSavedChatbotPhone(saved)
+        setPairingPhoneNumber((prev) => prev || saved)
+      }
+    })()
+    return () => { active = false }
+  }, [supabase])
+
   // Polling for QR Code scanning / connection status
   useEffect(() => {
     if (connectionStatus !== "connected" && instanceExists) {
@@ -74,8 +114,9 @@ export default function SettingsPage() {
     }
   }, [connectionStatus, instanceExists, fetchChatbotStatus])
 
-  const handleGeneratePairingCode = async () => {
-    if (!pairingPhoneNumber) {
+  const handleGeneratePairingCode = async (numberOverride?: string) => {
+    const rawNumber = (numberOverride ?? pairingPhoneNumber).trim()
+    if (!rawNumber) {
       toast.error("Please enter your phone number first.")
       return
     }
@@ -92,11 +133,15 @@ export default function SettingsPage() {
           "Authorization": `Bearer ${session.access_token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ phoneNumber: pairingPhoneNumber })
+        body: JSON.stringify({ phoneNumber: rawNumber })
       })
       if (res.ok) {
         const data = await res.json()
         setPairingCode(data.code)
+        // Remember the number so the owner can reconnect later without typing.
+        const digits = rawNumber.replace(/\D/g, "")
+        setSavedChatbotPhone(digits)
+        void supabase.from("pg_owners").update({ chatbot_phone: digits }).eq("id", session.user.id)
         toast.success("Pairing code generated successfully.")
       } else {
         const err = await res.json()
@@ -523,6 +568,21 @@ export default function SettingsPage() {
 
                     {!pairingCode ? (
                       <div className="flex flex-col gap-3 max-w-md">
+                        {savedChatbotPhone && (
+                          <div className="flex flex-col gap-1.5">
+                            <Button
+                              type="button"
+                              disabled={isPairingLoading}
+                              onClick={() => handleGeneratePairingCode(savedChatbotPhone)}
+                            >
+                              {isPairingLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                              Reconnect with ••••{savedChatbotPhone.slice(-4)}
+                            </Button>
+                            <p className="text-[11px] text-muted-foreground leading-normal">
+                              Generates a fresh pairing code for your previous number — you still enter it in WhatsApp. Or use a different number below.
+                            </p>
+                          </div>
+                        )}
                         <div className="space-y-1.5">
                           <Label htmlFor="pairingPhone" className="text-xs font-semibold">
                             Phone Number (with Country Code, e.g. 919876543210)
@@ -538,7 +598,7 @@ export default function SettingsPage() {
                             <Button 
                               type="button" 
                               disabled={isPairingLoading}
-                              onClick={handleGeneratePairingCode}
+                              onClick={() => handleGeneratePairingCode()}
                             >
                               {isPairingLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                               Get Code

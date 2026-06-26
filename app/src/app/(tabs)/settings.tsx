@@ -60,10 +60,19 @@ export default function SettingsScreen() {
   const [pairingPhoneNumber, setPairingPhoneNumber] = useState("")
   const [pairingCode, setPairingCode] = useState("")
   const [isPairingLoading, setIsPairingLoading] = useState(false)
+  // Last number used to pair, for one-tap reconnect (no re-typing).
+  const [savedChatbotPhone, setSavedChatbotPhone] = useState("")
   const [chatbotEnabled, setChatbotEnabled] = useState(false)
   const [isProcessingChatbot, setIsProcessingChatbot] = useState(false)
   
   const successTimeoutRef = useRef<any>(null)
+
+  // Mirror the latest pairing state for use inside the polled status fetch
+  // (stable identity → would otherwise read stale values).
+  const pairingCodeRef = useRef("")
+  const isPairingLoadingRef = useRef(false)
+  useEffect(() => { pairingCodeRef.current = pairingCode }, [pairingCode])
+  useEffect(() => { isPairingLoadingRef.current = isPairingLoading }, [isPairingLoading])
 
   const getChatbotApiUrl = () => {
     if (process.env.EXPO_PUBLIC_CHATBOT_API_URL) {
@@ -135,6 +144,16 @@ export default function SettingsScreen() {
       })
       if (res.ok) {
         const statusData = await res.json()
+        // While a pairing code is being generated or is on screen, the backend
+        // briefly deletes+recreates the instance, so a poll can momentarily see
+        // "not_created". Ignore that transient downgrade so the pairing section
+        // and code aren't wiped mid-flow.
+        if (
+          statusData.connectionStatus === "not_created" &&
+          (isPairingLoadingRef.current || pairingCodeRef.current)
+        ) {
+          return
+        }
         setInstanceExists(statusData.exists)
         setConnectionStatus(statusData.connectionStatus)
         setChatbotPhoneNumber(statusData.phoneNumber)
@@ -153,6 +172,27 @@ export default function SettingsScreen() {
   useEffect(() => {
     fetchChatbotStatus()
   }, [fetchChatbotStatus])
+
+  // Load the previously-used pairing number once for one-tap reconnect.
+  useEffect(() => {
+    let active = true
+    ;(async () => {
+      const sessionRes = await supabase.auth.getSession()
+      const session = sessionRes.data.session
+      if (!session) return
+      const { data } = await (supabase as any)
+        .from("pg_owners")
+        .select("chatbot_phone")
+        .eq("id", session.user.id)
+        .maybeSingle()
+      const saved = data?.chatbot_phone
+      if (active && saved) {
+        setSavedChatbotPhone(saved)
+        setPairingPhoneNumber((prev) => prev || saved)
+      }
+    })()
+    return () => { active = false }
+  }, [])
 
   useEffect(() => {
     if (connectionStatus !== "connected" && instanceExists) {
@@ -199,8 +239,9 @@ export default function SettingsScreen() {
     }
   }
 
-  const handleGeneratePairingCode = async () => {
-    if (!pairingPhoneNumber) {
+  const handleGeneratePairingCode = async (numberOverride?: string) => {
+    const rawNumber = (numberOverride ?? pairingPhoneNumber).trim()
+    if (!rawNumber) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
       setError("Please enter your phone number first.")
       return
@@ -222,11 +263,15 @@ export default function SettingsScreen() {
           "Authorization": `Bearer ${session.access_token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ phoneNumber: pairingPhoneNumber })
+        body: JSON.stringify({ phoneNumber: rawNumber })
       })
       if (res.ok) {
         const data = await res.json()
         setPairingCode(data.code)
+        // Remember the number so the owner can reconnect later without typing.
+        const digits = rawNumber.replace(/\D/g, "")
+        setSavedChatbotPhone(digits)
+        void (supabase as any).from("pg_owners").update({ chatbot_phone: digits }).eq("id", session.user.id)
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
       } else {
         const err = await res.json()
@@ -904,6 +949,27 @@ export default function SettingsScreen() {
 
                         {!pairingCode ? (
                           <View className="gap-3">
+                            {savedChatbotPhone ? (
+                              <View className="gap-1.5">
+                                <TouchableOpacity
+                                  disabled={isPairingLoading}
+                                  onPress={() => handleGeneratePairingCode(savedChatbotPhone)}
+                                  className="bg-primary rounded-xl flex-row items-center justify-center h-10 gap-2"
+                                >
+                                  {isPairingLoading ? (
+                                    <ActivityIndicator size="small" color="#ffffff" />
+                                  ) : (
+                                    <RefreshCw size={14} color="#ffffff" />
+                                  )}
+                                  <Text className="text-white text-xs font-bold">
+                                    Reconnect with ••••{savedChatbotPhone.slice(-4)}
+                                  </Text>
+                                </TouchableOpacity>
+                                <Text className="text-[10px] text-muted leading-4">
+                                  Generates a fresh code for your previous number — you still enter it in WhatsApp. Or use a different number below.
+                                </Text>
+                              </View>
+                            ) : null}
                             <View className="gap-1.5">
                               <Text className="text-[11px] font-bold text-foreground dark:text-foreground-dark">
                                 Phone Number (with Country Code, e.g. 919876543210)
@@ -922,7 +988,7 @@ export default function SettingsScreen() {
                                 />
                                 <TouchableOpacity
                                   disabled={isPairingLoading}
-                                  onPress={handleGeneratePairingCode}
+                                  onPress={() => handleGeneratePairingCode()}
                                   className="bg-primary px-4 rounded-xl flex-row items-center justify-center h-10"
                                 >
                                   {isPairingLoading ? (
