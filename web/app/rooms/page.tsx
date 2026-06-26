@@ -622,14 +622,15 @@ export default function RoomsPage() {
 
   return (
     <DashboardLayout title="Rooms">
-      <div className="min-h-[calc(100vh-100px)] flex flex-col gap-6 p-2 lg:p-4">
+      <div className="min-h-[calc(100vh-100px)] flex flex-col gap-6">
         
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col min-w-0 space-y-6">
           
           {/* Header & Quick Stats */}
           <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-            <div>
+            {/* In-page title is hidden on mobile (the top header already shows "Rooms"). */}
+            <div className="hidden md:block">
               <div className="flex items-center gap-3 mb-2">
                 <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">Rooms</h1>
               </div>

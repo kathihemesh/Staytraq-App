@@ -26,6 +26,7 @@ import {
   AlertCircle,
   ArrowRight,
   CalendarClock,
+  CheckCircle2,
   ClipboardList,
   Loader2,
   LogOut,
@@ -105,14 +106,7 @@ function CategoryHeader({
   )
 }
 
-/** A per-category empty-state indication (Req 6.7). */
-function CategoryEmpty({ message }: { message: string }) {
-  return (
-    <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
-      {message}
-    </p>
-  )
-}
+/** The actionable task list for the active Time_Filter. */
 
 export function TasksSection({
   payments,
@@ -132,6 +126,15 @@ export function TasksSection({
   const followUp = computeFollowUpTasks(payments, dateRange, filter)
   const maintenance = computeMaintenanceTasks(complaints, tenants)
   const { moveOut, checkIn } = computeMoveTasks(tenants, dateRange)
+
+  // Only sections that have records are rendered (parity with the mobile app).
+  // When every category is empty, a single overall empty state is shown instead
+  // of four per-category empty states.
+  const allEmpty =
+    followUp.length === 0 &&
+    maintenance.length === 0 &&
+    moveOut.length === 0 &&
+    checkIn.length === 0
 
   return (
     <Card className={cn("gap-4", className)}>
@@ -165,19 +168,23 @@ export function TasksSection({
               Tasks could not be loaded. Please try again.
             </p>
           </div>
+        ) : allEmpty ? (
+          // Parity with mobile: a single overall empty state when nothing is due.
+          <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border py-10 text-center">
+            <CheckCircle2 className="h-6 w-6 text-muted-foreground" aria-hidden="true" />
+            <p className="text-sm text-muted-foreground">No tasks for this period.</p>
+          </div>
         ) : (
           <div className="flex flex-col gap-6">
             {/* Follow-up payments (Req 6.2, 6.6) */}
-            <section className="flex flex-col gap-3">
-              <CategoryHeader
-                icon={CalendarClock}
-                label="Follow-up Payments"
-                count={followUp.length}
-                iconClass="bg-primary/10 text-primary"
-              />
-              {followUp.length === 0 ? (
-                <CategoryEmpty message="No follow-up payments for this period." />
-              ) : (
+            {followUp.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <CategoryHeader
+                  icon={CalendarClock}
+                  label="Follow-up Payments"
+                  count={followUp.length}
+                  iconClass="bg-primary/10 text-primary"
+                />
                 <ul className="flex flex-col gap-2">
                   {followUp.map((task) => (
                     <li key={task.id}>
@@ -210,20 +217,18 @@ export function TasksSection({
                     </li>
                   ))}
                 </ul>
-              )}
-            </section>
+              </section>
+            )}
 
             {/* Maintenance (Req 6.3) */}
-            <section className="flex flex-col gap-3">
-              <CategoryHeader
-                icon={Wrench}
-                label="Maintenance"
-                count={maintenance.length}
-                iconClass="bg-warning/10 text-warning"
-              />
-              {maintenance.length === 0 ? (
-                <CategoryEmpty message="No maintenance tasks." />
-              ) : (
+            {maintenance.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <CategoryHeader
+                  icon={Wrench}
+                  label="Maintenance"
+                  count={maintenance.length}
+                  iconClass="bg-warning/10 text-warning"
+                />
                 <ul className="flex flex-col gap-2">
                   {maintenance.map((task) => (
                     <li
@@ -247,20 +252,18 @@ export function TasksSection({
                     </li>
                   ))}
                 </ul>
-              )}
-            </section>
+              </section>
+            )}
 
             {/* Move-out (Req 6.4) */}
-            <section className="flex flex-col gap-3">
-              <CategoryHeader
-                icon={LogOut}
-                label="Move-out"
-                count={moveOut.length}
-                iconClass="bg-destructive/10 text-destructive"
-              />
-              {moveOut.length === 0 ? (
-                <CategoryEmpty message="No move-out tasks for this period." />
-              ) : (
+            {moveOut.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <CategoryHeader
+                  icon={LogOut}
+                  label="Move-out"
+                  count={moveOut.length}
+                  iconClass="bg-destructive/10 text-destructive"
+                />
                 <ul className="flex flex-col gap-2">
                   {moveOut.map((task) => (
                     <li key={task.id}>
@@ -289,20 +292,18 @@ export function TasksSection({
                     </li>
                   ))}
                 </ul>
-              )}
-            </section>
+              </section>
+            )}
 
             {/* Check-in (Req 6.5) */}
-            <section className="flex flex-col gap-3">
-              <CategoryHeader
-                icon={LogIn}
-                label="Check-in"
-                count={checkIn.length}
-                iconClass="bg-primary/10 text-primary"
-              />
-              {checkIn.length === 0 ? (
-                <CategoryEmpty message="No check-in tasks for this period." />
-              ) : (
+            {checkIn.length > 0 && (
+              <section className="flex flex-col gap-3">
+                <CategoryHeader
+                  icon={LogIn}
+                  label="Check-in"
+                  count={checkIn.length}
+                  iconClass="bg-primary/10 text-primary"
+                />
                 <ul className="flex flex-col gap-2">
                   {checkIn.map((task) => (
                     <li key={task.id}>
@@ -331,8 +332,8 @@ export function TasksSection({
                     </li>
                   ))}
                 </ul>
-              )}
-            </section>
+              </section>
+            )}
           </div>
         )}
       </CardContent>

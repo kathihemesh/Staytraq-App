@@ -394,13 +394,6 @@ export default function PaymentsPage() {
               WebkitBackdropFilter: "blur(12px)",
             }}
           >
-            <h1 className="text-lg font-bold mb-3 leading-none">
-              Payments{" "}
-              <span className="text-muted-foreground font-normal text-sm">
-                · {selectedMonth}
-              </span>
-            </h1>
-
             <MobileSummaryCards
               totalCollected={totalCollected}
               totalPending={totalPending}

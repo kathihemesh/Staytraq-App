@@ -190,6 +190,7 @@ export default function DashboardPage() {
             />
             <OccupancyOverview summary={hook.summary} rooms={hook.rooms} />
             <PaymentStatusOverview
+              className="hidden lg:flex"
               summary={hook.summary}
               payments={hook.payments}
               dateRange={hook.dateRange}

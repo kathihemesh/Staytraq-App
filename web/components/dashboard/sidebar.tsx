@@ -16,6 +16,7 @@ import {
   ChevronRight,
   Moon,
   Sun,
+  MessageSquare,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -33,7 +34,7 @@ const navItems = [
   { href: "/tenants", label: "Tenants", icon: Users, description: "Manage tenant information" },
   { href: "/rooms", label: "Rooms", icon: DoorOpen, description: "Room inventory and status" },
   { href: "/payments", label: "Payments", icon: CreditCard, description: "Track rent payments" },
-  { href: "/reminders", label: "Reminders", icon: Bell, description: "Payment reminders" },
+  { href: "/complaints", label: "Complaints", icon: MessageSquare, description: "Tenant complaints" },
   { href: "/settings", label: "Settings", icon: Settings, description: "App configuration" },
 ]
 
