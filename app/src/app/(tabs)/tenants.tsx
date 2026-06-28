@@ -189,6 +189,7 @@ export default function TenantsScreen() {
   const [justAddedTenant, setJustAddedTenant] = useState<Tenant | null>(null)
   const [createDepositPayment, setCreateDepositPayment] = useState(false)
   const [customInviteMessage, setCustomInviteMessage] = useState("")
+  const [invitePayUrl, setInvitePayUrl] = useState<string | null>(null)
   const [ownerSettings, setOwnerSettings] = useState<any>(null)
   const [portalToken, setPortalToken] = useState<string>("")
   const [pgName, setPgName] = useState<string>("")
@@ -319,44 +320,12 @@ export default function TenantsScreen() {
 
     const fetchPortalTokenForPayment = async () => {
       try {
-        const ownerId = selectedPaymentDetail.owner_id || user?.id
-        if (!ownerId) return
-
-        const { data, error } = await supabase
-          .from("monthly_payment_links")
-          .select("portal_token")
-          .eq("owner_id", ownerId)
-          .eq("month", selectedPaymentDetail.month)
-          .eq("year", selectedPaymentDetail.year)
-          .single()
-
-        if (error && error.code !== "PGRST116") {
-          console.error("Error fetching portal token for selected payment detail:", error)
-          return
-        }
-
-        if (data?.portal_token) {
-          setSelectedPaymentPortalToken(data.portal_token)
-        } else {
-          const newToken = Math.random().toString(36).substring(2, 14)
-          const { data: upsertData, error: upsertError } = await supabase
-            .from("monthly_payment_links")
-            .upsert({
-              owner_id: ownerId,
-              month: selectedPaymentDetail.month,
-              year: selectedPaymentDetail.year,
-              portal_token: newToken
-            }, { onConflict: "owner_id,month,year" })
-            .select("portal_token")
-            .single()
-
-          if (upsertError) {
-            console.error("Error generating portal token for selected payment detail:", upsertError)
-            setSelectedPaymentPortalToken(newToken)
-          } else {
-            setSelectedPaymentPortalToken(upsertData?.portal_token || newToken)
-          }
-        }
+        // Unique per-tenant payment link (the grouped monthly portal that asked
+        // tenants to enter a phone number has been removed).
+        const tenantId = selectedPaymentDetail.tenant_id || selectedTenant?.id
+        if (!tenantId) return
+        const token = await ensurePaymentPortalToken(tenantId)
+        if (token) setSelectedPaymentPortalToken(token)
       } catch (err) {
         console.error("Error in fetchPortalTokenForPayment:", err)
       }
@@ -652,12 +621,12 @@ export default function TenantsScreen() {
     if (ownerSettings?.whatsapp_invite_link) {
       msg += ` Please join our WhatsApp group using this link: ${ownerSettings.whatsapp_invite_link}`
     }
-    if (includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
-      const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
-      msg += `\n\nAdditionally, please process your security deposit fee of ₹${tenant.deposit_amount} via our secure payment portal: ${portalUrl}`
+    // Unique per-tenant payment link (grouped phone-verification portal removed).
+    if (includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0 && invitePayUrl) {
+      msg += `\n\nAdditionally, please process your security deposit fee of ₹${tenant.deposit_amount} via your secure payment portal: ${invitePayUrl}`
     }
     return msg
-  }, [ownerSettings?.whatsapp_invite_link, portalToken, pgName])
+  }, [ownerSettings?.whatsapp_invite_link, invitePayUrl, pgName])
 
   const createSecurityDepositPayment = async (tenant: Tenant) => {
     if (!user?.id || !tenant.deposit_amount || tenant.deposit_amount <= 0) return null
@@ -751,13 +720,12 @@ export default function TenantsScreen() {
         `Your property owner has requested that you verify your identity. Please open this secure link to upload your identity document (encrypted and visible only to your property owner):\n${opts.identityLink}`
       )
     }
-    if (opts.includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
-      // Per-tenant payment link (no phone-number verification). Fall back to the
-      // grouped owner portal link only if a per-tenant token could not be created.
-      const payUrl = opts.depositPayUrl || `https://staytraq.vercel.app/pay/${portalToken}`
+    if (opts.includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0 && opts.depositPayUrl) {
+      // Unique per-tenant payment link (the grouped phone-verification portal
+      // has been removed). Skip the deposit line if a token couldn't be created.
       items.push(
         `*Security deposit payment*\n` +
-        `A security deposit fee of ₹${tenant.deposit_amount} has been added to your account. Please pay it using this secure payment link:\n${payUrl}`
+        `A security deposit fee of ₹${tenant.deposit_amount} has been added to your account. Please pay it using this secure payment link:\n${opts.depositPayUrl}`
       )
     }
     if (opts.whatsappInviteLink) {
@@ -1803,8 +1771,13 @@ export default function TenantsScreen() {
               msg += ` Please join our WhatsApp group using this link: ${ownerSettings.whatsapp_invite_link}`
             }
             if (insertedData.deposit_amount && insertedData.deposit_amount > 0) {
-              const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
-              msg += `\n\nAdditionally, please process your security deposit fee of ₹${insertedData.deposit_amount} via our secure payment portal: ${portalUrl}`
+              // Unique per-tenant payment link (grouped phone-verification portal removed).
+              const payToken = await ensurePaymentPortalToken(insertedData.id)
+              if (payToken) {
+                const portalUrl = `https://staytraq.vercel.app/pay/${payToken}`
+                setInvitePayUrl(portalUrl)
+                msg += `\n\nAdditionally, please process your security deposit fee of ₹${insertedData.deposit_amount} via your secure payment portal: ${portalUrl}`
+              }
             }
             setCustomInviteMessage(msg)
             setWhatsappInviteModalVisible(true)

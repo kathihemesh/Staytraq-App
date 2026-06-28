@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import { QRCodeSVG } from 'qrcode.react'
-import { CheckCircle2, AlertCircle, Clock, Upload, X, Image as ImageIcon, Loader2, KeyRound, Phone, ArrowLeft } from 'lucide-react'
+import { CheckCircle2, AlertCircle, Clock, Upload, X, Image as ImageIcon, Loader2, ArrowLeft } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
 
-type PaymentState = 'loading' | 'invalid' | 'verify_identity' | 'no_dues' | 'select_invoice' | 'pending' | 'submitted' | 'paid'
+type PaymentState = 'loading' | 'invalid' | 'no_dues' | 'select_invoice' | 'pending' | 'submitted' | 'paid'
 
 interface PaymentData {
   portalMonth?: number
@@ -55,13 +55,6 @@ export default function TenantPaymentPage() {
   const [state, setState] = useState<PaymentState>('loading')
   const [data, setData] = useState<PaymentData | null>(null)
   const [selectedPayment, setSelectedPayment] = useState<PaymentData['payments'][0] | null>(null)
-  // Direct (per-tenant) mode: the link is a per-tenant payment-portal token, so
-  // the mobile-verification step is skipped and dues are shown immediately.
-  const [directMode, setDirectMode] = useState(false)
-  
-  // Verification state
-  const [mobileNumber, setMobileNumber] = useState('')
-  const [isVerifying, setIsVerifying] = useState(false)
 
   // Form state
   const [utrNumber, setUtrNumber] = useState('')
@@ -86,7 +79,6 @@ export default function TenantPaymentPage() {
 
         // Per-tenant payment-portal token: skip verification and show dues now.
         if (json.mode === 'tenant') {
-          setDirectMode(true)
           const tPayments = (json.payments || []) as PaymentData['payments']
           setData({
             portalMonth: undefined,
@@ -110,15 +102,9 @@ export default function TenantPaymentPage() {
           return
         }
 
-        setData({
-          portalMonth: json.month,
-          portalYear: json.year,
-          pgName: json.pg_name,
-          tenant: { name: '', room_number: '', payment_code: '' },
-          payments: [],
-          settings: json.settings
-        })
-        setState('verify_identity')
+        // Non-tenant tokens (e.g. the removed grouped portal link) are no longer
+        // valid. Only unique per-tenant payment links resolve.
+        setState('invalid')
       } catch (error) {
         console.error(error)
         setState('invalid')
@@ -130,81 +116,10 @@ export default function TenantPaymentPage() {
     }
   }, [token])
 
-  // In direct (per-tenant) mode there is no verification step. If any "back"/
-  // "exit" control tries to route to the mobile-entry form, bounce straight back
-  // to the tenant's dues view instead.
-  useEffect(() => {
-    if (!directMode || state !== 'verify_identity') return
-    const pays = data?.payments || []
-    if (pays.length === 0) {
-      setState('no_dues')
-    } else if (pays.length > 1) {
-      setSelectedPayment(null)
-      setState('select_invoice')
-    } else {
-      const sp = pays[0]
-      setSelectedPayment(sp)
-      setState(sp.status === 'paid' ? 'paid' : sp.status === 'submitted' ? 'submitted' : 'pending')
-    }
-  }, [directMode, state, data])
-
-  // 2. Identity Verification Lookup by Mobile Number
-  const handleVerifyIdentity = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!mobileNumber.trim()) {
-      toast.error('Mobile number is required')
-      return
-    }
-
-    setIsVerifying(true)
-    try {
-      const res = await fetch(`/api/pay/${token}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mobile_number: mobileNumber })
-      })
-
-      if (!res.ok) {
-        const errJson = await res.json()
-        throw new Error(errJson.error || 'Failed to verify identity')
-      }
-
-      const json = await res.json()
-      
-      // Update tenant invoice data
-      setData(prev => ({
-        portalMonth: prev?.portalMonth,
-        portalYear: prev?.portalYear,
-        pgName: prev?.pgName,
-        tenant: json.tenant,
-        payments: json.payments,
-        settings: prev?.settings || null
-      }))
-
-      if (!json.payments || json.payments.length === 0) {
-        setSelectedPayment(null)
-        setState('no_dues')
-      } else if (json.payments.length === 1) {
-        const singlePay = json.payments[0]
-        setSelectedPayment(singlePay)
-        if (singlePay.status === 'paid') {
-          setState('paid')
-        } else if (singlePay.status === 'submitted') {
-          setState('submitted')
-        } else {
-          setState('pending')
-        }
-      } else {
-        setSelectedPayment(null)
-        setState('select_invoice')
-      }
-    } catch (error: any) {
-      console.error(error)
-      toast.error(error.message || 'No registered occupant found with this number.')
-    } finally {
-      setIsVerifying(false)
-    }
-  }
+  // 2. Identity Verification Lookup by Mobile Number — REMOVED.
+  // The grouped portal (where a tenant entered any phone number to view dues) has
+  // been removed. Each tenant now receives a unique per-tenant link that shows
+  // only their own dues, so no mobile-number verification step exists.
 
   const scanScreenshotForUtr = async (file: File) => {
     setIsScanning(true)
@@ -416,68 +331,6 @@ export default function TenantPaymentPage() {
             </motion.div>
           )}
 
-          {state === 'verify_identity' && (
-            <motion.div
-              key="verify_identity"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-            >
-              <form onSubmit={handleVerifyIdentity}>
-                <Card className="bg-neutral-900/60 border-neutral-800 backdrop-blur-xl shadow-2xl relative overflow-hidden">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-blue-500" />
-                  <CardHeader>
-                    <div className="flex items-center gap-3 mb-1">
-                      <div className="h-8 w-8 bg-primary/10 rounded-lg flex items-center justify-center">
-                        <KeyRound className="h-4 w-4 text-primary" />
-                      </div>
-                      <CardTitle className="text-white text-lg">Tenant Verification</CardTitle>
-                    </div>
-                    <CardDescription className="text-neutral-400">
-                      Enter your registered mobile number to fetch your active invoice and QR code for {data?.pgName ? `${data.pgName} ` : ''}for {data?.portalMonth ? months[data.portalMonth - 1] : ''} {data?.portalYear || ''}.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="mobile" className="text-neutral-300">Registered Mobile Number</Label>
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                          <Phone className="h-4 w-4 text-neutral-500" />
-                        </div>
-                        <Input
-                          id="mobile"
-                          type="tel"
-                          value={mobileNumber}
-                          onChange={(e) => setMobileNumber(e.target.value)}
-                          placeholder="e.g. 9876543210"
-                          className="pl-10 bg-neutral-950 border-neutral-800 text-white placeholder:text-neutral-600 focus-visible:ring-primary"
-                          required
-                          disabled={isVerifying}
-                        />
-                      </div>
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Button 
-                      type="submit" 
-                      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
-                      disabled={isVerifying}
-                    >
-                      {isVerifying ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Finding Profile...
-                        </>
-                      ) : (
-                        'Verify & Proceed'
-                      )}
-                    </Button>
-                  </CardFooter>
-                </Card>
-              </form>
-            </motion.div>
-          )}
-
           {state === 'no_dues' && data && (
             <motion.div
               key="no_dues"
@@ -506,16 +359,6 @@ export default function TenantPaymentPage() {
                       <span className="font-semibold text-neutral-300">Room {data.tenant.room_number}</span>
                     </div>
                   </div>
-
-                  {!directMode && (
-                    <Button 
-                      variant="ghost" 
-                      className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                      onClick={() => setState('verify_identity')}
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
-                    </Button>
-                  )}
                 </CardContent>
               </Card>
             </motion.div>
@@ -590,17 +433,6 @@ export default function TenantPaymentPage() {
                     )
                   })}
                 </CardContent>
-                {!directMode && (
-                  <CardFooter className="bg-neutral-900/40 border-t border-neutral-800 pt-6">
-                    <Button 
-                      variant="ghost" 
-                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-full justify-center"
-                      onClick={() => setState('verify_identity')}
-                    >
-                      <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
-                    </Button>
-                  </CardFooter>
-                )}
               </Card>
             </motion.div>
           )}
@@ -910,16 +742,6 @@ export default function TenantPaymentPage() {
                           <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
                         </Button>
                       )}
-                      {!directMode && (
-                        <Button 
-                          type="button" 
-                          variant="ghost" 
-                          className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-auto"
-                          onClick={() => setState('verify_identity')}
-                        >
-                          Use another profile
-                        </Button>
-                      )}
                     </div>
                   </CardFooter>
                 </Card>
@@ -969,15 +791,6 @@ export default function TenantPaymentPage() {
                         <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
                       </Button>
                     )}
-                    {!directMode && (
-                      <Button 
-                        variant="ghost" 
-                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                        onClick={() => setState('verify_identity')}
-                      >
-                        Exit
-                      </Button>
-                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1024,15 +837,6 @@ export default function TenantPaymentPage() {
                         }}
                       >
                         <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
-                      </Button>
-                    )}
-                    {!directMode && (
-                      <Button 
-                        variant="ghost" 
-                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                        onClick={() => setState('verify_identity')}
-                      >
-                        Exit
                       </Button>
                     )}
                   </div>

@@ -23,6 +23,7 @@ import { useRouter, useFocusEffect } from "expo-router"
 import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
+import { ensurePaymentPortalToken } from "@/lib/payments/token"
 import { loadDashboardAggregates, type SupabaseLike, type DashboardAggregates } from "@/lib/dashboard-aggregates"
 import { store as storeDashboardCache, retrieve as retrieveDashboardCache, invalidate as invalidateDashboardCache, hydrateFromSnapshot as hydrateDashboardCache, createDebouncer, type Debouncer } from "@/lib/dashboard-cache"
 import { 
@@ -1359,27 +1360,11 @@ export default function DashboardScreen() {
 
     setIsSendingSingleWhatsApp(true)
     try {
-      const { data: linkData, error: linkError } = await supabase
-        .from("monthly_payment_links")
-        .select("portal_token")
-        .eq("owner_id", user!.id)
-        .eq("month", payment.month)
-        .eq("year", payment.year)
-        .maybeSingle()
-
-      if (linkError) throw linkError
-
-      let activePortalToken = linkData?.portal_token
+      // Unique per-tenant payment link (grouped phone-verification portal removed).
+      const activePortalToken = await ensurePaymentPortalToken(supabase, payment.tenant_id)
       if (!activePortalToken) {
-        activePortalToken = Math.random().toString(36).substring(2, 14)
-        await supabase
-          .from("monthly_payment_links")
-          .upsert({
-            owner_id: user!.id,
-            month: payment.month,
-            year: payment.year,
-            portal_token: activePortalToken
-          }, { onConflict: "owner_id,month,year" })
+        showToast("Couldn't create link", "Failed to generate the tenant payment link.", "error")
+        return
       }
 
       const MONTH_NAMES = [
@@ -1496,28 +1481,10 @@ export default function DashboardScreen() {
         }
 
         try {
-          // Get or create portal link token
-          const { data: linkData, error: linkError } = await supabase
-            .from("monthly_payment_links")
-            .select("portal_token")
-            .eq("owner_id", user!.id)
-            .eq("month", payment.month)
-            .eq("year", payment.year)
-            .maybeSingle()
-
-          if (linkError) throw linkError
-
-          let activePortalToken = linkData?.portal_token
+          // Unique per-tenant payment link (grouped phone-verification portal removed).
+          const activePortalToken = await ensurePaymentPortalToken(supabase, payment.tenant_id)
           if (!activePortalToken) {
-            activePortalToken = Math.random().toString(36).substring(2, 14)
-            await supabase
-              .from("monthly_payment_links")
-              .upsert({
-                owner_id: user!.id,
-                month: payment.month,
-                year: payment.year,
-                portal_token: activePortalToken
-              }, { onConflict: "owner_id,month,year" })
+            throw new Error("Could not generate the tenant payment link.")
           }
 
           const MONTH_NAMES = [

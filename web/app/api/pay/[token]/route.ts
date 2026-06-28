@@ -1,16 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-const months = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December'
-]
-
-function normalizeMobileLast10(mobileNumber: string) {
-  const clean = mobileNumber.replace(/\D/g, '')
-  return clean.length >= 10 ? clean.slice(-10) : null
-}
-
 /**
  * Resolve a per-tenant payment-portal token (tenants_table.payment_portal_token)
  * into the same payload the mobile-verification POST returns, plus the owner's

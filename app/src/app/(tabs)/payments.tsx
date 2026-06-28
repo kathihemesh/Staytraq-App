@@ -91,6 +91,7 @@ import { LinearGradient } from "expo-linear-gradient"
 import Svg, { Path } from "react-native-svg"
 import ThemeDatePicker from "@/components/ui/theme-date-picker"
 import { InlineSelect } from "@/components/ui/inline-select"
+import { ensurePaymentPortalToken } from "@/lib/payments/token"
 
 // Match database schema accurately
 type Payment = {
@@ -646,9 +647,11 @@ export default function PaymentsScreen() {
     }
   }
 
-  // Prewritten notice messages
-  const portalUrl = `https://staytraq.vercel.app/pay/${portalToken}`
-  const currentReminderMessage = `Dear Tenants, this is to request you all to clear your pending rent/payments for ${pgName ? pgName : "your PG"} for the month of ${selectedMonth} and submit the proof/receipt securely via our payment portal: ${portalUrl}\nThank you!`
+  // Group broadcast notice. With the grouped phone-verification portal removed,
+  // a single shared link can no longer show per-tenant dues — each tenant now
+  // receives their own unique payment link individually, so the group notice is
+  // a general announcement without a shared portal link.
+  const currentReminderMessage = `Dear Tenants, this is a reminder to please clear your pending rent/payments for ${pgName ? pgName : "your PG"} for the month of ${selectedMonth}. Each of you has been sent a secure personal payment link — please use your own link to view your dues and submit the payment proof.\nThank you!`
 
   const handleCopyAndShareReminder = async () => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -664,11 +667,6 @@ export default function PaymentsScreen() {
   }
 
   const handleShareToWhatsAppGroup = async () => {
-    if (!portalToken) {
-      showToast("Generating link...", "Payment portal link is being fetched/created. Please try again.", "info")
-      return
-    }
-
     if (!whatsappInviteLink) {
       Alert.alert("Missing Invite Link", "Please configure your WhatsApp group invite link in Settings first.")
       return
@@ -880,41 +878,10 @@ export default function PaymentsScreen() {
 
     const fetchPortalTokenForPayment = async () => {
       try {
-        const { data, error } = await supabase
-          .from("monthly_payment_links")
-          .select("portal_token")
-          .eq("owner_id", selectedPayment.owner_id)
-          .eq("month", selectedPayment.month)
-          .eq("year", selectedPayment.year)
-          .single()
-
-        if (error && error.code !== "PGRST116") {
-          console.error("Error fetching portal token for selected payment:", error)
-          return
-        }
-
-        if (data?.portal_token) {
-          setSelectedPaymentPortalToken(data.portal_token)
-        } else {
-          const newToken = Math.random().toString(36).substring(2, 14)
-          const { data: upsertData, error: upsertError } = await supabase
-            .from("monthly_payment_links")
-            .upsert({
-              owner_id: selectedPayment.owner_id,
-              month: selectedPayment.month,
-              year: selectedPayment.year,
-              portal_token: newToken
-            }, { onConflict: "owner_id,month,year" })
-            .select("portal_token")
-            .single()
-
-          if (upsertError) {
-            console.error("Error generating portal token for selected payment:", upsertError)
-            setSelectedPaymentPortalToken(newToken)
-          } else {
-            setSelectedPaymentPortalToken(upsertData?.portal_token || newToken)
-          }
-        }
+        // Unique per-tenant payment link (grouped phone-verification portal removed).
+        if (!selectedPayment.tenant_id) return
+        const token = await ensurePaymentPortalToken(supabase, selectedPayment.tenant_id)
+        if (token) setSelectedPaymentPortalToken(token)
       } catch (err) {
         console.error("Error in fetchPortalTokenForPayment:", err)
       }

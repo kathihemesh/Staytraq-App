@@ -341,7 +341,6 @@ function TenantsPageInner() {
   const [pgMissing, setPgMissing] = useState(false)
   const [ownerSettings, setOwnerSettings] = useState<OwnerSettings | null>(null)
   const [chatbotEnabled, setChatbotEnabled] = useState(false)
-  const [portalToken, setPortalToken] = useState("")
   const hasLoadedOnce = useRef(false)
   const fetchInProgressRef = useRef(false)
   const statusSyncRunningRef = useRef(false)
@@ -386,6 +385,7 @@ function TenantsPageInner() {
   const [justAddedTenant, setJustAddedTenant] = useState<Tenant | null>(null)
   const [createDepositPayment, setCreateDepositPayment] = useState(false)
   const [customInviteMessage, setCustomInviteMessage] = useState("")
+  const [invitePayUrl, setInvitePayUrl] = useState<string | null>(null)
   const [isSendingInvite, setIsSendingInvite] = useState(false)
 
   // Move out flow
@@ -434,7 +434,6 @@ function TenantsPageInner() {
   const [selectedPaymentDetail, setSelectedPaymentDetail] = useState<Payment | null>(null)
   const [signedScreenshotUrl, setSignedScreenshotUrl] = useState<string | null>(null)
   const [loadingScreenshot, setLoadingScreenshot] = useState(false)
-  const [selectedPaymentPortalToken, setSelectedPaymentPortalToken] = useState<string | null>(null)
   const [rejectingMode, setRejectingMode] = useState(false)
   const [rejectNotes, setRejectNotes] = useState("")
   const [isSendingWhatsAppPayment, setIsSendingWhatsAppPayment] = useState(false)
@@ -463,10 +462,7 @@ function TenantsPageInner() {
       try {
         if (!silent && !hasLoadedOnce.current) setLoading(true)
 
-        const currentMonth = new Date().getMonth() + 1
-        const currentYear = new Date().getFullYear()
-
-        const [pgResult, tenantsResult, settingsResult, linkResult, ownerResult] = await Promise.all([
+        const [pgResult, tenantsResult, settingsResult, ownerResult] = await Promise.all([
           db.from("pg_details").select("id, pg_name").eq("owner_id", user.id).maybeSingle(),
           db
             .from("tenants_table")
@@ -478,13 +474,6 @@ function TenantsPageInner() {
             .from("settings")
             .select("whatsapp_invite_link, upi_id, upi_name, rent_due_day, refund_deposit, default_deposit_fees")
             .eq("owner_id", user.id)
-            .maybeSingle(),
-          db
-            .from("monthly_payment_links")
-            .select("portal_token")
-            .eq("owner_id", user.id)
-            .eq("month", currentMonth)
-            .eq("year", currentYear)
             .maybeSingle(),
           db.from("pg_owners").select("chatbot_enabled").eq("id", user.id).single(),
         ])
@@ -510,17 +499,6 @@ function TenantsPageInner() {
           .order("room_number", { ascending: true })
         setRooms((roomsData || []) as unknown as RoomOption[])
 
-        let activeToken = linkResult.data?.portal_token
-        if (!activeToken && user.id) {
-          activeToken = newToken(12)
-          void db
-            .from("monthly_payment_links")
-            .upsert(
-              { owner_id: user.id, month: currentMonth, year: currentYear, portal_token: activeToken },
-              { onConflict: "owner_id,month,year" },
-            )
-        }
-        setPortalToken(activeToken || "")
         hasLoadedOnce.current = true
 
         // Background status sync (mirrors mobile): auto-activate pending move-ins
@@ -710,18 +688,17 @@ function TenantsPageInner() {
   // ----- Message builders ---------------------------------------------------
 
   const buildWelcomeMessage = useCallback(
-    (tenant: Tenant, includeDeposit: boolean) => {
+    (tenant: Tenant, includeDeposit: boolean, payUrl?: string | null) => {
       let msg = `Hello ${tenant.name || "Occupant"}! Welcome to ${pgName || "our PG"}.`
       if (ownerSettings?.whatsapp_invite_link) {
         msg += ` Please join our WhatsApp group using this link: ${ownerSettings.whatsapp_invite_link}`
       }
-      if (includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
-        const portalUrl = `${PAYMENT_PORTAL_BASE}/${portalToken}`
-        msg += `\n\nAdditionally, please process your security deposit fee of ₹${tenant.deposit_amount} via our secure payment portal: ${portalUrl}`
+      if (includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0 && payUrl) {
+        msg += `\n\nAdditionally, please process your security deposit fee of ₹${tenant.deposit_amount} via your secure payment portal: ${payUrl}`
       }
       return msg
     },
-    [ownerSettings?.whatsapp_invite_link, portalToken, pgName],
+    [ownerSettings?.whatsapp_invite_link, pgName],
   )
 
   const buildOnboardingMessage = useCallback(
@@ -738,11 +715,11 @@ function TenantsPageInner() {
             `Your property owner has requested that you verify your identity. Please open this secure link to upload your identity document (encrypted and visible only to your property owner):\n${opts.identityLink}`,
         )
       }
-      if (opts.includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
-        const payUrl = opts.depositPayUrl || `${PAYMENT_PORTAL_BASE}/${portalToken}`
+      // Only include the deposit line when a unique per-tenant pay link exists.
+      if (opts.includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0 && opts.depositPayUrl) {
         items.push(
           `*Security deposit payment*\n` +
-            `A security deposit fee of ₹${tenant.deposit_amount} has been added to your account. Please pay it using this secure payment link:\n${payUrl}`,
+            `A security deposit fee of ₹${tenant.deposit_amount} has been added to your account. Please pay it using this secure payment link:\n${opts.depositPayUrl}`,
         )
       }
       if (opts.whatsappInviteLink) {
@@ -757,7 +734,7 @@ function TenantsPageInner() {
       const numbered = items.map((it, i) => `${i + 1}. ${it}`).join("\n\n")
       return `${greeting}\n\nPlease complete the following to finish your onboarding:\n\n${numbered}\n\nThank you!`
     },
-    [pgName, portalToken],
+    [pgName],
   )
 
   const getPaymentWhatsAppMessage = useCallback(
@@ -928,44 +905,6 @@ function TenantsPageInner() {
     }
   }, [loading, tenants, searchParams, openDetail])
 
-  // ----- Selected payment portal token (monthly_payment_links) --------------
-  useEffect(() => {
-    if (!selectedPaymentDetail) {
-      setSelectedPaymentPortalToken(null)
-      return
-    }
-    void (async () => {
-      try {
-        const ownerId = selectedPaymentDetail.owner_id || user?.id
-        if (!ownerId) return
-        const { data, error } = await db
-          .from("monthly_payment_links")
-          .select("portal_token")
-          .eq("owner_id", ownerId)
-          .eq("month", selectedPaymentDetail.month)
-          .eq("year", selectedPaymentDetail.year)
-          .single()
-        if (error && error.code !== "PGRST116") return
-        if (data?.portal_token) {
-          setSelectedPaymentPortalToken(data.portal_token)
-        } else {
-          const candidate = newToken(12)
-          const { data: upsertData } = await db
-            .from("monthly_payment_links")
-            .upsert(
-              { owner_id: ownerId, month: selectedPaymentDetail.month, year: selectedPaymentDetail.year, portal_token: candidate },
-              { onConflict: "owner_id,month,year" },
-            )
-            .select("portal_token")
-            .single()
-          setSelectedPaymentPortalToken(upsertData?.portal_token || candidate)
-        }
-      } catch (err) {
-        console.error("Error fetching payment portal token:", err)
-      }
-    })()
-  }, [selectedPaymentDetail, user?.id, db])
-
   // ----- Add / Edit ---------------------------------------------------------
 
   const openAddModal = () => {
@@ -1107,10 +1046,16 @@ function TenantsPageInner() {
           const wantsInvite = includeWhatsappInvite && !!ownerSettings?.whatsapp_invite_link
           void handleChatbotOnboardingNotices(inserted, wantsIdentity, wantsDeposit, wantsInvite)
         } else {
-          setCreateDepositPayment(inserted.deposit_amount ? inserted.deposit_amount > 0 : false)
-          setCustomInviteMessage(
-            buildWelcomeMessage(inserted, inserted.deposit_amount ? inserted.deposit_amount > 0 : false),
-          )
+          const wantsDeposit = inserted.deposit_amount ? inserted.deposit_amount > 0 : false
+          // Resolve a unique per-tenant pay link up front so the preview + send use it.
+          let payUrl: string | null = null
+          if (wantsDeposit) {
+            const payToken = await ensurePaymentPortalToken(inserted.id)
+            if (payToken) payUrl = `${PAYMENT_PORTAL_BASE}/${payToken}`
+          }
+          setInvitePayUrl(payUrl)
+          setCreateDepositPayment(wantsDeposit)
+          setCustomInviteMessage(buildWelcomeMessage(inserted, wantsDeposit, payUrl))
           setInviteOpen(true)
         }
       }
@@ -1813,17 +1758,19 @@ function TenantsPageInner() {
 
   const handleWhatsAppReminder = async () => {
     if (!selectedPaymentDetail || !selectedTenant) return
-    if (!selectedPaymentPortalToken) {
-      dashboardToast.info("Generating link…", { description: "Payment portal link is being created. Please try again." })
-      return
-    }
     if (!selectedTenant.mobile_number) {
       dashboardToast.error("Missing Phone Number", { description: "This tenant has no registered mobile number." })
       return
     }
-    const message = getPaymentWhatsAppMessage(selectedPaymentDetail, selectedPaymentPortalToken)
     setIsSendingWhatsAppPayment(true)
     try {
+      // Unique per-tenant payment link (no grouped phone-number verification).
+      const token = await ensurePaymentPortalToken(selectedTenant.id)
+      if (!token) {
+        dashboardToast.error("Couldn't create link", { description: "Failed to generate the tenant payment link." })
+        return
+      }
+      const message = getPaymentWhatsAppMessage(selectedPaymentDetail, token)
       const sent = await sendWhatsApp(selectedTenant.id, message)
       if (sent) dashboardToast.success("Reminder Sent", { description: "Reminder sent via WhatsApp." })
       else dashboardToast.warning("Not sent", { description: "Couldn't deliver the WhatsApp reminder." })
@@ -3289,7 +3236,7 @@ function TenantsPageInner() {
                   onCheckedChange={(c) => {
                     const next = !!c
                     setCreateDepositPayment(next)
-                    if (justAddedTenant) setCustomInviteMessage(buildWelcomeMessage(justAddedTenant, next))
+                    if (justAddedTenant) setCustomInviteMessage(buildWelcomeMessage(justAddedTenant, next, invitePayUrl))
                   }}
                   className="mt-0.5"
                 />

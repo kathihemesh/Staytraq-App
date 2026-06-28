@@ -15,7 +15,9 @@
 // and the run continues (Req 11.7). The pure tally/aggregation of a completed bulk
 // run is delegated to `summarizeBulkRun` in `home-compute.ts` (Req 11.2).
 
+import type { SupabaseClient } from "@supabase/supabase-js"
 import { createClient } from "@/lib/supabase/client"
+import { ensurePaymentPortalToken } from "@/lib/payments/token"
 import {
   coerceNumber,
   resolveTenantName,
@@ -128,35 +130,6 @@ function formatDueDate(dueDate: string | null): string {
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
 }
 
-/**
- * Look up the owner/month/year portal token, creating one on the fly when none
- * exists, mirroring the mobile `monthly_payment_links` get-or-create path.
- */
-async function ensurePortalToken(ctx: NoticeContext, month: number, year: number): Promise<string> {
-  const { data: linkData, error: linkError } = await ctx.supabase
-    .from("monthly_payment_links")
-    .select("portal_token")
-    .eq("owner_id", ctx.ownerId)
-    .eq("month", month)
-    .eq("year", year)
-    .maybeSingle()
-
-  if (linkError) throw linkError
-
-  let activePortalToken: string | undefined = (linkData as { portal_token?: string } | null)?.portal_token
-  if (!activePortalToken) {
-    activePortalToken = Math.random().toString(36).substring(2, 14)
-    const { error: upsertError } = await ctx.supabase
-      .from("monthly_payment_links")
-      .upsert(
-        { owner_id: ctx.ownerId, month, year, portal_token: activePortalToken },
-        { onConflict: "owner_id,month,year" },
-      )
-    if (upsertError) throw upsertError
-  }
-  return activePortalToken
-}
-
 /** Build the WhatsApp notice body, identical wording to the mobile dashboard. */
 function buildNoticeMessage(recipient: NoticeRecipient, portalToken: string): string {
   const tenantName = resolveTenantName(recipient.tenantName)
@@ -194,7 +167,13 @@ async function attemptDelivery(
   const phone = normalizePhone(recipient.phone)
   if (!phone) throw new Error("Missing recipient phone number.")
 
-  const portalToken = await ensurePortalToken(ctx, recipient.month, recipient.year)
+  // Unique per-tenant payment link (skips the removed grouped phone-verification
+  // portal and shows only this tenant's dues).
+  const portalToken = await ensurePaymentPortalToken(
+    ctx.supabase as unknown as SupabaseClient,
+    recipient.tenantId,
+  )
+  if (!portalToken) throw new Error("Could not generate the tenant payment link.")
   const message = buildNoticeMessage(recipient, portalToken)
 
   if (ctx.chatbotEnabled) {
