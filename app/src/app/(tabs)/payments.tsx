@@ -1492,7 +1492,7 @@ export default function PaymentsScreen() {
       if (editingPayment) {
         const rentAmt = parseFloat(formBaseRent)
         const extraChargesAmt = parseFloat(formExtraCharges) || 0
-        const totalAmount = rentAmt + extraChargesAmt
+        const totalAmount = Math.max(rentAmt + extraChargesAmt, 0)
 
         let finalStatus = formStatus
         if (formStatus === "pending" || formStatus === "late") {
@@ -1538,7 +1538,7 @@ export default function PaymentsScreen() {
             extraChargesAmt = tenant?.extra_charges ?? 0
           }
 
-          const totalAmount = rentAmt + extraChargesAmt
+          const totalAmount = Math.max(rentAmt + extraChargesAmt, 0)
           
           const todayStr = new Date().toISOString().split("T")[0]
           const finalStatus = formDueDate < todayStr ? "late" : "pending"
@@ -2283,14 +2283,20 @@ export default function PaymentsScreen() {
                       <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">₹{selectedPayment.rent_amount.toLocaleString()}</Text>
                     </View>
 
-                    {(selectedPayment.extra_charges ?? 0) > 0 && (
-                      <View className="flex-row justify-between items-center">
-                        <Text className="text-xs text-destructive font-medium flex-row items-center">
-                          <AlertTriangle size={10} color="#ef4444" /> Extra Charges
-                        </Text>
-                        <Text className="text-sm font-bold text-destructive">+ ₹{(selectedPayment.extra_charges ?? 0).toLocaleString()}</Text>
-                      </View>
-                    )}
+                    {(selectedPayment.extra_charges ?? 0) !== 0 && (() => {
+                      const ec = selectedPayment.extra_charges ?? 0
+                      const isDiscount = ec < 0
+                      return (
+                        <View className="flex-row justify-between items-center">
+                          <Text className={`text-xs font-medium ${isDiscount ? "text-success" : "text-destructive"}`}>
+                            {isDiscount ? "Discount" : "Extra Charges"}
+                          </Text>
+                          <Text className={`text-sm font-bold ${isDiscount ? "text-success" : "text-destructive"}`}>
+                            {isDiscount ? "− " : "+ "}₹{Math.abs(ec).toLocaleString()}
+                          </Text>
+                        </View>
+                      )
+                    })()}
 
                     <View className="border-t border-border dark:border-border-dark pt-2.5 flex-row justify-between items-center">
                       <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Total Rent Amount</Text>
@@ -2964,15 +2970,19 @@ export default function PaymentsScreen() {
 
                 <View className="flex-1">
                   <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">
-                    {editingPayment ? "Extra Charges (₹)" : "Extra (blank for default)"}
+                    {editingPayment ? "Extra / Discount (₹)" : "Extra / Discount (blank for default)"}
                   </Text>
                   <TextInput
                     ref={extraInput.ref}
                     onFocus={extraInput.onFocus}
                     value={formExtraCharges}
-                    onChangeText={setFormExtraCharges}
-                    keyboardType="numeric"
-                    placeholder="e.g. 500"
+                    onChangeText={(t) => {
+                      const cleaned = t.replace(/[^0-9-]/g, "")
+                      const sign = cleaned.startsWith("-") ? "-" : ""
+                      setFormExtraCharges(sign + cleaned.replace(/-/g, ""))
+                    }}
+                    keyboardType="numbers-and-punctuation"
+                    placeholder="e.g. 500 or -500"
                     placeholderTextColor="#9ca3af"
                     className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark h-11"
                   />

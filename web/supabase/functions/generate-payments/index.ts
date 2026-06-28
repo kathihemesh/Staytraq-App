@@ -105,7 +105,8 @@ serve(async () => {
 
       const rentAmount = tenant.rooms_table?.rent_amount || 0;
       const extraCharges = tenant.extra_charges || 0;
-      const totalAmount = rentAmount + extraCharges;
+      // extra_charges may be negative (a discount); never bill below zero.
+      const totalAmount = Math.max(rentAmount + extraCharges, 0);
       // A record whose due date has already passed is created as 'late'.
       const status = candDateOnly.getTime() < todayDate.getTime() ? "late" : "pending";
       const dueDateStr = candDateOnly.toISOString().split("T")[0];

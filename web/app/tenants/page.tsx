@@ -1258,7 +1258,7 @@ function TenantsPageInner() {
           year,
           rent_amount: rentAmount,
           extra_charges: extraChargesAmt,
-          total_amount: rentAmount + extraChargesAmt,
+          total_amount: Math.max(rentAmount + extraChargesAmt, 0),
           due_date: current.toISOString().split("T")[0],
           status: "upcoming",
           isUpcoming: true,
@@ -2118,8 +2118,15 @@ function TenantsPageInner() {
                     <DetailRow icon={<CreditCard className="h-4 w-4" />} label="Security Deposit">
                       <span className="text-sm font-semibold text-foreground">₹{(selectedTenant.deposit_amount || 0).toLocaleString()}</span>
                     </DetailRow>
-                    <DetailRow icon={<CreditCard className="h-4 w-4" />} label="Extra Charges">
-                      <span className="text-sm font-semibold text-foreground">₹{(selectedTenant.extra_charges || 0).toLocaleString()}</span>
+                    <DetailRow icon={<CreditCard className="h-4 w-4" />} label={(selectedTenant.extra_charges || 0) < 0 ? "Discount" : "Extra Charges"}>
+                      {(() => {
+                        const ec = selectedTenant.extra_charges || 0
+                        return (
+                          <span className={cn("text-sm font-semibold", ec < 0 ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
+                            {ec < 0 ? "− " : ""}₹{Math.abs(ec).toLocaleString()}
+                          </span>
+                        )
+                      })()}
                     </DetailRow>
                     {selectedTenant.notes && (
                       <div className="py-1">
@@ -2373,8 +2380,13 @@ function TenantsPageInner() {
                 <Input id="tenant-deposit" className="mt-1" inputMode="numeric" value={depositAmount} onChange={(e) => setDepositAmount(e.target.value.replace(/\D/g, ""))} placeholder="10000" />
               </div>
               <div>
-                <Label htmlFor="tenant-extra">Extra Charges (₹)</Label>
-                <Input id="tenant-extra" className="mt-1" inputMode="numeric" value={extraCharges} onChange={(e) => setExtraCharges(e.target.value.replace(/\D/g, ""))} placeholder="0" />
+                <Label htmlFor="tenant-extra">Extra Charges / Discount (₹)</Label>
+                <Input id="tenant-extra" className="mt-1" inputMode="text" value={extraCharges} onChange={(e) => {
+                  const cleaned = e.target.value.replace(/[^0-9-]/g, "")
+                  const sign = cleaned.startsWith("-") ? "-" : ""
+                  setExtraCharges(sign + cleaned.replace(/-/g, ""))
+                }} placeholder="0" />
+                <p className="mt-1 text-[11px] text-muted-foreground">Use a negative value (e.g. -500) to apply a discount.</p>
               </div>
             </div>
 
@@ -2861,14 +2873,20 @@ function TenantsPageInner() {
                         <span className="text-muted-foreground">Base Rent</span>
                         <span className="font-bold text-foreground">₹{(payment.rent_amount || 0).toLocaleString()}</span>
                       </div>
-                      {(payment.extra_charges ?? 0) > 0 && (
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="flex items-center gap-1 text-destructive">
-                            <AlertTriangle className="h-3 w-3" /> Extra Charges
-                          </span>
-                          <span className="font-bold text-destructive">+ ₹{(payment.extra_charges ?? 0).toLocaleString()}</span>
-                        </div>
-                      )}
+                      {(payment.extra_charges ?? 0) !== 0 && (() => {
+                        const ec = payment.extra_charges ?? 0
+                        const isDiscount = ec < 0
+                        return (
+                          <div className="flex items-center justify-between text-sm">
+                            <span className={cn("flex items-center gap-1", isDiscount ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+                              <AlertTriangle className="h-3 w-3" /> {isDiscount ? "Discount" : "Extra Charges"}
+                            </span>
+                            <span className={cn("font-bold", isDiscount ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+                              {isDiscount ? "− " : "+ "}₹{Math.abs(ec).toLocaleString()}
+                            </span>
+                          </div>
+                        )
+                      })()}
                       <div className="flex items-center justify-between border-t border-border pt-2.5">
                         <span className="text-sm font-bold text-foreground">Total Rent Amount</span>
                         <span className="text-sm font-black text-foreground">₹{total.toLocaleString()}</span>

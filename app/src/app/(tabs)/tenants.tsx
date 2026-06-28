@@ -235,6 +235,7 @@ export default function TenantsScreen() {
   const [whatsappInviteModalVisible, setWhatsappInviteModalVisible] = useState(false)
   const [justAddedTenant, setJustAddedTenant] = useState<Tenant | null>(null)
   const [createDepositPayment, setCreateDepositPayment] = useState(false)
+  const [createRentPayment, setCreateRentPayment] = useState(false)
   const [customInviteMessage, setCustomInviteMessage] = useState("")
   const [invitePayUrl, setInvitePayUrl] = useState<string | null>(null)
   const [ownerSettings, setOwnerSettings] = useState<any>(null)
@@ -270,6 +271,8 @@ export default function TenantsScreen() {
   // Deposit payment request (chatbot-enabled owners): "Create deposit payment record & send reminder"
   // checkbox, shown directly below the identity checkbox in the add-tenant form.
   const [requestDepositPayment, setRequestDepositPayment] = useState(false)
+  // Rent payment request (chatbot-enabled owners)
+  const [requestRentPayment, setRequestRentPayment] = useState(false)
   // WhatsApp invite (chatbot-enabled owners): "Include WhatsApp group invite link"
   // checkbox. When checked (and an invite link is configured), the onboarding
   // message also invites the tenant to join the owner's WhatsApp group.
@@ -704,14 +707,22 @@ export default function TenantsScreen() {
     }
   }, [user?.id])
 
-  const buildWelcomeMessage = useCallback((tenant: Tenant, includeDeposit: boolean) => {
+  const buildWelcomeMessage = useCallback((tenant: Tenant, includeDeposit: boolean, includeRent: boolean, rentAmount: number) => {
     let msg = `Hello ${tenant.name || "Occupant"}! Welcome to ${pgName ? pgName : "our PG"}.`
     if (ownerSettings?.whatsapp_invite_link) {
       msg += ` Please join our WhatsApp group using this link: ${ownerSettings.whatsapp_invite_link}`
     }
     // Unique per-tenant payment link (grouped phone-verification portal removed).
-    if (includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0 && invitePayUrl) {
-      msg += `\n\nAdditionally, please process your security deposit fee of ₹${tenant.deposit_amount} via your secure payment portal: ${invitePayUrl}`
+    const parts = []
+    if (includeDeposit && tenant.deposit_amount && tenant.deposit_amount > 0) {
+      parts.push(`security deposit fee of ₹${tenant.deposit_amount}`)
+    }
+    if (includeRent && rentAmount && rentAmount > 0) {
+      parts.push(`initial rent of ₹${rentAmount}`)
+    }
+
+    if (parts.length > 0 && invitePayUrl) {
+      msg += `\n\nAdditionally, please process your ${parts.join(" and ")} via your secure payment portal: ${invitePayUrl}`
     }
     return msg
   }, [ownerSettings?.whatsapp_invite_link, invitePayUrl, pgName])
@@ -735,6 +746,33 @@ export default function TenantsScreen() {
         status: "pending",
         reminder_sent: false,
         is_deposit: true
+      } as never)
+      .select("id")
+      .single()
+
+    if (error) throw error
+    return data?.id ?? null
+  }
+
+  const createInitialRentPayment = async (tenant: Tenant, rentAmount: number) => {
+    if (!user?.id || rentAmount <= 0) return null
+
+    const currentMonth = new Date().getMonth() + 1
+    const currentYear = new Date().getFullYear()
+    const { data, error } = await supabase
+      .from("payments")
+      .insert({
+        tenant_id: tenant.id,
+        owner_id: user.id,
+        month: currentMonth,
+        year: currentYear,
+        rent_amount: rentAmount,
+        extra_charges: tenant.extra_charges || 0,
+        total_amount: rentAmount + (tenant.extra_charges || 0),
+        due_date: tenant.join_date || new Date().toISOString().split("T")[0],
+        status: "pending",
+        reminder_sent: false,
+        is_deposit: false
       } as never)
       .select("id")
       .single()
@@ -796,7 +834,15 @@ export default function TenantsScreen() {
   // a short paragraph. Returns "" when no intent applies.
   const buildOnboardingMessage = (
     tenant: Tenant,
-    opts: { identityLink?: string | null; includeDeposit?: boolean; depositPayUrl?: string | null; whatsappInviteLink?: string | null },
+    opts: { 
+      identityLink?: string | null; 
+      includeDeposit?: boolean; 
+      depositPayUrl?: string | null; 
+      includeRent?: boolean;
+      rentAmount?: number;
+      rentPayUrl?: string | null;
+      whatsappInviteLink?: string | null 
+    },
   ) => {
     const tenantName = (tenant.name || "").trim() || "Tenant"
     const pg = pgName ? pgName : "our PG"
@@ -814,6 +860,12 @@ export default function TenantsScreen() {
       items.push(
         `*Security deposit payment*\n` +
         `A security deposit fee of ₹${tenant.deposit_amount} has been added to your account. Please pay it using this secure payment link:\n${opts.depositPayUrl}`
+      )
+    }
+    if (opts.includeRent && opts.rentAmount && opts.rentAmount > 0 && opts.rentPayUrl) {
+      items.push(
+        `*Rent payment*\n` +
+        `A rent payment of ₹${opts.rentAmount} has been generated. Please pay it using this secure payment link:\n${opts.rentPayUrl}`
       )
     }
     if (opts.whatsappInviteLink) {
@@ -880,11 +932,15 @@ export default function TenantsScreen() {
     tenant: Tenant,
     wantsIdentity: boolean,
     wantsDeposit: boolean,
+    wantsRent: boolean,
+    rentAmount: number,
     wantsInvite: boolean,
   ) => {
-    // 1. Create the deposit payment record first (when requested).
+    // 1. Create the deposit and rent payment records (when requested).
     let depositPaymentId: number | null = null
+    let rentPaymentId: number | null = null
     let depositPayUrl: string | null = null
+
     if (wantsDeposit) {
       try {
         depositPaymentId = await createSecurityDepositPayment(tenant)
@@ -892,13 +948,25 @@ export default function TenantsScreen() {
         console.error("Failed to create security deposit payment record:", err)
         showToast("Deposit Record Failed", "Couldn't create the deposit payment record.", "error")
       }
+    }
+
+    if (wantsRent) {
+      try {
+        rentPaymentId = await createInitialRentPayment(tenant, rentAmount)
+      } catch (err) {
+        console.error("Failed to create initial rent payment record:", err)
+        showToast("Rent Record Failed", "Couldn't create the rent payment record.", "error")
+      }
+    }
+
+    if (wantsDeposit || wantsRent) {
       // Per-tenant payment link (skips the grouped phone-number verification).
       const payToken = await ensurePaymentPortalToken(tenant.id)
       if (payToken) depositPayUrl = `https://staytraq.vercel.app/pay/${payToken}`
     }
 
     // 2. Identity-only: reuse the dedicated retrying identity sender.
-    if (wantsIdentity && !wantsDeposit && !wantsInvite) {
+    if (wantsIdentity && !wantsDeposit && !wantsRent && !wantsInvite) {
       void requestTenantIdentity({
         id: tenant.id,
         name: tenant.name,
@@ -927,6 +995,9 @@ export default function TenantsScreen() {
       identityLink,
       includeDeposit: wantsDeposit,
       depositPayUrl,
+      includeRent: wantsRent,
+      rentAmount: rentAmount,
+      rentPayUrl: depositPayUrl,
       whatsappInviteLink,
     })
     if (!message) return
@@ -944,9 +1015,12 @@ export default function TenantsScreen() {
       return
     }
 
-    // 5. On success, mark the deposit reminder as sent.
+    // 5. On success, mark the payment reminders as sent.
     if (depositPaymentId) {
       await supabase.from("payments").update({ reminder_sent: true }).eq("id", depositPaymentId)
+    }
+    if (rentPaymentId) {
+      await supabase.from("payments").update({ reminder_sent: true }).eq("id", rentPaymentId)
     }
   }
 
@@ -972,6 +1046,31 @@ export default function TenantsScreen() {
             due_date: justAddedTenant.join_date || new Date().toISOString().split("T")[0],
             status: "pending",
             is_deposit: true
+          } as never)
+          
+        if (payErr) throw payErr
+      }
+
+      // 1b. Create rent payment record if checked
+      const matchedRoom = rooms.find((r) => r.id === justAddedTenant.room_id)
+      const rentAmt = matchedRoom ? matchedRoom.rent_amount : 0
+      if (createRentPayment && rentAmt > 0) {
+        const currentMonth = new Date().getMonth() + 1
+        const currentYear = new Date().getFullYear()
+        
+        const { error: payErr } = await supabase
+          .from("payments")
+          .insert({
+            tenant_id: justAddedTenant.id,
+            owner_id: user!.id,
+            month: currentMonth,
+            year: currentYear,
+            rent_amount: rentAmt,
+            extra_charges: justAddedTenant.extra_charges || 0,
+            total_amount: rentAmt + (justAddedTenant.extra_charges || 0),
+            due_date: justAddedTenant.join_date || new Date().toISOString().split("T")[0],
+            status: "pending",
+            is_deposit: false
           } as never)
           
         if (payErr) throw payErr
@@ -1247,6 +1346,8 @@ export default function TenantsScreen() {
     setRequestIdentityFromTenant(false)
     setCreateDepositPayment(false)
     setRequestDepositPayment(false)
+    setCreateRentPayment(false)
+    setRequestRentPayment(false)
     setIncludeWhatsappInvite(false)
     setIdDocs([])
     setIsSaving(false)
@@ -1272,6 +1373,8 @@ export default function TenantsScreen() {
     setSelectedIdType("")
     setRequestIdentityFromTenant(false)
     setRequestDepositPayment(false)
+    setRequestRentPayment(false)
+    setCreateRentPayment(false)
     setIncludeWhatsappInvite(false)
     
     // Clear/initialize documents instantly so modal opens without lag
@@ -1420,7 +1523,7 @@ export default function TenantsScreen() {
           year,
           rent_amount: rentAmount,
           extra_charges: extraChargesAmt,
-          total_amount: rentAmount + extraChargesAmt,
+          total_amount: Math.max(rentAmount + extraChargesAmt, 0),
           due_date: current.toISOString().split("T")[0],
           status: "upcoming",
           isUpcoming: true,
@@ -1855,29 +1958,52 @@ export default function TenantsScreen() {
               requestDepositPayment &&
               !!insertedData.deposit_amount &&
               insertedData.deposit_amount > 0
+            const selectedRoomObj = targetRoomId ? rooms.find((r) => r.id === targetRoomId) : null
+            const rentAmt = selectedRoomObj ? selectedRoomObj.rent_amount : 0
+            const wantsRent = requestRentPayment && rentAmt > 0
             const wantsInvite = includeWhatsappInvite && !!ownerSettings?.whatsapp_invite_link
 
             // Run without awaiting so the form closes promptly; delivery/record
             // failures are surfaced via toast / recorded on the tenant.
-            void handleChatbotOnboardingNotices(insertedData, wantsIdentity, wantsDeposit, wantsInvite)
+            void handleChatbotOnboardingNotices(insertedData, wantsIdentity, wantsDeposit, wantsRent, rentAmt, wantsInvite)
           } else {
-            // Non-chatbot owners: manual WhatsApp invite popup (unchanged).
-            setCreateDepositPayment(insertedData.deposit_amount ? insertedData.deposit_amount > 0 : false)
+            // Non-chatbot owners: manual WhatsApp invite popup.
+            const wantsDeposit = insertedData.deposit_amount ? insertedData.deposit_amount > 0 : false
+            const selectedRoomObj = targetRoomId ? rooms.find((r) => r.id === targetRoomId) : null
+            const rentAmt = selectedRoomObj ? selectedRoomObj.rent_amount : 0
+            const wantsRent = rentAmt > 0
 
-            // Generate message text dynamically
+            setCreateDepositPayment(wantsDeposit)
+            setCreateRentPayment(wantsRent)
+
+            // Resolve a unique per-tenant pay link up front so the preview + send use it.
+            let payUrl: string | null = null
+            if (wantsDeposit || wantsRent) {
+              const payToken = await ensurePaymentPortalToken(insertedData.id)
+              if (payToken) {
+                payUrl = `https://staytraq.vercel.app/pay/${payToken}`
+                setInvitePayUrl(payUrl)
+              }
+            }
+
+            // Generate message text dynamically using local payUrl
             let msg = `Hello ${insertedData.name || "Occupant"}! Welcome to ${pgName ? pgName : "our PG"}.`
             if (ownerSettings?.whatsapp_invite_link) {
               msg += ` Please join our WhatsApp group using this link: ${ownerSettings.whatsapp_invite_link}`
             }
-            if (insertedData.deposit_amount && insertedData.deposit_amount > 0) {
-              // Unique per-tenant payment link (grouped phone-verification portal removed).
-              const payToken = await ensurePaymentPortalToken(insertedData.id)
-              if (payToken) {
-                const portalUrl = `https://staytraq.vercel.app/pay/${payToken}`
-                setInvitePayUrl(portalUrl)
-                msg += `\n\nAdditionally, please process your security deposit fee of ₹${insertedData.deposit_amount} via your secure payment portal: ${portalUrl}`
-              }
+
+            const parts = []
+            if (wantsDeposit && insertedData.deposit_amount && insertedData.deposit_amount > 0) {
+              parts.push(`security deposit fee of ₹${insertedData.deposit_amount}`)
             }
+            if (wantsRent && rentAmt > 0) {
+              parts.push(`initial rent of ₹${rentAmt}`)
+            }
+
+            if (parts.length > 0 && payUrl) {
+              msg += `\n\nAdditionally, please process your ${parts.join(" and ")} via your secure payment portal: ${payUrl}`
+            }
+
             setCustomInviteMessage(msg)
             setWhatsappInviteModalVisible(true)
           }
@@ -3253,16 +3379,18 @@ export default function TenantsScreen() {
                       </Text>
                     </View>
 
-                    {/* Extra Charges */}
+                    {/* Extra Charges / Discount */}
                     <View className="flex-row items-center justify-between py-3 border-b border-border/40 dark:border-border-dark/40">
                       <View className="flex-row items-center">
                         <View className="mr-3">
                           <CreditCard size={16} color="#9ca3af" />
                         </View>
-                        <Text className="text-sm font-semibold text-muted dark:text-muted-dark">Extra Charges</Text>
+                        <Text className="text-sm font-semibold text-muted dark:text-muted-dark">
+                          {(selectedTenant.extra_charges || 0) < 0 ? "Discount" : "Extra Charges"}
+                        </Text>
                       </View>
-                      <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">
-                        ₹{(selectedTenant.extra_charges || 0).toLocaleString()}
+                      <Text className={`text-sm font-bold ${(selectedTenant.extra_charges || 0) < 0 ? "text-success" : "text-foreground dark:text-foreground-dark"}`}>
+                        {(selectedTenant.extra_charges || 0) < 0 ? "− " : ""}₹{Math.abs(selectedTenant.extra_charges || 0).toLocaleString()}
                       </Text>
                     </View>
 
@@ -4040,17 +4168,22 @@ export default function TenantsScreen() {
                 </View>
 
                 <View className="flex-1">
-                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Extra Charges (₹)</Text>
+                  <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Extra Charges / Discount (₹)</Text>
                   <TextInput
                     ref={extraChargesInput.ref}
                     onFocus={extraChargesInput.onFocus}
                     value={extraCharges}
-                    onChangeText={setExtraCharges}
-                    keyboardType="numeric"
-                    placeholder="0"
+                    onChangeText={(t) => {
+                      const cleaned = t.replace(/[^0-9-]/g, "")
+                      const sign = cleaned.startsWith("-") ? "-" : ""
+                      setExtraCharges(sign + cleaned.replace(/-/g, ""))
+                    }}
+                    keyboardType="numbers-and-punctuation"
+                    placeholder="0 (use -500 for a discount)"
                     placeholderTextColor="#9ca3af"
                     className="border border-border dark:border-border-dark rounded-xl px-3.5 py-2.5 text-base text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark"
                   />
+                  <Text className="text-[10px] text-muted mt-1">Use a negative value (e.g. -500) to give a discount.</Text>
                 </View>
               </View>
 
@@ -4095,6 +4228,35 @@ export default function TenantsScreen() {
                               {depositDisabled
                                 ? "Enter a deposit amount above to enable this."
                                 : `Adds a pending deposit fee of ₹${depositValue} and sends a payment reminder.`}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      )
+                    })()}
+
+                    {(() => {
+                      const selectedRoom = rooms.find((r) => r.id.toString() === selectedRoomId)
+                      const rentAmountValue = selectedRoom ? selectedRoom.rent_amount : 0
+                      const rentDisabled = rentAmountValue <= 0
+                      return (
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (rentDisabled) return
+                            setRequestRentPayment((v) => !v)
+                            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          }}
+                          activeOpacity={rentDisabled ? 1 : 0.7}
+                          className={`flex-row items-center gap-3 border border-border dark:border-border-dark p-3.5 rounded-xl bg-background dark:bg-background-dark mt-2.5 ${rentDisabled ? "opacity-50" : ""}`}
+                        >
+                          <View className={`h-6 w-6 rounded-md border-2 items-center justify-center ${requestRentPayment && !rentDisabled ? "bg-primary border-primary" : "border-border dark:border-border-dark"}`}>
+                            {requestRentPayment && !rentDisabled && <Check size={14} color="#ffffff" strokeWidth={3} />}
+                          </View>
+                          <View className="flex-1">
+                            <Text className="text-sm font-semibold text-foreground dark:text-foreground-dark">Create rent payment record & send reminder</Text>
+                            <Text className="text-xs text-muted dark:text-muted-dark mt-0.5">
+                              {rentDisabled
+                                ? "Assign a room with a rent amount above to enable this."
+                                : `Adds a pending rent fee of ₹${rentAmountValue} and sends a payment reminder.`}
                             </Text>
                           </View>
                         </TouchableOpacity>
@@ -5033,14 +5195,19 @@ export default function TenantsScreen() {
                         <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">₹{payment.rent_amount.toLocaleString()}</Text>
                       </View>
 
-                      {(payment.extra_charges ?? 0) > 0 && (
-                        <View className="flex-row justify-between items-center">
-                          <Text className="text-xs text-destructive font-medium flex-row items-center">
-                            <AlertTriangle size={10} color="#ef4444" /> Extra Charges
-                          </Text>
-                          <Text className="text-sm font-bold text-destructive">+ ₹{(payment.extra_charges ?? 0).toLocaleString()}</Text>
-                        </View>
-                      )}
+                      {(payment.extra_charges ?? 0) !== 0 && (() => {
+                        const ec = payment.extra_charges ?? 0
+                        const isDiscount = ec < 0
+                        return (
+                          <View className="flex-row justify-between items-center">
+                            <Text className={`text-xs font-medium ${isDiscount ? "text-success" : "text-destructive"}`}>
+                              {isDiscount ? "Discount" : "Extra Charges"}
+                            </Text>
+                            <Text className={`text-sm font-bold ${isDiscount ? "text-success" : "text-destructive"}`}>
+                              {isDiscount ? "− " : "+ "}₹{Math.abs(ec).toLocaleString()}</Text>
+                          </View>
+                        )
+                      })()}
 
                       <View className="border-t border-border dark:border-border-dark pt-2.5 flex-row justify-between items-center">
                         <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Total Rent Amount</Text>
@@ -5863,7 +6030,9 @@ export default function TenantsScreen() {
                       const nextVal = !createDepositPayment
                       setCreateDepositPayment(nextVal)
                       if (justAddedTenant) {
-                        setCustomInviteMessage(buildWelcomeMessage(justAddedTenant, nextVal))
+                        const matchedRoom = rooms.find((r) => r.id === justAddedTenant.room_id)
+                        const rentAmt = matchedRoom ? matchedRoom.rent_amount : 0
+                        setCustomInviteMessage(buildWelcomeMessage(justAddedTenant, nextVal, createRentPayment, rentAmt))
                       }
                     }}
                     activeOpacity={0.8}
@@ -5898,6 +6067,58 @@ export default function TenantsScreen() {
                     </View>
                   </View>
                 )}
+
+                {/* Rent Option Checkbox (Highlighted) */}
+                {(() => {
+                  const matchedRoom = rooms.find((r) => r.id === justAddedTenant?.room_id)
+                  const rentAmt = matchedRoom ? matchedRoom.rent_amount : 0
+                  if (justAddedTenant?.room_id && rentAmt > 0) {
+                    return (
+                      <TouchableOpacity
+                        onPress={() => {
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                          const nextVal = !createRentPayment
+                          setCreateRentPayment(nextVal)
+                          if (justAddedTenant) {
+                            setCustomInviteMessage(buildWelcomeMessage(justAddedTenant, createDepositPayment, nextVal, rentAmt))
+                          }
+                        }}
+                        activeOpacity={0.8}
+                        className="border border-primary/20 dark:border-primary/20 rounded-2xl p-4 bg-primary/5 flex-row items-center gap-3 active:scale-[0.98] mt-2.5"
+                      >
+                        <View
+                          className={`w-6 h-6 border-2 rounded-md items-center justify-center ${
+                            createRentPayment 
+                              ? "bg-primary border-primary" 
+                              : "border-muted dark:border-muted-dark bg-white dark:bg-neutral-900"
+                          }`}
+                        >
+                          {createRentPayment && <Check size={14} color="#ffffff" strokeWidth={3} />}
+                        </View>
+                        <View className="flex-1">
+                          <Text className="text-sm font-bold text-foreground dark:text-foreground-dark">Create Rent Invoice</Text>
+                          <Text className="text-xs text-muted dark:text-muted-dark mt-0.5">
+                            Adds a pending rent fee of ₹{rentAmt} to their ledger and includes the payment link in the welcome invite message.
+                          </Text>
+                        </View>
+                      </TouchableOpacity>
+                    )
+                  } else {
+                    return (
+                      <View className="border border-border/40 dark:border-border-dark/40 rounded-2xl p-4 bg-muted/5 flex-row items-center gap-3 mt-2.5">
+                        <View className="h-6 w-6 rounded-md bg-muted/10 items-center justify-center">
+                          <Info size={14} color="#9ca3af" />
+                        </View>
+                        <View className="flex-1">
+                          <Text className="text-sm font-bold text-muted">Rent Record Disabled</Text>
+                          <Text className="text-xs text-muted/80 dark:text-muted-dark/80 mt-0.5">
+                            No room is assigned to this occupant or room has no rent amount specified.
+                          </Text>
+                        </View>
+                      </View>
+                    )
+                  }
+                })()}
 
                 {/* Action Buttons */}
                 <View className="gap-3 pt-2">
