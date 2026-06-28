@@ -34,28 +34,40 @@ async function resolveTenantTokenPayload(
       .maybeSingle(),
     supabase
       .from('payments')
-      .select('id, rent_amount, extra_charges, total_amount, status, due_date, month, year, verification_notes, payment_code')
+      .select('id, rent_amount, extra_charges, total_amount, amount_paid, status, due_date, month, year, verification_notes, payment_code')
       .eq('tenant_id', tenant.id),
   ])
 
   const roomRaw = (tenant as { rooms_table?: unknown }).rooms_table
   const room = Array.isArray(roomRaw) ? roomRaw[0] : (roomRaw as { room_number?: string } | null)
 
-  // Show every outstanding invoice (anything not yet paid), most-recent first.
+  // Show every invoice with an outstanding balance (not fully paid), most-recent first.
   const activePayments = (payData || [])
-    .filter((p) => p.status !== 'paid')
+    .filter((p) => {
+      const total = Number(p.total_amount) || 0
+      const paid = Number((p as { amount_paid?: number }).amount_paid) || 0
+      return p.status !== 'paid' && total - paid > 0
+    })
     .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
 
-  const mappedPayments = activePayments.map((payment) => ({
-    id: payment.id,
-    amount: (payment.rent_amount || 0) + (payment.extra_charges || 0),
-    status: payment.status,
-    due_date: payment.due_date,
-    month: payment.month,
-    year: payment.year,
-    verification_notes: payment.verification_notes || null,
-    payment_code: payment.payment_code,
-  }))
+  const mappedPayments = activePayments.map((payment) => {
+    const total = (payment.rent_amount || 0) + (payment.extra_charges || 0)
+    const paid = Number((payment as { amount_paid?: number }).amount_paid) || 0
+    const balance = Math.max((Number(payment.total_amount) || total) - paid, 0)
+    return {
+      id: payment.id,
+      // `amount` is the remaining balance the tenant still needs to pay.
+      amount: balance,
+      total_amount: Number(payment.total_amount) || total,
+      amount_paid: paid,
+      status: payment.status,
+      due_date: payment.due_date,
+      month: payment.month,
+      year: payment.year,
+      verification_notes: payment.verification_notes || null,
+      payment_code: payment.payment_code,
+    }
+  })
 
   return {
     valid: true,

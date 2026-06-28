@@ -26,6 +26,8 @@ interface PaymentData {
   payments: {
     id: number
     amount: number
+    total_amount?: number
+    amount_paid?: number
     status: 'pending' | 'late' | 'submitted' | 'paid'
     due_date: string
     month: number
@@ -420,10 +422,20 @@ export default function TenantPaymentPage() {
                             <Badge variant="outline" className={`text-[10px] py-0 px-2 font-bold uppercase ${badgeStyle}`}>
                               {statusLabel}
                             </Badge>
+                            {(p.amount_paid ?? 0) > 0 && (
+                              <Badge variant="outline" className="text-[10px] py-0 px-2 font-bold uppercase border-amber-500/30 bg-amber-500/10 text-amber-400">
+                                Partial
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-xs text-neutral-300 mt-1.5 font-medium">
                             Billing Month: {months[p.month - 1]} {p.year}
                           </p>
+                          {(p.amount_paid ?? 0) > 0 && (
+                            <p className="text-[11px] text-amber-300/80 mt-0.5">
+                              Balance ₹{p.amount} · ₹{p.amount_paid} of ₹{p.total_amount} paid
+                            </p>
+                          )}
                           <p className="text-xs text-neutral-500 mt-0.5">
                             Due: {new Date(p.due_date).toLocaleDateString()} • Code: {p.payment_code || 'PAY-XXXXXX'}
                           </p>
@@ -464,11 +476,24 @@ export default function TenantPaymentPage() {
                   </div>
                   
                   <div className="pt-4 flex items-end justify-between">
-                    <span className="text-4xl font-bold tracking-tight text-white">₹{selectedPayment.amount}</span>
+                    <div>
+                      {(selectedPayment.amount_paid ?? 0) > 0 && (
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-amber-400 mb-1">Balance to pay</p>
+                      )}
+                      <span className="text-4xl font-bold tracking-tight text-white">₹{selectedPayment.amount}</span>
+                    </div>
                     <Badge variant="outline" className="text-primary border-primary/20 bg-primary/5">
                       Code: {selectedPayment.payment_code || 'PAY-XXXXXX'}
                     </Badge>
                   </div>
+                  {(selectedPayment.amount_paid ?? 0) > 0 && (
+                    <div className="mt-3 flex items-center gap-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                      <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-[10px] text-amber-400">PARTIAL</Badge>
+                      <span className="text-xs text-amber-300/90">
+                        ₹{selectedPayment.amount_paid} of ₹{selectedPayment.total_amount} already received
+                      </span>
+                    </div>
+                  )}
                 </CardHeader>
                 
                 <CardContent className="py-4 space-y-4">

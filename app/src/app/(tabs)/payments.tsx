@@ -54,7 +54,6 @@ import {
   Plus, 
   ChevronRight, 
   ArrowUpDown, 
-  Maximize2, 
   ExternalLink,
   Copy,
   Info,
@@ -92,6 +91,15 @@ import Svg, { Path } from "react-native-svg"
 import ThemeDatePicker from "@/components/ui/theme-date-picker"
 import { InlineSelect } from "@/components/ui/inline-select"
 import { ensurePaymentPortalToken } from "@/lib/payments/token"
+import {
+  fetchPaymentSubmissions,
+  signSubmissionScreenshots,
+  paymentBalance,
+  isPartiallyPaid,
+  approveSubmission,
+  rejectSubmission,
+  type PaymentSubmission,
+} from "@/lib/payments/partial"
 
 // Match database schema accurately
 type Payment = {
@@ -104,7 +112,7 @@ type Payment = {
   extra_charges: number | null
   total_amount: number
   due_date: string
-  status: "paid" | "pending" | "late" | "submitted"
+  status: "paid" | "pending" | "late" | "submitted" | "partially_paid"
   paid_at: string | null
   reminder_sent: boolean | null
   created_at: string
@@ -117,6 +125,7 @@ type Payment = {
   verification_notes: string | null
   payment_method: string | null
   payment_code: string | null
+  amount_paid?: number | null
   tenants_table?: {
     name: string | null
     mobile_number: string | null
@@ -181,6 +190,7 @@ const mapRowToPayment = (row: PaymentRow, ownerId: string): Payment => ({
   verification_notes: row.verification_notes,
   payment_method: row.payment_method,
   payment_code: row.payment_code,
+  amount_paid: (row as any).amount_paid ?? 0,
   tenants_table: {
     name: row.tenant_name,
     mobile_number: row.tenant_mobile_number,
@@ -192,6 +202,54 @@ const mapRowToPayment = (row: PaymentRow, ownerId: string): Payment => ({
       : null,
   },
 })
+
+// Visual treatment for each payment status (badge box + text + accent + amount
+// color + display label). Centralized so list rows and the detail header stay in
+// sync, and so the new `partially_paid` status renders consistently everywhere.
+const getPaymentStatusMeta = (status: string | null | undefined) => {
+  switch (status) {
+    case "paid":
+      return {
+        label: "Paid",
+        box: "bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30",
+        text: "text-emerald-600 dark:text-emerald-400",
+        accent: "bg-emerald-500",
+        amount: "text-emerald-600 dark:text-emerald-400",
+      }
+    case "late":
+      return {
+        label: "Late",
+        box: "bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30",
+        text: "text-rose-600 dark:text-rose-400",
+        accent: "bg-rose-500",
+        amount: "text-rose-600 dark:text-rose-400",
+      }
+    case "submitted":
+      return {
+        label: "Review",
+        box: "bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/30",
+        text: "text-purple-600 dark:text-purple-400",
+        accent: "bg-purple-500",
+        amount: "text-purple-600 dark:text-purple-400",
+      }
+    case "partially_paid":
+      return {
+        label: "Partial",
+        box: "bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30",
+        text: "text-blue-600 dark:text-blue-400",
+        accent: "bg-blue-500",
+        amount: "text-blue-600 dark:text-blue-400",
+      }
+    default:
+      return {
+        label: "Pending",
+        box: "bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30",
+        text: "text-amber-600 dark:text-amber-400",
+        accent: "bg-amber-500",
+        amount: "text-amber-600 dark:text-amber-400",
+      }
+  }
+}
 
 export default function PaymentsScreen() {
   const { user } = useAuth()
@@ -374,6 +432,19 @@ export default function PaymentsScreen() {
   const [rejectNotes, setRejectNotes] = useState("")
   const [chatbotEnabled, setChatbotEnabled] = useState(false)
   const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false)
+
+  // Partial-payment proof submissions for the open detail record.
+  const [paymentSubmissions, setPaymentSubmissions] = useState<PaymentSubmission[]>([])
+  const [submissionsLoading, setSubmissionsLoading] = useState(false)
+  // Per-submission approve modal state.
+  const [approveModalVisible, setApproveModalVisible] = useState(false)
+  const [approvingSubmission, setApprovingSubmission] = useState<PaymentSubmission | null>(null)
+  const [approveAmount, setApproveAmount] = useState("")
+  const [approveSubmitting, setApproveSubmitting] = useState(false)
+  // Per-submission reject state (inline reason input).
+  const [rejectingSubmissionId, setRejectingSubmissionId] = useState<number | null>(null)
+  const [submissionRejectNotes, setSubmissionRejectNotes] = useState("")
+  const [submissionActionLoading, setSubmissionActionLoading] = useState(false)
 
   // Form Fields
   const [formTenantId, setFormTenantId] = useState("")
@@ -870,6 +941,38 @@ export default function PaymentsScreen() {
     }
   }, [detailModalVisible, selectedPayment])
 
+  // Load the partial-payment proof history whenever a detail record opens; reset
+  // all submission/approve/reject UI state when the sheet closes.
+  const reloadSubmissions = useCallback(async (paymentId: number) => {
+    setSubmissionsLoading(true)
+    try {
+      const subs = await signSubmissionScreenshots(
+        supabase as any,
+        await fetchPaymentSubmissions(supabase as any, paymentId),
+      )
+      setPaymentSubmissions(subs)
+    } catch (err) {
+      console.error("Error loading payment submissions:", err)
+      setPaymentSubmissions([])
+    } finally {
+      setSubmissionsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (detailModalVisible && selectedPayment?.id) {
+      void reloadSubmissions(selectedPayment.id)
+    } else if (!detailModalVisible) {
+      setPaymentSubmissions([])
+      setSubmissionsLoading(false)
+      setApproveModalVisible(false)
+      setApprovingSubmission(null)
+      setApproveAmount("")
+      setRejectingSubmissionId(null)
+      setSubmissionRejectNotes("")
+    }
+  }, [detailModalVisible, selectedPayment?.id, reloadSubmissions])
+
   useEffect(() => {
     if (!selectedPayment) {
       setSelectedPaymentPortalToken(null)
@@ -1176,6 +1279,115 @@ export default function PaymentsScreen() {
       console.error("Reject payment error:", err)
       showToast("Database Error", "Failed to reject payment record.", "error")
       void fetchPayments(true)
+    }
+  }
+
+  // Open the existing fullscreen image viewer pointed at a specific submission's
+  // signed screenshot URL (reuses signedScreenshotUrl + imageFullScreen).
+  const openSubmissionFullscreen = (url: string | null | undefined) => {
+    if (!url) return
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+    setSignedScreenshotUrl(url)
+    setImageAspectRatio(null)
+    Image.getSize(
+      url,
+      (w, h) => {
+        if (w && h) setImageAspectRatio(w / h)
+      },
+      () => setImageAspectRatio(null),
+    )
+    setImageFullScreen(true)
+  }
+
+  // Open the per-submission approve modal, prefilling the amount with the
+  // remaining balance on the payment.
+  const openApproveSubmission = (submission: PaymentSubmission) => {
+    if (!selectedPayment) return
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    setApprovingSubmission(submission)
+    setApproveAmount(String(paymentBalance(selectedPayment)))
+    setApproveModalVisible(true)
+  }
+
+  // Approve a single proof for the entered amount via the shared helper, then
+  // refresh submissions, the payments list, and the local selected payment.
+  const handleApproveSubmission = async () => {
+    if (!selectedPayment || !approvingSubmission || !user?.id) return
+    const amount = Number(approveAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      showToast("Invalid Amount", "Enter an amount greater than zero.", "error")
+      return
+    }
+    setApproveSubmitting(true)
+    try {
+      const result = await approveSubmission(supabase as any, {
+        payment: selectedPayment,
+        submission: approvingSubmission,
+        amount,
+        ownerId: user.id,
+      })
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      setSelectedPayment((prev) =>
+        prev
+          ? {
+              ...prev,
+              amount_paid: result.newAmountPaid,
+              status: result.newStatus,
+              paid_at: result.paidAt,
+              verified_at: new Date().toISOString(),
+            }
+          : prev,
+      )
+      setApproveModalVisible(false)
+      setApprovingSubmission(null)
+      setApproveAmount("")
+      await reloadSubmissions(selectedPayment.id)
+      void fetchPayments(true)
+      if (result.newStatus === "paid") {
+        showToast("Payment Approved", "The payment is now fully settled.", "success")
+      } else {
+        showToast(
+          "Partial Payment Recorded",
+          `₹${result.applied.toLocaleString()} approved. Balance ₹${paymentBalance({
+            ...selectedPayment,
+            amount_paid: result.newAmountPaid,
+          }).toLocaleString()} remaining.`,
+          "success",
+        )
+      }
+    } catch (err) {
+      console.error("Approve submission error:", err)
+      showToast("Database Error", "Failed to approve this proof.", "error")
+    } finally {
+      setApproveSubmitting(false)
+    }
+  }
+
+  // Reject a single proof with a reason via the shared helper, then refresh.
+  const handleRejectSubmission = async (submission: PaymentSubmission) => {
+    if (!selectedPayment || !user?.id) return
+    setSubmissionActionLoading(true)
+    try {
+      const result = await rejectSubmission(supabase as any, {
+        payment: selectedPayment,
+        submission,
+        ownerId: user.id,
+        notes: submissionRejectNotes,
+      })
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
+      setSelectedPayment((prev) =>
+        prev ? { ...prev, status: result.newStatus } : prev,
+      )
+      setRejectingSubmissionId(null)
+      setSubmissionRejectNotes("")
+      await reloadSubmissions(selectedPayment.id)
+      void fetchPayments(true)
+      showToast("Proof Rejected", "The payment proof has been rejected.", "warning")
+    } catch (err) {
+      console.error("Reject submission error:", err)
+      showToast("Database Error", "Failed to reject this proof.", "error")
+    } finally {
+      setSubmissionActionLoading(false)
     }
   }
 
@@ -1822,32 +2034,13 @@ export default function PaymentsScreen() {
               <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={isDark ? "#0091ff" : "#0071df"} />
             }
             renderItem={({ item }) => {
-              const isPaid = item.status === "paid"
-              const isSubmitted = item.status === "submitted"
-              const isLate = item.status === "late"
               const isMarkingPaid = markingPaidId === item.id
 
-              let badgeBgBorder = "bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30"
-              let badgeTextColor = "text-amber-600 dark:text-amber-400"
-              let accentColor = "bg-amber-500"
-              let textAmountColor = "text-amber-600 dark:text-amber-400"
-              
-              if (isPaid) {
-                badgeBgBorder = "bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30"
-                badgeTextColor = "text-emerald-600 dark:text-emerald-400"
-                accentColor = "bg-emerald-500"
-                textAmountColor = "text-emerald-600 dark:text-emerald-400"
-              } else if (isLate) {
-                badgeBgBorder = "bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/30"
-                badgeTextColor = "text-rose-600 dark:text-rose-400"
-                accentColor = "bg-rose-500"
-                textAmountColor = "text-rose-600 dark:text-rose-400"
-              } else if (isSubmitted) {
-                badgeBgBorder = "bg-purple-50 dark:bg-purple-500/10 border border-purple-200 dark:border-purple-500/30"
-                badgeTextColor = "text-purple-600 dark:text-purple-400"
-                accentColor = "bg-purple-500"
-                textAmountColor = "text-purple-600 dark:text-purple-400"
-              }
+              const meta = getPaymentStatusMeta(item.status)
+              const badgeBgBorder = meta.box
+              const badgeTextColor = meta.text
+              const accentColor = meta.accent
+              const textAmountColor = meta.amount
 
               const formattedDue = new Date(item.due_date).toLocaleDateString("en-IN", {
                 day: "numeric",
@@ -1873,9 +2066,14 @@ export default function PaymentsScreen() {
                         </Text>
                         <View className={`px-1.5 py-0.5 rounded ${badgeBgBorder} flex-shrink-0`}>
                           <Text className={`text-[8px] font-black uppercase ${badgeTextColor}`}>
-                            {item.status}
+                            {meta.label}
                           </Text>
                         </View>
+                        {isPartiallyPaid(item) && (
+                          <View className="px-1.5 py-0.5 rounded bg-blue-500/10 border border-blue-500/30 flex-shrink-0">
+                            <Text className="text-[8px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</Text>
+                          </View>
+                        )}
                       </View>
                       <View className="flex-row items-center mt-1 gap-2.5">
                         <Text className="text-xs text-muted font-bold">
@@ -1893,11 +2091,17 @@ export default function PaymentsScreen() {
                     <Text className={`text-base font-extrabold ${textAmountColor}`}>
                       ₹{item.total_amount.toLocaleString()}
                     </Text>
-                    <View className="flex-row items-center mt-1">
-                      <Text className="text-[9px] font-semibold text-muted">
-                        {item.payment_method || "Pending"}
+                    {isPartiallyPaid(item) ? (
+                      <Text className="text-[9px] font-bold text-blue-600 dark:text-blue-400 mt-1">
+                        Bal ₹{paymentBalance(item).toLocaleString()}
                       </Text>
-                    </View>
+                    ) : (
+                      <View className="flex-row items-center mt-1">
+                        <Text className="text-[9px] font-semibold text-muted">
+                          {item.payment_method || "Pending"}
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 </TouchableOpacity>
               )
@@ -1985,24 +2189,8 @@ export default function PaymentsScreen() {
                   <View className="flex-1 pr-2">
                     <View className="flex-row items-center gap-2">
                       <Text className="text-xs font-extrabold text-muted uppercase tracking-wider">Transaction Record</Text>
-                      <View className={`px-2.5 py-1 rounded border capitalize ${
-                        selectedPayment.status === "paid" 
-                          ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-200 dark:border-emerald-500/30" 
-                          : selectedPayment.status === "late" 
-                            ? "bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/30" 
-                            : selectedPayment.status === "submitted"
-                              ? "bg-purple-50 dark:bg-purple-500/10 border-purple-200 dark:border-purple-500/30"
-                              : "bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/30"
-                      }`}>
-                        <Text className={`text-[9px] font-black uppercase ${
-                          selectedPayment.status === "paid" 
-                            ? "text-emerald-600 dark:text-emerald-400" 
-                            : selectedPayment.status === "late" 
-                              ? "text-rose-600 dark:text-rose-400" 
-                              : selectedPayment.status === "submitted"
-                                ? "text-purple-600 dark:text-purple-400"
-                                : "text-amber-600 dark:text-amber-400"
-                        }`}>{selectedPayment.status}</Text>
+                      <View className={`px-2.5 py-1 rounded ${getPaymentStatusMeta(selectedPayment.status).box}`}>
+                        <Text className={`text-[9px] font-black uppercase ${getPaymentStatusMeta(selectedPayment.status).text}`}>{getPaymentStatusMeta(selectedPayment.status).label}</Text>
                       </View>
                     </View>
                     <Text className="text-2xl font-black text-foreground dark:text-foreground-dark mt-1">
@@ -2110,60 +2298,205 @@ export default function PaymentsScreen() {
                     </View>
                   </View>
 
-                  {/* Verification & Screenshot Proof Section */}
-                  {selectedPayment.screenshot_path && (
-                    <View className="bg-purple-500/5 border border-purple-500/10 p-4 rounded-3xl gap-3">
-                      <Text className="text-[10px] font-extrabold uppercase tracking-widest text-purple-600 dark:text-purple-400">Payment Verification Proof</Text>
-                      
-                      {loadingImage ? (
-                        <View className="h-44 bg-muted/20 rounded-2xl items-center justify-center">
-                          <ActivityIndicator size="small" color="#8b5cf6" />
-                        </View>
-                      ) : signedScreenshotUrl ? (
-                        <TouchableOpacity 
-                          onPress={handleToggleFullscreenImage}
-                          className="h-44 rounded-2xl overflow-hidden border border-purple-500/20 relative group bg-black"
-                        >
-                          <Image 
-                            source={{ uri: signedScreenshotUrl }} 
-                            className="w-full h-full object-cover opacity-90"
-                          />
-                          <View className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-active:opacity-100">
-                            <Maximize2 size={20} color="#ffffff" />
+                  {/* Partial Payment Balance Summary */}
+                  {(((selectedPayment.amount_paid ?? 0) > 0) ||
+                    selectedPayment.status === "partially_paid" ||
+                    paymentSubmissions.length > 1) && (
+                    <View className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-3xl gap-2.5">
+                      <View className="flex-row items-center justify-between">
+                        <Text className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400">Payment Progress</Text>
+                        {isPartiallyPaid(selectedPayment) && (
+                          <View className="bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded">
+                            <Text className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</Text>
                           </View>
-                        </TouchableOpacity>
-                      ) : (
-                        <View className="h-44 bg-muted/20 rounded-2xl items-center justify-center">
-                          <Info size={20} color="#9ca3af" />
-                          <Text className="text-xs text-muted mt-2">Could not retrieve verification media</Text>
-                        </View>
-                      )}
+                        )}
+                      </View>
+                      <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
+                        Paid ₹{(selectedPayment.amount_paid ?? 0).toLocaleString()} of ₹{selectedPayment.total_amount.toLocaleString()}
+                      </Text>
+                      <View className="h-2 bg-muted/20 rounded-full overflow-hidden">
+                        <View
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.round(
+                                ((selectedPayment.amount_paid ?? 0) /
+                                  (selectedPayment.total_amount || 1)) * 100,
+                              ),
+                            )}%`,
+                          }}
+                        />
+                      </View>
+                      <Text className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                        Balance ₹{paymentBalance(selectedPayment).toLocaleString()}
+                      </Text>
+                    </View>
+                  )}
 
-                      {/* Display UTR copy block */}
+                  {/* Payment Proofs — full submission history (newest first) */}
+                  <View className="bg-purple-500/5 border border-purple-500/10 p-4 rounded-3xl gap-3">
+                    <View className="flex-row items-center justify-between">
+                      <Text className="text-[10px] font-extrabold uppercase tracking-widest text-purple-600 dark:text-purple-400">Payment Proofs</Text>
+                      {paymentSubmissions.length > 0 && (
+                        <Text className="text-[10px] font-bold text-muted">
+                          {paymentSubmissions.length} proof{paymentSubmissions.length > 1 ? "s" : ""} toward this rent
+                        </Text>
+                      )}
+                    </View>
+
+                    {submissionsLoading ? (
+                      <View className="h-44 bg-muted/10 rounded-2xl items-center justify-center">
+                        <ActivityIndicator size="small" color="#8b5cf6" />
+                      </View>
+                    ) : paymentSubmissions.length === 0 ? (
+                      <View className="h-24 bg-muted/10 rounded-2xl items-center justify-center">
+                        <Info size={18} color="#9ca3af" />
+                        <Text className="text-xs text-muted mt-2">No payment proofs submitted yet</Text>
+                      </View>
+                    ) : (
+                      paymentSubmissions.map((sub) => {
+                        const chip =
+                          sub.status === "approved"
+                            ? {
+                                box: "bg-emerald-500/10 border border-emerald-500/30",
+                                text: "text-emerald-600 dark:text-emerald-400",
+                                label: `Approved ₹${(sub.amount_approved ?? 0).toLocaleString()}`,
+                              }
+                            : sub.status === "rejected"
+                              ? {
+                                  box: "bg-rose-500/10 border border-rose-500/30",
+                                  text: "text-rose-600 dark:text-rose-400",
+                                  label: "Rejected",
+                                }
+                              : {
+                                  box: "bg-amber-500/10 border border-amber-500/30",
+                                  text: "text-amber-600 dark:text-amber-400",
+                                  label: "Submitted",
+                                }
+                        return (
+                          <View
+                            key={sub.id}
+                            className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-2xl p-3 gap-3"
+                          >
+                            <View className="flex-row gap-3">
+                              {/* Thumbnail */}
+                              <TouchableOpacity
+                                onPress={() => openSubmissionFullscreen(sub.signedUrl)}
+                                disabled={!sub.signedUrl}
+                                className="h-20 w-20 rounded-xl overflow-hidden border border-purple-500/20 bg-black items-center justify-center"
+                              >
+                                {sub.signedUrl ? (
+                                  <Image source={{ uri: sub.signedUrl }} className="w-full h-full" />
+                                ) : (
+                                  <Info size={18} color="#9ca3af" />
+                                )}
+                              </TouchableOpacity>
+
+                              {/* Meta */}
+                              <View className="flex-1 gap-1">
+                                <View className={`self-start px-2 py-0.5 rounded ${chip.box}`}>
+                                  <Text className={`text-[9px] font-black uppercase ${chip.text}`}>{chip.label}</Text>
+                                </View>
+                                {sub.utr_number && (
+                                  <Text className="text-[11px] font-bold text-foreground dark:text-foreground-dark" numberOfLines={1}>
+                                    UTR: <Text className="font-mono">{sub.utr_number}</Text>
+                                  </Text>
+                                )}
+                                <Text className="text-[10px] text-muted font-medium">
+                                  {sub.payment_method || "—"}
+                                  {sub.submitted_at ? ` • ${formatDateFriendly(sub.submitted_at)}` : ""}
+                                </Text>
+                                {sub.status === "rejected" && sub.notes && (
+                                  <Text className="text-[10px] text-rose-600 dark:text-rose-400 font-medium" numberOfLines={3}>
+                                    {sub.notes}
+                                  </Text>
+                                )}
+                              </View>
+                            </View>
+
+                            {/* Per-submission actions (only for pending proofs) */}
+                            {sub.status === "submitted" && (
+                              rejectingSubmissionId === sub.id ? (
+                                <View className="gap-2 border-t border-border/40 pt-2.5">
+                                  <TextInput
+                                    value={submissionRejectNotes}
+                                    onChangeText={setSubmissionRejectNotes}
+                                    placeholder="Reason (e.g. blurry screenshot or wrong UTR)..."
+                                    placeholderTextColor="#9ca3af"
+                                    multiline
+                                    className="border border-destructive/20 rounded-xl px-3 py-2 text-sm text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark min-h-[52px]"
+                                  />
+                                  <View className="flex-row gap-2 justify-end">
+                                    <TouchableOpacity
+                                      onPress={() => {
+                                        setRejectingSubmissionId(null)
+                                        setSubmissionRejectNotes("")
+                                      }}
+                                      className="px-3 py-1.5 rounded-lg border border-border"
+                                    >
+                                      <Text className="text-xs font-bold text-muted">Cancel</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      onPress={() => handleRejectSubmission(sub)}
+                                      disabled={submissionActionLoading}
+                                      className="px-3 py-1.5 rounded-lg bg-destructive flex-row items-center"
+                                    >
+                                      {submissionActionLoading && (
+                                        <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 6 }} />
+                                      )}
+                                      <Text className="text-xs font-bold text-white">Confirm Rejection</Text>
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              ) : (
+                                <View className="flex-row gap-2 border-t border-border/40 pt-2.5">
+                                  <TouchableOpacity
+                                    onPress={() => {
+                                      setSubmissionRejectNotes("")
+                                      setRejectingSubmissionId(sub.id)
+                                    }}
+                                    className="flex-1 border border-destructive/20 bg-destructive/5 rounded-xl h-10 items-center justify-center active:scale-95"
+                                  >
+                                    <Text className="text-destructive font-black text-xs">Reject</Text>
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    onPress={() => openApproveSubmission(sub)}
+                                    className="flex-1 bg-success rounded-xl h-10 items-center justify-center active:scale-95"
+                                  >
+                                    <Text className="text-white font-black text-xs">Approve</Text>
+                                  </TouchableOpacity>
+                                </View>
+                              )
+                            )}
+                          </View>
+                        )
+                      })
+                    )}
+                  </View>
+
+                  {/* Verification meta (UTR / verification code from the payment record) */}
+                  {(selectedPayment.utr_number || selectedPayment.payment_code) && (
+                    <View className="bg-muted/10 border border-border dark:border-border-dark p-4 rounded-3xl gap-2.5">
                       {selectedPayment.utr_number && (
-                        <View className="mt-1 border-t border-purple-500/10 pt-3 gap-1">
-                          <View className="flex-row justify-between items-center">
-                            <Text className="text-[11px] font-bold text-muted">UTR / Transaction Code</Text>
-                            <TouchableOpacity 
-                              onPress={() => {
-                                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-                                Clipboard.setString(selectedPayment.utr_number || "")
-                                showToast("UTR Copied", "Transaction reference has been copied.", "success")
-                              }}
-                              className="bg-purple-500/10 px-2.5 py-1 rounded-lg flex-row items-center gap-1.5 active:scale-95"
-                            >
-                              <Text className="font-mono text-xs font-black text-purple-600 dark:text-purple-400">
-                                {selectedPayment.utr_number}
-                              </Text>
-                              <Copy size={10} color={isDark ? "#a78bfa" : "#7c3aed"} />
-                            </TouchableOpacity>
-                          </View>
-                          <Text className="text-[8px] text-muted text-right italic font-medium">Tap UTR code to copy</Text>
+                        <View className="flex-row justify-between items-center">
+                          <Text className="text-[11px] font-bold text-muted">UTR / Transaction Code</Text>
+                          <TouchableOpacity
+                            onPress={() => {
+                              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                              Clipboard.setString(selectedPayment.utr_number || "")
+                              showToast("UTR Copied", "Transaction reference has been copied.", "success")
+                            }}
+                            className="bg-purple-500/10 px-2.5 py-1 rounded-lg flex-row items-center gap-1.5 active:scale-95"
+                          >
+                            <Text className="font-mono text-xs font-black text-purple-600 dark:text-purple-400">
+                              {selectedPayment.utr_number}
+                            </Text>
+                            <Copy size={10} color={isDark ? "#a78bfa" : "#7c3aed"} />
+                          </TouchableOpacity>
                         </View>
                       )}
-
-                      {/* Display payment verification code */}
-                      <View className="flex-row justify-between items-center mt-1 border-t border-purple-500/10 pt-3">
+                      <View className="flex-row justify-between items-center">
                         <Text className="text-[11px] font-bold text-muted">Verification Code (Txn Ref)</Text>
                         <Text className="font-mono text-xs font-black text-purple-600 dark:text-purple-400">
                           {selectedPayment.payment_code || "—"}
@@ -2311,35 +2644,35 @@ export default function PaymentsScreen() {
                   )}
 
 
-                  {/* Submitted State Approval Verification Controls */}
-                  {selectedPayment.status === "submitted" && !rejectingMode ? (
+                  {/* Status-dependent primary action. Per-proof approve/reject now
+                      happens in the Payment Proofs list above; the footer keeps the
+                      manual Mark-as-Paid plus a convenience full-balance approve when
+                      exactly one proof is awaiting review. */}
+                  {selectedPayment.status !== "paid" ? (
                     <>
+                      {paymentSubmissions.filter((s) => s.status === "submitted").length === 1 && (
+                        <TouchableOpacity
+                          onPress={() => {
+                            const pending = paymentSubmissions.find((s) => s.status === "submitted")
+                            if (pending) openApproveSubmission(pending)
+                          }}
+                          className="flex-1 border border-success/30 bg-success/5 rounded-xl h-12 items-center justify-center active:scale-95"
+                        >
+                          <Text className="text-success font-black text-sm">Approve Balance</Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity
-                        onPress={() => setRejectingMode(true)}
-                        className="flex-1 border border-destructive/20 bg-destructive/5 rounded-xl h-12 items-center justify-center active:scale-95"
+                        onPress={() => {
+                          setMarkingPaidPaymentId(selectedPayment.id)
+                          setSelectedPaymentMethod("UPI")
+                          setDropdownOpen(false)
+                          setMarkPaidModalVisible(true)
+                        }}
+                        className="flex-1 bg-success rounded-xl h-12 items-center justify-center active:scale-95 shadow-md shadow-success/20"
                       >
-                        <Text className="text-destructive font-black text-sm">Reject</Text>
-                      </TouchableOpacity>
-                      
-                      <TouchableOpacity
-                        onPress={() => handleApprovePayment(selectedPayment)}
-                        className="flex-1 bg-success rounded-xl h-12 items-center justify-center active:scale-95"
-                      >
-                        <Text className="text-white font-black text-sm">Approve</Text>
+                        <Text className="text-white font-black text-sm">Mark as Paid</Text>
                       </TouchableOpacity>
                     </>
-                  ) : selectedPayment.status !== "paid" ? (
-                    <TouchableOpacity
-                      onPress={() => {
-                        setMarkingPaidPaymentId(selectedPayment.id)
-                        setSelectedPaymentMethod("UPI")
-                        setDropdownOpen(false)
-                        setMarkPaidModalVisible(true)
-                      }}
-                      className="flex-1 bg-success rounded-xl h-12 items-center justify-center active:scale-95 shadow-md shadow-success/20"
-                    >
-                      <Text className="text-white font-black text-sm">Mark as Paid</Text>
-                    </TouchableOpacity>
                   ) : (
                     <View className="flex-1 bg-success/10 border border-success/30 rounded-xl h-12 flex-row items-center justify-center">
                       <Check size={16} color="#10b981" strokeWidth={3} className="mr-1.5" />
@@ -2864,8 +3197,68 @@ export default function PaymentsScreen() {
         </View>
       </Modal>
 
+      {/* Per-Submission Approve Amount Modal */}
+      <Modal
+        visible={approveModalVisible}
+        transparent
+        animationType="none"
+        onRequestClose={() => setApproveModalVisible(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          className="flex-1"
+        >
+          <View className="flex-1 bg-black/60 justify-center items-center p-6">
+            <View className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-sm p-6 shadow-2xl">
+              <Text className="text-[17px] font-black text-slate-900 dark:text-white mb-2 text-center">
+                Approve Payment Proof
+              </Text>
+              <Text className="text-xs text-slate-500 dark:text-slate-400 font-bold mb-5 text-center leading-relaxed">
+                Confirm the amount received for this proof. Overpayment is capped at the balance.
+              </Text>
+
+              <Text className="text-[10px] font-bold text-muted uppercase tracking-wider mb-2">Amount received (₹)</Text>
+              <TextInput
+                value={approveAmount}
+                onChangeText={setApproveAmount}
+                keyboardType="numeric"
+                placeholder="0"
+                placeholderTextColor="#9ca3af"
+                className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3.5 text-base font-black text-slate-900 dark:text-white"
+              />
+              {selectedPayment && (
+                <Text className="text-[11px] font-bold text-muted mt-2">
+                  Balance due: ₹{paymentBalance(selectedPayment).toLocaleString()} of ₹{selectedPayment.total_amount.toLocaleString()}
+                </Text>
+              )}
+
+              <View className="flex-row gap-3 mt-6">
+                <TouchableOpacity
+                  onPress={() => setApproveModalVisible(false)}
+                  disabled={approveSubmitting}
+                  className="flex-1 border border-border rounded-xl h-11 items-center justify-center active:scale-95"
+                >
+                  <Text className="text-muted font-bold text-sm">Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => void handleApproveSubmission()}
+                  disabled={approveSubmitting}
+                  className="flex-1 bg-success rounded-xl h-11 items-center justify-center active:scale-95 shadow-md shadow-success/20 flex-row"
+                >
+                  {approveSubmitting && (
+                    <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 6 }} />
+                  )}
+                  <Text className="text-white font-bold text-sm">Confirm</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+            {approveModalVisible && renderToast()}
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       {/* Toast Notification Overlay */}
-      {!(reminderModalVisible || detailModalVisible || formModalVisible || deleteConfirmVisible || markPaidModalVisible) && renderToast()}
+      {!(reminderModalVisible || detailModalVisible || formModalVisible || deleteConfirmVisible || markPaidModalVisible || approveModalVisible) && renderToast()}
     </SafeAreaView>
   )
 }

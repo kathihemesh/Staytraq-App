@@ -134,6 +134,18 @@ export async function POST(
       return NextResponse.json({ error: 'Failed to update payment' }, { status: 500 })
     }
 
+    // 5b. Record this proof in the per-submission history so partial payments keep
+    // every screenshot/UTR (the owner reviews each one individually).
+    await supabase.from('payment_submissions').insert({
+      payment_id: payment.id,
+      owner_id: payment.owner_id,
+      tenant_id: payment.tenant_id,
+      screenshot_path: screenshotPath,
+      utr_number: utr ? utr.trim() : null,
+      payment_method: paymentMethod,
+      status: 'submitted',
+    })
+
     // 6. Audit Log
     await supabase.from('payment_audit_log').insert({
       payment_id: payment.id,
