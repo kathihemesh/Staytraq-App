@@ -65,7 +65,13 @@ serve(async () => {
     ];
 
     for (const cand of candidateMonths) {
-      const candDate = new Date(cand.y, cand.m, dueDay);
+      // Clamp the due day to the last valid day of the candidate month so that
+      // tenants with a due day of 29/30/31 are billed end-of-month in short
+      // months (e.g. Feb 28/29) instead of JavaScript silently rolling the date
+      // into the following month.
+      const daysInMonth = new Date(cand.y, cand.m + 1, 0).getDate();
+      const clampedDay = Math.min(dueDay, daysInMonth);
+      const candDate = new Date(cand.y, cand.m, clampedDay);
       const candDateOnly = new Date(candDate.getFullYear(), candDate.getMonth(), candDate.getDate());
 
       const diffTime = candDateOnly.getTime() - todayDate.getTime();
@@ -115,7 +121,8 @@ serve(async () => {
           extra_charges: extraCharges,
           total_amount: totalAmount,
           due_date: dueDateStr,
-          status
+          status,
+          is_deposit: false
         })
         .select("id")
         .maybeSingle();

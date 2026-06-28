@@ -161,7 +161,10 @@ export default function RemindersScreen() {
       for (const t of tenantsData || []) {
         const room = (t as any).rooms_table
         const rentDueDay = t.rent_due_day ?? 1
-        const dueDate = new Date(currentYear, currentMonth, rentDueDay)
+        // Clamp to the last day of the current month so 29/30/31 due days don't
+        // roll into the following month (e.g. Feb -> 28/29).
+        const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate()
+        const dueDate = new Date(currentYear, currentMonth, Math.min(rentDueDay, daysInMonth))
         const isPaid = paidTenantIds.has(t.id)
 
         // Compute status based on due date and payment state

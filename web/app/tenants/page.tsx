@@ -1231,11 +1231,23 @@ function TenantsPageInner() {
     const today = new Date()
     const exitDate = new Date(moveOutDate)
     const upcoming: Payment[] = []
-    const current = new Date(today.getFullYear(), today.getMonth(), dueDay)
-    if (current <= today) current.setMonth(current.getMonth() + 1)
+    // Build a month's due date, clamping the day to that month's last day so
+    // 29/30/31 due days don't roll into the next month (e.g. Feb -> 28/29).
+    const dueOnCursor = (cursor: number) => {
+      const y = Math.floor(cursor / 12)
+      const mIndex = ((cursor % 12) + 12) % 12
+      const days = new Date(y, mIndex + 1, 0).getDate()
+      return new Date(y, mIndex, Math.min(dueDay, days))
+    }
+    let cursor = today.getFullYear() * 12 + today.getMonth()
+    let current = dueOnCursor(cursor)
+    if (current <= today) {
+      cursor += 1
+      current = dueOnCursor(cursor)
+    }
     while (current <= exitDate) {
-      const month = current.getMonth() + 1
-      const year = current.getFullYear()
+      const month = (((cursor % 12) + 12) % 12) + 1
+      const year = Math.floor(cursor / 12)
       const exists = paymentHistory.some((p) => p.month === month && p.year === year)
       if (!exists) {
         const rentAmount = selectedTenant.rooms_table?.rent_amount || 0
@@ -1252,7 +1264,8 @@ function TenantsPageInner() {
           isUpcoming: true,
         })
       }
-      current.setMonth(current.getMonth() + 1)
+      cursor += 1
+      current = dueOnCursor(cursor)
     }
     setUpcomingPayments(upcoming)
   }, [selectedTenant, moveOutDate, paymentHistory])
@@ -1833,7 +1846,7 @@ function TenantsPageInner() {
 
   const rentDueDayOptions = useMemo(
     () =>
-      Array.from({ length: 28 }, (_, i) => {
+      Array.from({ length: 31 }, (_, i) => {
         const day = i + 1
         const suffix = day === 1 ? "st" : day === 2 ? "nd" : day === 3 ? "rd" : "th"
         return { value: String(day), label: `${day}${suffix} of every month` }

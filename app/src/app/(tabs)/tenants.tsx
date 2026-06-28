@@ -1386,15 +1386,25 @@ export default function TenantsScreen() {
     const exitDate = new Date(moveOutDate)
     const upcoming: any[] = []
 
-    // Start from next month's due date
-    let current = new Date(today.getFullYear(), today.getMonth(), rentDueDay)
+    // Build a month's due date, clamping the day to that month's last day so
+    // 29/30/31 due days don't roll into the next month (e.g. Feb -> 28/29).
+    const dueOnCursor = (cursor: number) => {
+      const y = Math.floor(cursor / 12)
+      const mIndex = ((cursor % 12) + 12) % 12
+      const days = new Date(y, mIndex + 1, 0).getDate()
+      return new Date(y, mIndex, Math.min(rentDueDay, days))
+    }
+
+    let cursor = today.getFullYear() * 12 + today.getMonth()
+    let current = dueOnCursor(cursor)
     if (current <= today) {
-      current.setMonth(current.getMonth() + 1)
+      cursor += 1
+      current = dueOnCursor(cursor)
     }
 
     while (current <= exitDate) {
-      const month = current.getMonth() + 1
-      const year = current.getFullYear()
+      const month = (((cursor % 12) + 12) % 12) + 1
+      const year = Math.floor(cursor / 12)
 
       // Check if this record already exists in paymentHistory
       const exists = paymentHistory.some(
@@ -1417,7 +1427,8 @@ export default function TenantsScreen() {
         })
       }
 
-      current.setMonth(current.getMonth() + 1)
+      cursor += 1
+      current = dueOnCursor(cursor)
     }
 
     setUpcomingPayments(upcoming)
@@ -1559,7 +1570,7 @@ export default function TenantsScreen() {
   }
 
   const rentDueDayOptions = useMemo(() => {
-    return Array.from({ length: 28 }, (_, i) => {
+    return Array.from({ length: 31 }, (_, i) => {
       const day = i + 1
       const suffix = day === 1 ? "st" : day === 2 ? "nd" : day === 3 ? "rd" : "th"
       return {

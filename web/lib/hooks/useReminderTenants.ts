@@ -18,7 +18,10 @@ export interface ReminderTenant {
 
 function computeDueDate(rentDueDay: number): Date {
   const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), rentDueDay)
+  // Clamp to the last day of the current month so 29/30/31 due days don't roll
+  // into the following month (e.g. Feb -> 28/29).
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  return new Date(now.getFullYear(), now.getMonth(), Math.min(rentDueDay, daysInMonth))
 }
 
 function computeStatus(dueDate: Date, isPaidThisMonth: boolean): ReminderStatus {
