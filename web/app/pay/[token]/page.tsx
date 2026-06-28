@@ -507,13 +507,15 @@ export default function TenantPaymentPage() {
                     </div>
                   </div>
 
-                  <Button 
-                    variant="ghost" 
-                    className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                    onClick={() => setState('verify_identity')}
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
-                  </Button>
+                  {!directMode && (
+                    <Button 
+                      variant="ghost" 
+                      className="mt-6 text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                      onClick={() => setState('verify_identity')}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             </motion.div>
@@ -588,15 +590,17 @@ export default function TenantPaymentPage() {
                     )
                   })}
                 </CardContent>
-                <CardFooter className="bg-neutral-900/40 border-t border-neutral-800 pt-6">
-                  <Button 
-                    variant="ghost" 
-                    className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-full justify-center"
-                    onClick={() => setState('verify_identity')}
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
-                  </Button>
-                </CardFooter>
+                {!directMode && (
+                  <CardFooter className="bg-neutral-900/40 border-t border-neutral-800 pt-6">
+                    <Button 
+                      variant="ghost" 
+                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-full justify-center"
+                      onClick={() => setState('verify_identity')}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" /> Back to Verification
+                    </Button>
+                  </CardFooter>
+                )}
               </Card>
             </motion.div>
           )}
@@ -906,14 +910,16 @@ export default function TenantPaymentPage() {
                           <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
                         </Button>
                       )}
-                      <Button 
-                        type="button" 
-                        variant="ghost" 
-                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-auto"
-                        onClick={() => setState('verify_identity')}
-                      >
-                        Use another profile
-                      </Button>
+                      {!directMode && (
+                        <Button 
+                          type="button" 
+                          variant="ghost" 
+                          className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5 w-auto"
+                          onClick={() => setState('verify_identity')}
+                        >
+                          Use another profile
+                        </Button>
+                      )}
                     </div>
                   </CardFooter>
                 </Card>
@@ -963,13 +969,15 @@ export default function TenantPaymentPage() {
                         <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
                       </Button>
                     )}
-                    <Button 
-                      variant="ghost" 
-                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                      onClick={() => setState('verify_identity')}
-                    >
-                      Exit
-                    </Button>
+                    {!directMode && (
+                      <Button 
+                        variant="ghost" 
+                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                        onClick={() => setState('verify_identity')}
+                      >
+                        Exit
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -1018,13 +1026,15 @@ export default function TenantPaymentPage() {
                         <ArrowLeft className="h-3.5 w-3.5" /> Back to Invoices
                       </Button>
                     )}
-                    <Button 
-                      variant="ghost" 
-                      className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
-                      onClick={() => setState('verify_identity')}
-                    >
-                      Exit
-                    </Button>
+                    {!directMode && (
+                      <Button 
+                        variant="ghost" 
+                        className="text-neutral-400 hover:text-white hover:bg-neutral-800 text-xs flex items-center gap-1.5"
+                        onClick={() => setState('verify_identity')}
+                      >
+                        Exit
+                      </Button>
+                    )}
                   </div>
                 </CardContent>
               </Card>

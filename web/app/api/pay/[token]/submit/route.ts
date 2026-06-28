@@ -33,32 +33,19 @@ export async function POST(
 
     const supabase = createAdminClient()
 
-    // 1. Verify owner portal_token and load owner_id, month, and year details
-    const { data: linkRecord } = await supabase
-      .from('monthly_payment_links')
-      .select('owner_id, month, year')
-      .eq('portal_token', token)
+    // Resolve the owner and tenant scope from the per-tenant payment-portal token (the unique reminder link that skips verification).
+    const { data: tokenTenant } = await supabase
+      .from('tenants_table')
+      .select('id, owner_id')
+      .eq('payment_portal_token', token)
       .maybeSingle()
 
-    // Resolve the owner from either an owner portal token or a per-tenant
-    // payment-portal token (the unique reminder link that skips verification).
-    let ownerId: string | null = linkRecord?.owner_id ?? null
-    let tenantScopeId: number | null = null
-    if (!ownerId) {
-      const { data: tokenTenant } = await supabase
-        .from('tenants_table')
-        .select('id, owner_id')
-        .eq('payment_portal_token', token)
-        .maybeSingle()
-      if (tokenTenant) {
-        ownerId = tokenTenant.owner_id
-        tenantScopeId = tokenTenant.id
-      }
-    }
-
-    if (!ownerId) {
+    if (!tokenTenant) {
       return NextResponse.json({ error: 'Invalid or expired payment portal' }, { status: 404 })
     }
+
+    const ownerId = tokenTenant.owner_id
+    const tenantScopeId = tokenTenant.id
 
     // 2. Fetch the payment record and verify it matches the owner constraint
     const { data: payment, error: paymentError } = await supabase

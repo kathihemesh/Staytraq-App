@@ -1684,16 +1684,6 @@ export default function PaymentsScreen() {
           >
             <Plus size={16} color="#ffffff" strokeWidth={3} />
           </TouchableOpacity>
-
-          <TouchableOpacity 
-            onPress={() => {
-              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-              setReminderModalVisible(true)
-            }}
-            className="h-9 w-9 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
-          >
-            <Link size={14} color={isDark ? "#0091ff" : "#0071df"} />
-          </TouchableOpacity>
           
           <TouchableOpacity 
             onPress={onRefresh}
@@ -2787,101 +2777,7 @@ export default function PaymentsScreen() {
       </Modal>
 
       {/* Reminder Notice Share Drawer/Modal */}
-      <Modal
-        animationType="none"
-        transparent={true}
-        visible={reminderModalVisible}
-        onRequestClose={() => setReminderModalVisible(false)}
-      >
-        <View className="flex-1 bg-black/60 justify-end">
-          <View className="bg-card dark:bg-card-dark rounded-t-[36px] max-h-[80%] border-t border-border dark:border-border-dark p-6">
-            <View className="flex-row justify-between items-center mb-5">
-              <Text className="text-base font-black text-foreground dark:text-foreground-dark">Tenant Payment Notice</Text>
-              <TouchableOpacity onPress={() => setReminderModalVisible(false)}>
-                <X size={18} color="#9ca3af" />
-              </TouchableOpacity>
-            </View>
 
-            <View className="gap-5">
-              {/* Share Notice in WhatsApp Group Button (Chatbot Users Only) */}
-              {chatbotEnabled && (
-                <TouchableOpacity
-                  onPress={handleShareToWhatsAppGroup}
-                  disabled={isSharingGroupNotice}
-                  className="w-full bg-[#25D366] rounded-xl h-12 flex-row items-center justify-center active:scale-95 shadow-md shadow-[#25D366]/20"
-                >
-                  {isSharingGroupNotice ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
-                  ) : (
-                    <>
-                      <MessageSquare size={16} color="#ffffff" className="mr-2" />
-                      <Text className="text-white font-bold text-sm">Share notice in WhatsApp group</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              )}
-
-              {/* Highlighted Portal Link */}
-              <View className="gap-2">
-                <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Portal Link (Click to Copy)</Text>
-                <TouchableOpacity
-                  onPress={() => {
-                    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-                    Clipboard.setString(portalUrl)
-                    showToast("Link Copied", "Portal link copied to clipboard.", "success")
-                  }}
-                  className="border border-primary/20 dark:border-primary-dark/20 rounded-2xl p-4 bg-primary/5 flex-row items-center justify-between active:scale-[0.98]"
-                >
-                  <View className="flex-1 mr-2">
-                    <Text numberOfLines={1} className="text-sm font-semibold text-primary dark:text-primary-dark font-mono">
-                      {portalUrl}
-                    </Text>
-                  </View>
-                  <Copy size={16} color={isDark ? "#ffffff" : "#000000"} />
-                </TouchableOpacity>
-              </View>
-
-              {/* Message Box */}
-              <View className="gap-2">
-                <Text className="text-[10px] font-bold text-muted uppercase tracking-wider">Notice Message Preview</Text>
-                <TextInput
-                  value={currentReminderMessage}
-                  editable={false}
-                  multiline
-                  className="border border-border dark:border-border-dark rounded-2xl p-4 text-sm leading-5 text-foreground dark:text-foreground-dark bg-background dark:bg-background-dark min-h-[140px]"
-                />
-              </View>
-
-              {/* Action Buttons */}
-              <View className="gap-3 pt-2">
-                <TouchableOpacity
-                  onPress={handleCopyAndShareReminder}
-                  className="w-full bg-primary rounded-xl h-12 flex-row items-center justify-center active:scale-95 shadow-md shadow-primary/20"
-                >
-                  <Copy size={16} color="#ffffff" className="mr-2" />
-                  <Text className="text-white font-bold text-sm">Copy & Share</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  onPress={handleRefreshPortalLink}
-                  disabled={isRefreshingLink}
-                  className="w-full border border-border dark:border-border-dark rounded-xl h-12 flex-row items-center justify-center bg-card dark:bg-card-dark active:scale-95"
-                >
-                  {isRefreshingLink ? (
-                    <ActivityIndicator size="small" color={isDark ? "#0091ff" : "#0071df"} />
-                  ) : (
-                    <>
-                      <RefreshCw size={14} color={isDark ? "#0091ff" : "#0071df"} className="mr-2" />
-                      <Text className="text-primary font-bold text-sm">Regenerate Portal Link</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-          {reminderModalVisible && renderToast()}
-        </View>
-      </Modal>
 
       {/* Custom Delete Confirmation Modal */}
       <Modal
