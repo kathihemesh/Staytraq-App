@@ -44,7 +44,7 @@ async function resolveTenantTokenPayload(
       .maybeSingle(),
     supabase
       .from('payments')
-      .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
+      .select('id, rent_amount, extra_charges, total_amount, status, due_date, month, year, verification_notes, payment_code')
       .eq('tenant_id', tenant.id),
   ])
 
@@ -58,7 +58,7 @@ async function resolveTenantTokenPayload(
 
   const mappedPayments = activePayments.map((payment) => ({
     id: payment.id,
-    amount: payment.total_amount,
+    amount: (payment.rent_amount || 0) + (payment.extra_charges || 0),
     status: payment.status,
     due_date: payment.due_date,
     month: payment.month,
@@ -224,7 +224,7 @@ export async function POST(
       if (tenant.status === 'active' || tenant.status === 'notice_period') {
         const { data: payData, error: payError } = await supabase
           .from('payments')
-          .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
+          .select('id, rent_amount, extra_charges, total_amount, status, due_date, month, year, verification_notes, payment_code')
           .eq('tenant_id', tenant.id)
         if (payError) {
           console.error('[pay/token] Error fetching payment:', JSON.stringify(payError))
@@ -236,7 +236,7 @@ export async function POST(
       } else if (tenant.status === 'move_out') {
         const { data: payData, error: payError } = await supabase
           .from('payments')
-          .select('id, total_amount, status, due_date, month, year, verification_notes, payment_code')
+          .select('id, rent_amount, extra_charges, total_amount, status, due_date, month, year, verification_notes, payment_code')
           .eq('tenant_id', tenant.id)
         if (payError) {
           console.error('[pay/token] Error fetching payment:', JSON.stringify(payError))
@@ -281,7 +281,7 @@ export async function POST(
 
     const mappedPayments = activePayments.map(payment => ({
       id: payment.id,
-      amount: payment.total_amount,
+      amount: (payment.rent_amount || 0) + (payment.extra_charges || 0),
       status: payment.status,
       due_date: payment.due_date,
       month: payment.month,
