@@ -637,7 +637,7 @@ export default function RoomsPage() {
               <p className="text-sm text-slate-500 dark:text-slate-400">Manage rooms and occupancy.</p>
             </div>
             
-            <div className="flex flex-wrap gap-2 items-center">
+            <div className="-mx-4 flex flex-nowrap gap-2 items-center overflow-x-auto px-4 scrollbar-none md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
               {[
                 { id: "vacant",             label: "Vacant",      count: stats.vacant,      text: "text-emerald-700 dark:text-emerald-400", border: "border-emerald-300 dark:border-emerald-500/40", bg: "bg-emerald-50 dark:bg-emerald-500/10" },
                 { id: "partially occupied", label: "Partially",   count: stats.partial,     text: "text-sky-700 dark:text-sky-400",           border: "border-sky-300 dark:border-sky-500/40",     bg: "bg-sky-50 dark:bg-sky-500/10" },
@@ -648,7 +648,7 @@ export default function RoomsPage() {
                   key={stat.id}
                   onClick={() => setFilters(prev => ({ ...prev, status: prev.status === stat.id ? "All Statuses" : stat.id }))}
                   className={cn(
-                    "relative flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-medium transition-all duration-200 cursor-pointer",
+                    "relative flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 rounded-full border text-sm font-medium transition-all duration-200 cursor-pointer",
                     stat.text,
                     stat.border,
                     filters.status === stat.id

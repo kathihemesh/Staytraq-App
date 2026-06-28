@@ -414,8 +414,8 @@ export default function ComplaintsPage() {
           )}
         </div>
 
-        {/* Status chips */}
-        <div className="flex flex-wrap gap-2">
+        {/* Status chips — single horizontally scrollable row (mobile parity) */}
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 scrollbar-none sm:mx-0 sm:px-0">
           {STATUS_CHIPS.map((chip) => {
             const active = statusFilter.toLowerCase() === chip.toLowerCase()
             const label = chip === "all" ? "All" : chip === "Under Working" ? "Working" : chip
@@ -425,7 +425,7 @@ export default function ComplaintsPage() {
                 type="button"
                 onClick={() => setStatusFilter(chip)}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors",
+                  "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-semibold transition-colors",
                   active
                     ? "border-primary bg-primary text-primary-foreground"
                     : "border-border bg-card text-muted-foreground hover:text-foreground",

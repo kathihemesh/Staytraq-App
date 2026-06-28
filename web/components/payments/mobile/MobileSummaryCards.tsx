@@ -36,8 +36,8 @@ function SummaryCardBox({ card }: { card: SummaryCard }) {
   return (
     <div
       className={cn(
-        "flex w-full items-center gap-3 rounded-xl border px-4 py-3.5",
-        "min-h-[80px]",
+        "flex w-full items-center gap-3 rounded-xl border px-4 py-2.5",
+        "min-h-[64px]",
         card.text,
         card.border,
         card.bg

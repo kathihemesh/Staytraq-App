@@ -388,7 +388,7 @@ export default function PaymentsPage() {
       <DashboardLayout title={`Payments · ${selectedMonth.split(" ")[0]}`}>
         <div className="flex flex-col h-full overflow-hidden">
           <div
-            className="sticky top-0 z-20 flex flex-col bg-background/90 px-4 pt-3 pb-2 border-b border-border"
+            className="sticky top-0 z-20 flex flex-col bg-background/90 pt-3 pb-2 border-b border-border"
             style={{
               backdropFilter: "blur(12px)",
               WebkitBackdropFilter: "blur(12px)",
@@ -427,7 +427,7 @@ export default function PaymentsPage() {
             )}
           </div>
 
-          <div className="flex-1 overflow-hidden px-4 pt-2">
+          <div className="flex-1 overflow-hidden pt-2">
             <MobilePaymentList
               payments={filteredPayments}
               isLoading={isInitialLoading}
@@ -462,7 +462,7 @@ export default function PaymentsPage() {
   // DESKTOP
   return (
     <DashboardLayout title={`Payments · ${selectedMonth.split(" ")[0]}`}>
-      <div className="flex flex-col h-full max-w-7xl mx-auto w-full p-4 md:p-8 space-y-8">
+      <div className="flex flex-col h-full w-full space-y-8">
         <SummaryCards
           totalCollected={totalCollected}
           totalPending={totalPending}
