@@ -190,7 +190,7 @@ const mapRowToPayment = (row: PaymentRow, ownerId: string): Payment => ({
   verification_notes: row.verification_notes,
   payment_method: row.payment_method,
   payment_code: row.payment_code,
-  amount_paid: (row as any).amount_paid ?? 0,
+  amount_paid: row.amount_paid ?? 0,
   tenants_table: {
     name: row.tenant_name,
     mobile_number: row.tenant_mobile_number,
