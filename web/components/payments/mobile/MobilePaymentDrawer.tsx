@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Check, AlertTriangle, Link } from "lucide-react";
+import { X, Check, AlertTriangle, Link, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Payment } from "../usePaymentFilters";
 import { StatusBadge } from "../StatusBadge";
@@ -90,6 +90,19 @@ export function MobilePaymentDrawer({
                   <div className="flex items-center gap-2">
                     <DrawerTitle className="text-base font-bold text-foreground">{payment.tenantName}</DrawerTitle>
                     <StatusBadge status={payment.status} />
+                    {payment.payment_token && (
+                      <button
+                        type="button"
+                        className="flex h-6 w-6 items-center justify-center rounded-md border border-border bg-background hover:bg-muted text-muted-foreground hover:text-foreground"
+                        title="Copy payment link"
+                        onClick={() => {
+                          const url = `${window.location.origin}/pay/${payment.payment_token}`;
+                          navigator.clipboard.writeText(url);
+                        }}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
                   <DrawerDescription className="text-xs text-muted-foreground">
                     Room {payment.roomNumber}

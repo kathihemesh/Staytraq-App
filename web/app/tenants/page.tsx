@@ -2854,10 +2854,29 @@ function TenantsPageInner() {
               return (
                 <>
                   <DialogHeader>
-                    <DialogTitle>
-                      {monthStr} {payment.year} — ₹{(amountPaid > 0 && amountPaid < total
-                        ? total - amountPaid
-                        : total).toLocaleString()}
+                    <DialogTitle className="flex items-center gap-2 flex-wrap">
+                      <span>
+                        {monthStr} {payment.year} — ₹{(amountPaid > 0 && amountPaid < total
+                          ? total - amountPaid
+                          : total).toLocaleString()}
+                      </span>
+                      <Badge variant="outline" className={cn("text-[10px] capitalize font-medium py-0.5 px-2", paymentBadgeClass(payment.status))}>
+                        {payment.status}
+                      </Badge>
+                      {payment.payment_code && (
+                        <Button
+                          size="icon"
+                          variant="outline"
+                          className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                          title="Copy payment link"
+                          onClick={() => {
+                            const url = `${window.location.origin}/pay/${payment.payment_code}`;
+                            navigator.clipboard.writeText(url);
+                          }}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </Button>
+                      )}
                     </DialogTitle>
                     <DialogDescription>Billing record details and verification.</DialogDescription>
                   </DialogHeader>

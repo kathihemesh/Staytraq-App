@@ -2192,6 +2192,20 @@ export default function PaymentsScreen() {
                       <View className={`px-2.5 py-1 rounded ${getPaymentStatusMeta(selectedPayment.status).box}`}>
                         <Text className={`text-[9px] font-black uppercase ${getPaymentStatusMeta(selectedPayment.status).text}`}>{getPaymentStatusMeta(selectedPayment.status).label}</Text>
                       </View>
+                      {(selectedPaymentPortalToken || selectedPayment.payment_token) ? (
+                        <TouchableOpacity
+                          onPress={async () => {
+                            const token = selectedPaymentPortalToken || selectedPayment.payment_token
+                            const url = `https://staytraq.vercel.app/pay/${token}`
+                            Clipboard.setString(url)
+                            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+                            Alert.alert("Link Copied", "Tenant pay link copied to clipboard.")
+                          }}
+                          className="h-6 w-6 rounded border border-border dark:border-border-dark bg-card dark:bg-card-dark items-center justify-center"
+                        >
+                          <Copy size={12} color="#9ca3af" />
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
                     <Text className="text-2xl font-black text-foreground dark:text-foreground-dark mt-1">
                       ₹{selectedPayment.total_amount.toLocaleString()}

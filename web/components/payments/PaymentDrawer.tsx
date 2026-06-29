@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { X, Check, MessageSquare, AlertTriangle, Link } from "lucide-react";
+import { X, Check, MessageSquare, AlertTriangle, Link, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Payment } from "./usePaymentFilters";
 import { StatusBadge } from "./StatusBadge";
@@ -103,7 +103,23 @@ export function PaymentDrawer({ payment, isOpen, onClose, onMarkPaid, onApproveP
                       : payment.amount).toLocaleString()}
                   </p>
                 </div>
-                <StatusBadge status={payment.status} />
+                <div className="flex items-center gap-2">
+                  <StatusBadge status={payment.status} />
+                  {payment.payment_token && (
+                    <Button
+                      size="icon"
+                      variant="outline"
+                      className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                      title="Copy payment link"
+                      onClick={() => {
+                        const url = `${window.location.origin}/pay/${payment.payment_token}`;
+                        navigator.clipboard.writeText(url);
+                      }}
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
               </div>
 
               <PaymentTimeline steps={timelineSteps} fillComplete={payment.status === "paid"} />
