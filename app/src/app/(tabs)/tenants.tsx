@@ -3786,7 +3786,7 @@ export default function TenantsScreen() {
                                   {payment.status === "paid"
                                     ? `Paid on ${payment.paid_at || "—"}`
                                     : isPartiallyPaid({ ...payment, total_amount: payment.total_amount ?? total })
-                                      ? `Paid ₹{(payment.amount_paid ?? 0).toLocaleString()} · Due ${payment.due_date || "—"}`
+                                      ? `Paid ₹${(payment.amount_paid ?? 0).toLocaleString()} · Due ${payment.due_date || "—"}`
                                       : `Due by ${payment.due_date || "—"}`}
                                 </Text>
                               </View>

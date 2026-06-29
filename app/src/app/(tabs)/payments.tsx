@@ -2075,12 +2075,14 @@ export default function PaymentsScreen() {
                           </View>
                         )}
                       </View>
-                      <View className="flex-row items-center mt-1 gap-2.5">
+                      <View className="flex-row items-center mt-1 gap-2.5 flex-wrap">
                         <Text className="text-xs text-muted font-bold">
                           Room {item.tenants_table?.rooms_table?.room_number || "—"}
                         </Text>
                         <Text className="text-xs text-muted font-medium">
-                          Due {formattedDue}
+                          {isPartiallyPaid(item)
+                            ? `Paid ₹${(item.amount_paid ?? 0).toLocaleString()} · Due ${formattedDue}`
+                            : `Due ${formattedDue}`}
                         </Text>
                       </View>
                     </View>
