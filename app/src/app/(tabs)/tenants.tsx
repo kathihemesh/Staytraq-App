@@ -755,7 +755,8 @@ export default function TenantsScreen() {
   }
 
   const createInitialRentPayment = async (tenant: Tenant, rentAmount: number) => {
-    if (!user?.id || rentAmount <= 0) return null
+    const totalAmount = rentAmount + (tenant.extra_charges || 0)
+    if (!user?.id || totalAmount <= 0) return null
 
     const currentMonth = new Date().getMonth() + 1
     const currentYear = new Date().getFullYear()
@@ -768,7 +769,7 @@ export default function TenantsScreen() {
         year: currentYear,
         rent_amount: rentAmount,
         extra_charges: tenant.extra_charges || 0,
-        total_amount: rentAmount + (tenant.extra_charges || 0),
+        total_amount: totalAmount,
         due_date: tenant.join_date || new Date().toISOString().split("T")[0],
         status: "pending",
         reminder_sent: false,
@@ -3785,13 +3786,15 @@ export default function TenantsScreen() {
                                   {payment.status === "paid"
                                     ? `Paid on ${payment.paid_at || "—"}`
                                     : isPartiallyPaid({ ...payment, total_amount: payment.total_amount ?? total })
-                                      ? `Balance ₹${paymentBalance({ ...payment, total_amount: payment.total_amount ?? total }).toLocaleString()} · Due ${payment.due_date || "—"}`
+                                      ? `Paid ₹{(payment.amount_paid ?? 0).toLocaleString()} · Due ${payment.due_date || "—"}`
                                       : `Due by ${payment.due_date || "—"}`}
                                 </Text>
                               </View>
                               <View className="flex-row items-center">
                                 <Text className="text-sm font-black text-foreground dark:text-foreground-dark mr-2">
-                                  ₹{total.toLocaleString()}
+                                  ₹{(isPartiallyPaid({ ...payment, total_amount: payment.total_amount ?? total })
+                                    ? paymentBalance({ ...payment, total_amount: payment.total_amount ?? total })
+                                    : total).toLocaleString()}
                                 </Text>
                                 <ChevronRight size={16} color="#9ca3af" />
                               </View>
@@ -5111,7 +5114,9 @@ export default function TenantsScreen() {
                         </View>
                       </View>
                       <Text className="text-2xl font-black text-foreground dark:text-foreground-dark mt-1">
-                        ₹{total.toLocaleString()}
+                        ₹{(isPartiallyPaid({ ...payment, total_amount: payment.total_amount ?? total })
+                          ? paymentBalance({ ...payment, total_amount: payment.total_amount ?? total })
+                          : total).toLocaleString()}
                       </Text>
                     </View>
                     <TouchableOpacity
@@ -5209,9 +5214,19 @@ export default function TenantsScreen() {
                         )
                       })()}
 
+                      {payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < total && (
+                        <View className="flex-row justify-between items-center">
+                          <Text className="text-xs font-medium text-blue-600 dark:text-blue-400">Already Paid</Text>
+                          <Text className="text-sm font-bold text-blue-600 dark:text-blue-400">- ₹{payment.amount_paid.toLocaleString()}</Text>
+                        </View>
+                      )}
                       <View className="border-t border-border dark:border-border-dark pt-2.5 flex-row justify-between items-center">
-                        <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Total Rent Amount</Text>
-                        <Text className="text-sm font-black text-foreground dark:text-foreground-dark">₹{total.toLocaleString()}</Text>
+                        <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                          {payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < total ? "Remaining Balance" : "Total Rent Amount"}
+                        </Text>
+                        <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
+                          ₹{(payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < total ? total - payment.amount_paid : total).toLocaleString()}
+                        </Text>
                       </View>
                     </View>
 

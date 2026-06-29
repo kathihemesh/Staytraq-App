@@ -77,7 +77,9 @@ export function MobilePaymentCard({ payment, onCardClick, onMarkPaid, style }: M
         <div className="flex items-center justify-between gap-2">
           <p className="text-[13px] font-semibold truncate leading-snug">{payment.tenantName}</p>
           <p className={`text-[14px] font-bold shrink-0 ${amountColors[payment.status]}`}>
-            ₹{payment.amount.toLocaleString()}
+            ₹{(payment.amount_paid && payment.amount_paid > 0 && payment.amount_paid < payment.amount
+              ? payment.amount - payment.amount_paid
+              : payment.amount).toLocaleString()}
           </p>
         </div>
 
@@ -85,8 +87,13 @@ export function MobilePaymentCard({ payment, onCardClick, onMarkPaid, style }: M
         <div className="flex items-center justify-between gap-1 mt-0.5">
           <p className="text-[11px] text-muted-foreground truncate">Room {payment.roomNumber}</p>
           <p className="text-[11px] text-muted-foreground shrink-0">Due {formattedDue}</p>
-          <div className="shrink-0">
+          <div className="shrink-0 flex items-center gap-1">
             <StatusBadge status={payment.status} />
+            {payment.amount_paid && payment.amount_paid > 0 && payment.amount_paid < payment.amount && (
+              <span className="bg-blue-500/10 border border-blue-500/30 px-1.5 py-0.5 rounded text-[8px] font-black uppercase text-blue-600 dark:text-blue-400">
+                Partial
+              </span>
+            )}
           </div>
         </div>
       </div>

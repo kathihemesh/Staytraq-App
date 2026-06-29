@@ -201,6 +201,11 @@ export function TasksSection({
                             <span className="text-xs text-muted-foreground">
                               Room {task.roomNumber}
                             </span>
+                            {task.payment.amount_paid !== undefined && Number(task.payment.amount_paid) > 0 && Number(task.payment.amount_paid) < Number(task.payment.total_amount) && (
+                              <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-[9px] text-blue-600 dark:text-blue-400 py-0 px-1.5 h-4">
+                                Partial
+                              </Badge>
+                            )}
                           </div>
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             Due {formatDate(task.dueDate)}

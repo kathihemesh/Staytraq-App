@@ -94,8 +94,14 @@ export function PaymentDrawer({ payment, isOpen, onClose, onMarkPaid, onApproveP
               {/* Status & Amount Overview */}
               <div className="flex items-center justify-between bg-muted/30 p-4 rounded-xl border">
                 <div>
-                  <p className="text-sm text-muted-foreground mb-1">Total Amount</p>
-                  <p className="text-3xl font-bold">₹{payment.amount.toLocaleString()}</p>
+                  <p className="text-sm text-muted-foreground mb-1">
+                    {payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < payment.amount ? "Remaining Balance" : "Total Amount"}
+                  </p>
+                  <p className="text-3xl font-bold">
+                    ₹{(payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < payment.amount
+                      ? payment.amount - payment.amount_paid
+                      : payment.amount).toLocaleString()}
+                  </p>
                 </div>
                 <StatusBadge status={payment.status} />
               </div>
@@ -116,12 +122,42 @@ export function PaymentDrawer({ payment, isOpen, onClose, onMarkPaid, onApproveP
                       <span className="font-medium text-red-500 dark:text-red-400">+ ₹{payment.extraCharges.toLocaleString()}</span>
                     </div>
                   )}
+                  {payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < payment.amount && (
+                    <div className="flex justify-between text-sm text-blue-600 dark:text-blue-400 font-medium">
+                      <span>Already Paid</span>
+                      <span>- ₹{payment.amount_paid.toLocaleString()}</span>
+                    </div>
+                  )}
                   <div className="border-t pt-3 flex justify-between font-bold">
-                    <span>Total</span>
-                    <span>₹{payment.amount.toLocaleString()}</span>
+                    <span>{payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < payment.amount ? "Remaining Balance" : "Total"}</span>
+                    <span>₹{(payment.amount_paid !== undefined && payment.amount_paid > 0 && payment.amount_paid < payment.amount ? payment.amount - payment.amount_paid : payment.amount).toLocaleString()}</span>
                   </div>
                 </div>
               </div>
+
+              {/* Partial Payment Progress Bar */}
+              {payment.amount_paid !== undefined && payment.amount_paid > 0 && (
+                <div className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-xl flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400">Payment Progress</span>
+                    {(payment.amount - payment.amount_paid) > 0 && (
+                      <span className="bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</span>
+                    )}
+                  </div>
+                  <p className="text-sm font-bold text-foreground">
+                    Paid ₹{payment.amount_paid.toLocaleString()} of ₹{payment.amount.toLocaleString()}
+                  </p>
+                  <div className="h-2 bg-muted rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full"
+                      style={{ width: `${Math.min(100, Math.round((payment.amount_paid / payment.amount) * 100))}%` }}
+                    />
+                  </div>
+                  <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                    Balance ₹{(payment.amount - payment.amount_paid).toLocaleString()}
+                  </span>
+                </div>
+              )}
 
               {/* Actions */}
               <div className="pt-4 flex flex-col gap-3">

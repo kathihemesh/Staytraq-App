@@ -74,6 +74,7 @@ function rowToPayment(r: PaymentRow): Payment {
     roomNumber: r.room_number || "—",
 
     amount: Number(r.total_amount) || 0,
+    amount_paid: Number(r.amount_paid) || 0,
     baseRent: Number(r.rent_amount) || 0,
     extraCharges: Number(r.extra_charges) || 0,
 

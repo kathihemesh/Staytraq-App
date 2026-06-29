@@ -53,6 +53,7 @@ export interface PaymentRow {
   rent_amount: number | null
   extra_charges: number | null
   total_amount: number | null
+  amount_paid: number | null
   due_date: string | null
   status: string | null
   paid_at: string | null
@@ -301,6 +302,7 @@ export function mapPaymentRow(row: unknown): PaymentRow {
     rent_amount: toNullableNumber(r.rent_amount),
     extra_charges: toNullableNumber(r.extra_charges),
     total_amount: toNullableNumber(r.total_amount),
+    amount_paid: toNullableNumber(r.amount_paid),
     due_date: toNullableString(r.due_date),
     status: toNullableString(r.status),
     paid_at: toNullableString(r.paid_at),

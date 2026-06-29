@@ -5,6 +5,7 @@ export interface Payment {
   tenantName: string;
   roomNumber: string;
   amount: number;
+  amount_paid?: number;
   baseRent: number;
   extraCharges: number;
   status: "paid" | "pending" | "late" | "submitted";

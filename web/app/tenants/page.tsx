@@ -176,6 +176,7 @@ interface Payment {
   total_amount: number
   due_date: string
   status: string
+  amount_paid?: number | null
   paid_at?: string | null
   verified_at?: string | null
   verification_notes?: string | null
@@ -2178,10 +2179,21 @@ function TenantsPageInner() {
                               <p className="mt-0.5 text-xs text-muted-foreground">Due {formatDateFriendly(payment.due_date)}</p>
                             </div>
                             <div className="flex items-center gap-2">
-                              <span className="text-sm font-bold text-foreground">₹{total.toLocaleString()}</span>
-                              <Badge variant="outline" className={cn("text-[9px] capitalize", paymentBadgeClass(payment.status))}>
-                                {payment.status}
-                              </Badge>
+                              <span className="text-sm font-bold text-foreground">
+                                ₹{(payment.amount_paid && payment.amount_paid > 0 && payment.amount_paid < total
+                                  ? total - payment.amount_paid
+                                  : total).toLocaleString()}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <Badge variant="outline" className={cn("text-[9px] capitalize", paymentBadgeClass(payment.status))}>
+                                  {payment.status}
+                                </Badge>
+                                {payment.amount_paid && payment.amount_paid > 0 && payment.amount_paid < total && (
+                                  <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-[9px] text-blue-600 dark:text-blue-400">
+                                    Partial
+                                  </Badge>
+                                )}
+                              </div>
                               <ChevronRight className="h-4 w-4 text-muted-foreground" />
                             </div>
                           </button>
@@ -2837,12 +2849,15 @@ function TenantsPageInner() {
             (() => {
               const payment = selectedPaymentDetail
               const total = (payment.rent_amount || 0) + (payment.extra_charges || 0)
+              const amountPaid = payment.amount_paid ?? 0
               const monthStr = MONTH_SHORT[payment.month] || "Month"
               return (
                 <>
                   <DialogHeader>
                     <DialogTitle>
-                      {monthStr} {payment.year} — ₹{total.toLocaleString()}
+                      {monthStr} {payment.year} — ₹{(amountPaid > 0 && amountPaid < total
+                        ? total - amountPaid
+                        : total).toLocaleString()}
                     </DialogTitle>
                     <DialogDescription>Billing record details and verification.</DialogDescription>
                   </DialogHeader>
@@ -2887,11 +2902,43 @@ function TenantsPageInner() {
                           </div>
                         )
                       })()}
+                      {amountPaid > 0 && amountPaid < total && (
+                        <div className="flex items-center justify-between text-sm text-blue-600 dark:text-blue-400 font-medium">
+                          <span>Already Paid</span>
+                          <span>- ₹{amountPaid.toLocaleString()}</span>
+                        </div>
+                      )}
                       <div className="flex items-center justify-between border-t border-border pt-2.5">
-                        <span className="text-sm font-bold text-foreground">Total Rent Amount</span>
-                        <span className="text-sm font-black text-foreground">₹{total.toLocaleString()}</span>
+                        <span className="text-sm font-bold text-foreground">
+                          {amountPaid > 0 && amountPaid < total ? "Remaining Balance" : "Total Rent Amount"}
+                        </span>
+                        <span className="text-sm font-black text-foreground">₹{(amountPaid > 0 && amountPaid < total ? total - amountPaid : total).toLocaleString()}</span>
                       </div>
                     </div>
+
+                    {/* Progress Bar */}
+                    {amountPaid > 0 && (
+                      <div className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-xl flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400">Payment Progress</span>
+                          {(total - amountPaid) > 0 && (
+                            <span className="bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</span>
+                          )}
+                        </div>
+                        <p className="text-sm font-bold text-foreground">
+                          Paid ₹{amountPaid.toLocaleString()} of ₹{total.toLocaleString()}
+                        </p>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-500 rounded-full"
+                            style={{ width: `${Math.min(100, Math.round((amountPaid / total) * 100))}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                          Balance ₹{(total - amountPaid).toLocaleString()}
+                        </span>
+                      </div>
+                    )}
 
                     {/* Screenshot proof */}
                     {payment.screenshot_path && (

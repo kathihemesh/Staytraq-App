@@ -38,6 +38,7 @@ export interface PaymentRow {
   /** paid | success | completed | pending | late | submitted | rejected */
   status: string
   total_amount: number | string | null
+  amount_paid?: number | string | null
   due_date: string | null
   paid_at?: string | null
   month?: number
@@ -186,6 +187,7 @@ export interface ActivityView {
   status: string
   relativeTime: string
   timestamp: Date
+  isPartial?: boolean
 }
 
 /** A leads-section view item. */
@@ -620,11 +622,9 @@ export function computeRevenue(
   for (const p of payments) {
     if (!isDateInRange(p.due_date, dateRange.start, dateRange.end)) continue
     const amount = coerceNumber(p.total_amount)
-    if (isCollectedStatus(p.status)) {
-      collected += amount
-    } else {
-      pending += amount
-    }
+    const paid = coerceNumber(p.amount_paid)
+    collected += paid
+    pending += Math.max(0, amount - paid)
   }
   const expected = collected + pending
   return { expected, collected, pending, percent: collectedPercentage(collected, expected) }
@@ -881,7 +881,7 @@ export function computeFollowUpTasks(
       id: p.id,
       tenantName: resolveTenantName(p.tenants_table?.name),
       roomNumber: p.tenants_table?.rooms_table?.room_number || "—",
-      amount: coerceNumber(p.total_amount),
+      amount: coerceNumber(p.total_amount) - coerceNumber(p.amount_paid),
       dueDate: p.due_date as string,
       payment: p,
     }))
@@ -1100,6 +1100,15 @@ export function computeRecentActivity(
         row.amount === null || row.amount === undefined || row.amount === ""
           ? undefined
           : String(row.amount)
+      const isPartial = Boolean(
+        row.type === "payment" &&
+        row.raw_item &&
+        typeof row.raw_item === "object" &&
+        (row.raw_item as any).amount_paid !== undefined &&
+        Number((row.raw_item as any).amount_paid) > 0 &&
+        Number((row.raw_item as any).amount_paid) < Number((row.raw_item as any).total_amount)
+      )
+
       return {
         id: row.id,
         type: row.type === "complaint" ? "complaint" : "payment",
@@ -1109,6 +1118,7 @@ export function computeRecentActivity(
         status: row.status || "pending",
         relativeTime: relativeTimeLabel(timestamp, now),
         timestamp,
+        isPartial,
       } satisfies ActivityView
     })
     .sort((a, b) => safeTime(b.timestamp) - safeTime(a.timestamp))

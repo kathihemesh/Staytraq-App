@@ -2089,11 +2089,11 @@ export default function PaymentsScreen() {
                   {/* Amount right block */}
                   <View className="items-end">
                     <Text className={`text-base font-extrabold ${textAmountColor}`}>
-                      ₹{item.total_amount.toLocaleString()}
+                      ₹{(isPartiallyPaid(item) ? paymentBalance(item) : item.total_amount).toLocaleString()}
                     </Text>
                     {isPartiallyPaid(item) ? (
                       <Text className="text-[9px] font-bold text-blue-600 dark:text-blue-400 mt-1">
-                        Bal ₹{paymentBalance(item).toLocaleString()}
+                        Paid ₹{(item.amount_paid ?? 0).toLocaleString()}
                       </Text>
                     ) : (
                       <View className="flex-row items-center mt-1">
@@ -2298,9 +2298,19 @@ export default function PaymentsScreen() {
                       )
                     })()}
 
+                    {(selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount && (
+                      <View className="flex-row justify-between items-center">
+                        <Text className="text-xs font-medium text-blue-600 dark:text-blue-400">Already Paid</Text>
+                        <Text className="text-sm font-bold text-blue-600 dark:text-blue-400">- ₹{(selectedPayment.amount_paid ?? 0).toLocaleString()}</Text>
+                      </View>
+                    )}
                     <View className="border-t border-border dark:border-border-dark pt-2.5 flex-row justify-between items-center">
-                      <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Total Rent Amount</Text>
-                      <Text className="text-sm font-black text-foreground dark:text-foreground-dark">₹{selectedPayment.total_amount.toLocaleString()}</Text>
+                      <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                        {(selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount ? "Remaining Balance" : "Total Rent Amount"}
+                      </Text>
+                      <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
+                        ₹{((selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount ? selectedPayment.total_amount - (selectedPayment.amount_paid ?? 0) : selectedPayment.total_amount).toLocaleString()}
+                      </Text>
                     </View>
                   </View>
 

@@ -28,7 +28,7 @@ export async function POST(
     // Verify payment belongs to owner and is in 'submitted' state
     const { data: payment, error: paymentError } = await supabase
       .from('payments')
-      .select('id, owner_id, status')
+      .select('id, owner_id, status, due_date')
       .eq('id', id)
       .eq('owner_id', user.id)
       .single()
@@ -65,9 +65,11 @@ export async function POST(
       updateData.status = 'paid'
       updateData.paid_at = now
     } else if (action === 'reject') {
-      // User requested: "when rejected automatically return to pending"
-      newStatus = 'pending'
-      updateData.status = 'pending'
+      // Return to late if due date has passed, otherwise pending
+      const todayStr = new Date().toISOString().split('T')[0]
+      const isOverdue = payment.due_date ? payment.due_date < todayStr : false
+      newStatus = isOverdue ? 'late' : 'pending'
+      updateData.status = newStatus
     }
 
     const { error: updateError } = await supabase

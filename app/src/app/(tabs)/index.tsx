@@ -665,7 +665,7 @@ export default function DashboardScreen() {
       }
     })
     const uniqueTenants = new Set(unpaid.map(p => p.tenant_id))
-    const totalAmount = unpaid.reduce((sum, p) => sum + Number(p.total_amount || 0), 0)
+    const totalAmount = unpaid.reduce((sum, p) => sum + Math.max(0, Number(p.total_amount || 0) - Number(p.amount_paid || 0)), 0)
     return {
       count: uniqueTenants.size,
       amount: totalAmount
@@ -721,13 +721,11 @@ export default function DashboardScreen() {
     
     paymentsInRange.forEach(p => {
       const amt = Number(p.total_amount || 0)
-      expected += amt
-      if (p.status === "paid" || p.status === "success" || p.status === "completed") {
-        collected += amt
-      } else {
-        pending += amt
-      }
+      const paid = Number(p.amount_paid || 0)
+      collected += paid
+      pending += Math.max(0, amt - paid)
     })
+    expected = collected + pending
     
     const percent = expected > 0 ? Math.round((collected / expected) * 100) : 0
     return { expected, collected, pending, percent }
@@ -767,7 +765,7 @@ export default function DashboardScreen() {
         id: p.id,
         tenantName: tenant?.name || "Unknown",
         roomNumber: tenant?.rooms_table?.room_number || "—",
-        amount: Number(p.total_amount || 0),
+        amount: Number(p.total_amount || 0) - Number(p.amount_paid || 0),
         dueDate: p.due_date,
         payment: {
           ...p,
@@ -866,7 +864,7 @@ export default function DashboardScreen() {
           type: "payment",
           tenant: tenant?.name || "Unknown Tenant",
           action: "Payment under review",
-          amount: (payment.total_amount || payment.amount) ? `₹${Number(payment.total_amount || payment.amount).toLocaleString()}` : undefined,
+          amount: (payment.total_amount || payment.amount) ? `₹${Number((payment.total_amount || payment.amount) - (payment.amount_paid || 0)).toLocaleString()}` : undefined,
           status: "pending",
           timestamp: pDate,
           time: "",
@@ -2300,6 +2298,11 @@ export default function DashboardScreen() {
                             <View className="flex-row items-center flex-wrap">
                               <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">{item.tenantName}</Text>
                               {getCompactStatusBadge(item.payment.status)}
+                              {item.payment.amount_paid !== undefined && Number(item.payment.amount_paid) > 0 && Number(item.payment.amount_paid) < Number(item.payment.total_amount) && (
+                                <View className="bg-blue-500/10 border border-blue-500/30 px-1 py-0.5 rounded ml-1">
+                                  <Text className="text-[7px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</Text>
+                                </View>
+                              )}
                             </View>
                             <Text className="text-[8px] text-slate-500 dark:text-slate-400 font-bold mt-0.5">
                               Room {item.roomNumber} • Due <Text className="text-slate-900 dark:text-white font-black">{item.dueDate}</Text>
@@ -2472,9 +2475,16 @@ export default function DashboardScreen() {
                           </Text>
                         ) : (
                           <>
-                            <Text className="text-xs font-bold text-foreground dark:text-foreground-dark" numberOfLines={1}>
-                              {item.tenant}
-                            </Text>
+                             <View className="flex-row items-center flex-wrap">
+                               <Text className="text-xs font-bold text-foreground dark:text-foreground-dark" numberOfLines={1}>
+                                 {item.tenant}
+                               </Text>
+                               {item.type === "payment" && item.rawItem && (item.rawItem as any).amount_paid !== undefined && Number((item.rawItem as any).amount_paid) > 0 && Number((item.rawItem as any).amount_paid) < Number((item.rawItem as any).total_amount || (item.rawItem as any).amount) && (
+                                 <View className="bg-blue-500/10 border border-blue-500/30 px-1 py-0.5 rounded ml-1">
+                                   <Text className="text-[7px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</Text>
+                                 </View>
+                               )}
+                             </View>
                             <Text className="text-[10px] text-muted dark:text-muted-dark font-medium mt-0.5" numberOfLines={1}>
                               {item.action}
                             </Text>
@@ -3262,6 +3272,40 @@ export default function DashboardScreen() {
                     </View>
                   </View>
 
+                  {/* Partial Payment Progress Bar */}
+                  {selectedPayment.amount_paid !== undefined && Number(selectedPayment.amount_paid) > 0 && (
+                    <View className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-3xl gap-2.5">
+                      <View className="flex-row justify-between items-center">
+                        <Text className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400">Payment Progress</Text>
+                        {Number(selectedPayment.amount_paid) < Number(selectedPayment.total_amount) && (
+                          <View className="bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded">
+                            <Text className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</Text>
+                          </View>
+                        )}
+                      </View>
+                      <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
+                        Paid ₹{Number(selectedPayment.amount_paid).toLocaleString()} of ₹{Number(selectedPayment.total_amount).toLocaleString()}
+                      </Text>
+                      <View className="h-2 bg-muted/20 rounded-full overflow-hidden">
+                        <View
+                          className="h-full bg-blue-500 rounded-full"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              Math.round(
+                                (Number(selectedPayment.amount_paid) /
+                                  (Number(selectedPayment.total_amount) || 1)) * 100,
+                              ),
+                            )}%`,
+                          }}
+                        />
+                      </View>
+                      <Text className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                        Balance ₹{Math.max(0, Number(selectedPayment.total_amount) - Number(selectedPayment.amount_paid)).toLocaleString()}
+                      </Text>
+                    </View>
+                  )}
+
                   {/* Breakdown Split Box */}
                   <View className="bg-muted/10 border border-border dark:border-border-dark p-4 rounded-3xl gap-2.5">
                     <Text className="text-[10px] font-extrabold uppercase tracking-widest text-muted mb-1">Fee Breakdown</Text>
@@ -3280,9 +3324,20 @@ export default function DashboardScreen() {
                       </View>
                     )}
 
+                    {selectedPayment.amount_paid !== undefined && Number(selectedPayment.amount_paid) > 0 && Number(selectedPayment.amount_paid) < Number(selectedPayment.total_amount) && (
+                      <View className="flex-row justify-between items-center">
+                        <Text className="text-xs font-medium text-blue-600 dark:text-blue-400">Already Paid</Text>
+                        <Text className="text-sm font-bold text-blue-600 dark:text-blue-400">- ₹{selectedPayment.amount_paid.toLocaleString()}</Text>
+                      </View>
+                    )}
+
                     <View className="border-t border-border dark:border-border-dark pt-2.5 flex-row justify-between items-center">
-                      <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">Total Rent Amount</Text>
-                      <Text className="text-sm font-black text-foreground dark:text-foreground-dark">₹{selectedPayment.total_amount.toLocaleString()}</Text>
+                      <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
+                        {selectedPayment.amount_paid !== undefined && Number(selectedPayment.amount_paid) > 0 && Number(selectedPayment.amount_paid) < Number(selectedPayment.total_amount) ? "Remaining Balance" : "Total Rent Amount"}
+                      </Text>
+                      <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
+                        ₹{(selectedPayment.amount_paid !== undefined && Number(selectedPayment.amount_paid) > 0 && Number(selectedPayment.amount_paid) < Number(selectedPayment.total_amount) ? Number(selectedPayment.total_amount) - Number(selectedPayment.amount_paid) : Number(selectedPayment.total_amount)).toLocaleString()}
+                      </Text>
                     </View>
                   </View>
 

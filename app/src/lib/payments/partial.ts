@@ -35,6 +35,7 @@ export interface PartialPaymentLike {
   amount_paid?: number | null
   status?: string | null
   paid_at?: string | null
+  due_date?: string | null
 }
 
 /** Remaining balance for a payment (never negative). */
@@ -92,7 +93,7 @@ export async function signSubmissionScreenshots(
 export interface ApproveResult {
   applied: number
   newAmountPaid: number
-  newStatus: "paid" | "pending"
+  newStatus: "paid" | "pending" | "late"
   paidAt: string | null
   isPartial: boolean
 }
@@ -117,7 +118,9 @@ export async function approveSubmission(
   const applied = Math.max(0, Math.min(Number(amount) || 0, balance))
   const newAmountPaid = (Number(payment.amount_paid) || 0) + applied
   const fullyPaid = newAmountPaid >= (Number(payment.total_amount) || 0)
-  const newStatus: "paid" | "pending" = fullyPaid ? "paid" : "pending"
+  const todayStr = new Date().toISOString().split("T")[0]
+  const isOverdue = payment.due_date ? payment.due_date < todayStr : false
+  const newStatus: "paid" | "pending" | "late" = fullyPaid ? "paid" : (isOverdue ? "late" : "pending")
   const now = new Date().toISOString()
   const paidAt = fullyPaid ? now : payment.paid_at ?? null
 
@@ -166,9 +169,11 @@ export async function rejectSubmission(
     ownerId: string
     notes: string
   },
-): Promise<{ newStatus: "pending" }> {
+): Promise<{ newStatus: "pending" | "late" }> {
   const { payment, submission, ownerId, notes } = args
-  const newStatus = "pending" as const
+  const todayStr = new Date().toISOString().split("T")[0]
+  const isOverdue = payment.due_date ? payment.due_date < todayStr : false
+  const newStatus: "pending" | "late" = isOverdue ? "late" : "pending"
   const now = new Date().toISOString()
 
   const { error: subErr } = await supabase

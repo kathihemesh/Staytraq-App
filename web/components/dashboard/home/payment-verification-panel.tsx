@@ -228,6 +228,30 @@ export function PaymentVerificationPanel({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
+          {/* Progress Bar */}
+          {payment && (payment as any).amount_paid !== undefined && (payment as any).amount_paid > 0 && (
+            <div className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-xl flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400">Payment Progress</span>
+                {(Number(payment.total_amount) - Number((payment as any).amount_paid)) > 0 && (
+                  <span className="bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</span>
+                )}
+              </div>
+              <p className="text-sm font-bold text-foreground">
+                Paid ₹{Number((payment as any).amount_paid).toLocaleString()} of ₹{Number(payment.total_amount).toLocaleString()}
+              </p>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 rounded-full"
+                  style={{ width: `${Math.min(100, Math.round((Number((payment as any).amount_paid) / Number(payment.total_amount)) * 100))}%` }}
+                />
+              </div>
+              <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                Balance ₹{(Number(payment.total_amount) - Number((payment as any).amount_paid)).toLocaleString()}
+              </span>
+            </div>
+          )}
+
           {/* Payment proof image */}
           {screenshotPath ? (
             <div className="flex flex-col gap-2">

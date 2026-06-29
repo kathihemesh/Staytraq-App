@@ -51,7 +51,11 @@ export function PaymentRow({ payment, onRowClick, onMarkPaid }: PaymentRowProps)
     >
       <TableCell className="font-medium">{payment.tenantName}</TableCell>
       <TableCell>{payment.roomNumber}</TableCell>
-      <TableCell className="font-medium text-muted-foreground">₹{payment.amount.toLocaleString()}</TableCell>
+      <TableCell className="font-medium text-muted-foreground">
+        ₹{(payment.amount_paid && payment.amount_paid > 0 && payment.amount_paid < payment.amount
+          ? payment.amount - payment.amount_paid
+          : payment.amount).toLocaleString()}
+      </TableCell>
       <TableCell>
         {new Date(payment.dueDate).toLocaleDateString("en-IN", {
           day: "numeric",
@@ -69,7 +73,14 @@ export function PaymentRow({ payment, onRowClick, onMarkPaid }: PaymentRowProps)
           : "—"}
       </TableCell>
       <TableCell>
-        <StatusBadge status={payment.status} />
+        <div className="flex items-center gap-1.5">
+          <StatusBadge status={payment.status} />
+          {payment.amount_paid && payment.amount_paid > 0 && payment.amount_paid < payment.amount && (
+            <span className="bg-blue-500/10 border border-blue-500/30 px-1.5 py-0.5 rounded text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">
+              Partial
+            </span>
+          )}
+        </div>
       </TableCell>
       <TableCell>
         <AnimatePresence mode="wait">

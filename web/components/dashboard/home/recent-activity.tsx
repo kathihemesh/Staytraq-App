@@ -111,6 +111,11 @@ export function RecentActivity({
                       <Badge variant={statusVariant(item.status)} className="capitalize">
                         {item.status}
                       </Badge>
+                      {item.isPartial && (
+                        <Badge variant="outline" className="border-blue-500/30 bg-blue-500/10 text-[9px] text-blue-600 dark:text-blue-400 capitalize">
+                          Partial
+                        </Badge>
+                      )}
                     </div>
                     <p className="mt-0.5 truncate text-sm text-muted-foreground">
                       {item.action}

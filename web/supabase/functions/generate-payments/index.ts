@@ -107,6 +107,13 @@ serve(async () => {
       const extraCharges = tenant.extra_charges || 0;
       // extra_charges may be negative (a discount); never bill below zero.
       const totalAmount = Math.max(rentAmount + extraCharges, 0);
+
+      // Skip generating zero-rupee payment records (e.g. if discount covers the entire rent)
+      if (totalAmount <= 0) {
+        console.log(`Skipping payment generation for ${tenant.name} because total amount is zero`);
+        continue;
+      }
+
       // A record whose due date has already passed is created as 'late'.
       const status = candDateOnly.getTime() < todayDate.getTime() ? "late" : "pending";
       const dueDateStr = candDateOnly.toISOString().split("T")[0];
