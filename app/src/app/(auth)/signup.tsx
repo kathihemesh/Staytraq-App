@@ -141,7 +141,7 @@ export default function SignUpScreen() {
       const { data: exists, error: fetchError } = await supabase
         .rpc("check_user_exists", {
           p_email: email.trim(),
-          p_phone: null
+          p_phone: ""
         })
 
       if (fetchError) {

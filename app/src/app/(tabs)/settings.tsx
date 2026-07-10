@@ -12,7 +12,7 @@ import { KeyboardAwareScrollView, useKeyboardAwareInput } from "@/components/ui/
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 
 export default function SettingsScreen() {
-  const { user, logout } = useAuth()
+  const { user, activePg, logout } = useAuth()
   const { isDark, toggleTheme } = useTheme()
 
   useEffect(() => {
@@ -137,7 +137,7 @@ export default function SettingsScreen() {
       }
 
       const chatbotApiUrl = getChatbotApiUrl()
-      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/status?pgId=${activePg?.id}`, {
         headers: {
           "Authorization": `Bearer ${session.access_token}`
         }
@@ -166,7 +166,7 @@ export default function SettingsScreen() {
     } finally {
       if (!silent) setChatbotStatusLoading(false)
     }
-  }, [])
+  }, [activePg?.id])
 
   // Polling for QR Code scanning / connection status
   useEffect(() => {
@@ -214,7 +214,7 @@ export default function SettingsScreen() {
       if (!session) return
 
       const chatbotApiUrl = getChatbotApiUrl()
-      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/create`, {
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/create?pgId=${activePg?.id}`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${session.access_token}`
@@ -263,7 +263,7 @@ export default function SettingsScreen() {
           "Authorization": `Bearer ${session.access_token}`,
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ phoneNumber: rawNumber })
+        body: JSON.stringify({ phoneNumber: rawNumber, pgId: activePg?.id })
       })
       if (res.ok) {
         const data = await res.json()
@@ -298,7 +298,7 @@ export default function SettingsScreen() {
       if (!session) return
 
       const chatbotApiUrl = getChatbotApiUrl()
-      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/delete`, {
+      const res = await fetch(`${chatbotApiUrl}/api/v1/chatbot/delete?pgId=${activePg?.id}`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${session.access_token}`
@@ -327,7 +327,7 @@ export default function SettingsScreen() {
 
   // Fetch settings from database
   const fetchSettings = useCallback(async (silent = false) => {
-    if (!user?.id) {
+    if (!user?.id || !activePg?.id) {
       setLoading(false)
       return
     }
@@ -339,7 +339,7 @@ export default function SettingsScreen() {
         supabase
           .from("settings")
           .select("*")
-          .eq("owner_id", user.id)
+          .eq("pg_id", activePg.id)
           .maybeSingle(),
         supabase
           .from("pg_owners")
@@ -349,7 +349,7 @@ export default function SettingsScreen() {
         supabase
           .from("pg_details")
           .select("pg_name")
-          .eq("owner_id", user.id)
+          .eq("id", activePg.id)
           .maybeSingle()
       ])
 
@@ -363,7 +363,10 @@ export default function SettingsScreen() {
         setChatbotEnabled(ownerData.chatbot_enabled ?? false)
         setOwnerName(ownerData.name ?? "")
       }
-      setPgName(pgRes.data?.pg_name ?? "")
+
+      if (pgRes.data) {
+        setPgName(pgRes.data.pg_name ?? "")
+      }
 
       if (data) {
         setSettingsId(data.id)
@@ -376,6 +379,8 @@ export default function SettingsScreen() {
         setPaymentInstructions(data.payment_instructions ?? "")
         setIsMerchant(data.is_merchant ?? false)
       } else {
+        // Reset to defaults if no settings record exists yet for this property
+        setSettingsId(null)
         setRentDueDay("5")
         setDefaultDepositFees("0")
         setRefundDeposit("0")
@@ -413,7 +418,7 @@ export default function SettingsScreen() {
 
   // Save settings to database
   const handleSaveSettings = async () => {
-    if (!user?.id) return
+    if (!user?.id || !activePg?.id) return
     
     // Validation
     const dueDayNum = parseInt(rentDueDay, 10)
@@ -464,6 +469,7 @@ export default function SettingsScreen() {
         default_deposit_fees: depositFeesNum,
         refund_deposit: refundDepositNum,
         owner_id: user.id,
+        pg_id: activePg.id,
         upi_id: upiId.trim() || null,
         upi_name: upiName.trim() || null,
         whatsapp_invite_link: whatsappInviteLink.trim() || null,
@@ -471,30 +477,21 @@ export default function SettingsScreen() {
         is_merchant: isMerchant,
       }
 
-      if (settingsId) {
-        const { error } = await supabase
-          .from("settings")
-          .update(payload)
-          .eq("id", settingsId)
+      const { data, error } = await supabase
+        .from("settings")
+        .upsert(payload, { onConflict: "pg_id" })
+        .select("id")
+        .single()
 
-        if (error) throw error
-      } else {
-        const { data, error } = await supabase
-          .from("settings")
-          .insert(payload)
-          .select("id")
-          .single()
-
-        if (error) throw error
-        if (data) setSettingsId(data.id)
-      }
+      if (error) throw error
+      if (data) setSettingsId(data.id)
 
       // Persist personal information (PG name + owner name).
       if (pgName.trim()) {
         const { error: pgErr } = await supabase
           .from("pg_details")
           .update({ pg_name: pgName.trim() })
-          .eq("owner_id", user.id)
+          .eq("id", activePg.id)
         if (pgErr) throw pgErr
       }
       {

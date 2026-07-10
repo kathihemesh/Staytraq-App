@@ -68,7 +68,7 @@ type Complaint = {
 const { width } = Dimensions.get("window")
 
 export default function ComplaintsScreen() {
-  const { user } = useAuth()
+  const { user, activePg } = useAuth()
   const { isDark } = useTheme()
   const [loading, setLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -159,7 +159,7 @@ export default function ComplaintsScreen() {
   }, [toastTranslateX, toastOpacity])
 
   const fetchComplaintsData = useCallback(async (silent = false) => {
-    if (!user?.id) {
+    if (!user?.id || !activePg?.id) {
       setLoading(false)
       return
     }
@@ -173,8 +173,8 @@ export default function ComplaintsScreen() {
       const [complaintsResult, ownerResult] = await Promise.all([
         supabase
           .from("complaints")
-          .select("id, owner_id, complaint_message, status, owner_response, created_at, updated_at, image_paths")
-          .eq("owner_id", user.id)
+          .select("id, owner_id, pg_id, complaint_message, status, owner_response, created_at, updated_at, image_paths")
+          .eq("pg_id", activePg.id)
           .order("created_at", { ascending: false }),
         supabase
           .from("pg_owners")
@@ -212,11 +212,11 @@ export default function ComplaintsScreen() {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id])
+  }, [user?.id, activePg?.id])
 
   useFocusEffect(
     useCallback(() => {
-      if (user?.id) {
+      if (user?.id && activePg?.id) {
         // Defer the on-focus fetch past the navigation transition / first interactive
         // paint via the shared scheduler (Change A); the load runs once per focus and is
         // cancelled on blur-before-run so it is neither dropped nor duplicated.
@@ -225,18 +225,18 @@ export default function ComplaintsScreen() {
         })
         return () => handle.cancel()
       }
-    }, [user?.id, fetchComplaintsData])
+    }, [user?.id, activePg?.id, fetchComplaintsData])
   )
 
   // Realtime updates
   useEffect(() => {
-    if (!user?.id) return
+    if (!user?.id || !activePg?.id) return
 
     const channel = supabase
-      .channel(`complaints_realtime_${user.id}`)
+      .channel(`complaints_realtime_${user.id}_${activePg.id}`)
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "complaints", filter: `owner_id=eq.${user.id}` },
+        { event: "*", schema: "public", table: "complaints", filter: `pg_id=eq.${activePg.id}` },
         () => {
           void fetchComplaintsData(true)
         }
@@ -246,7 +246,7 @@ export default function ComplaintsScreen() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [user?.id, fetchComplaintsData])
+  }, [user?.id, activePg?.id, fetchComplaintsData])
 
   const onRefresh = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)

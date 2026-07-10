@@ -48,10 +48,13 @@ import {
   TrendingUp,
   Settings,
   MessageCircle,
-  Phone
+  Phone,
+  Building,
+  MapPin
 } from "lucide-react-native"
 import * as Haptics from "expo-haptics"
 import Constants from "expo-constants"
+import { useKeyboardHeight } from "@/components/ui/keyboard-aware-scroll-view"
 
 const getFallbackApiUrl = () => {
   const hostUri = Constants.expoConfig?.hostUri || (Constants.manifest as any)?.debuggerHost
@@ -135,9 +138,10 @@ const { height } = Dimensions.get("window")
 
 export default function DashboardScreen() {
   const { isDark } = useTheme()
-  const { user, isAuthenticated } = useAuth()
+  const { user, isAuthenticated, activePg, pgsList, selectPg, refreshPgs, createPg } = useAuth()
   const router = useRouter()
   const insets = useSafeAreaInsets()
+  const keyboardHeight = useKeyboardHeight()
 
   const [dataLoading, setDataLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -167,6 +171,13 @@ export default function DashboardScreen() {
   const [failedNoticesModalVisible, setFailedNoticesModalVisible] = useState(false)
   const [copiedPhoneTenantId, setCopiedPhoneTenantId] = useState<any | null>(null)
   const [isSendingSingleWhatsApp, setIsSendingSingleWhatsApp] = useState(false)
+  // PG Switcher and PG creation states
+  const [switchModalVisible, setSwitchModalVisible] = useState(false)
+  const [addPgModalVisible, setAddPgModalVisible] = useState(false)
+  const [newPgName, setNewPgName] = useState("")
+  const [newPgAddress, setNewPgAddress] = useState("")
+  const [newPgCity, setNewPgCity] = useState("")
+  const [isCreatingPg, setIsCreatingPg] = useState(false)
 
   // Filters State
   const [selectedFilter, setSelectedFilter] = useState<string>("This Month")
@@ -336,11 +347,12 @@ export default function DashboardScreen() {
   }, [])
 
   const fetchDashboardAggregates = useCallback(async () => {
-    if (!user?.id) return
+    if (!user?.id || !activePg?.id) return
 
+    const cacheKey = `${user.id}_${activePg.id}`
     const aggregates = await loadDashboardAggregates(
       supabase as unknown as SupabaseLike,
-      { ownerId: user.id },
+      { ownerId: user.id, pgId: activePg.id },
     )
 
     const hadError = applyAggregates(aggregates)
@@ -348,39 +360,40 @@ export default function DashboardScreen() {
     // Cache the last successful aggregate sections so a future mount can render
     // them immediately under Stale_While_Revalidate (Req 10.1, 10.2).
     if (!hadError) {
-      storeDashboardCache(user.id, aggregates)
+      storeDashboardCache(cacheKey, aggregates)
     }
 
     if (hadError) {
       showToast("Error", "Failed to retrieve dashboard data", "error")
     }
-  }, [user?.id, showToast, applyAggregates])
+  }, [user?.id, activePg?.id, showToast, applyAggregates])
 
-  // Stale-While-Revalidate: on mount (once user.id is available) render the last
+  // Stale-While-Revalidate: on mount (once user.id and activePg are available) render the last
   // successfully cached aggregates immediately so the dashboard is responsive before
-  // the network refetch completes (Req 10.1). The background refetch runs via
-  // useFocusEffect → fetchDashboardData and replaces these values on success (Req 10.2).
-  const hasRenderedCache = useRef(false)
+  // the network refetch completes (Req 10.1).
   useEffect(() => {
-    if (!user?.id || hasRenderedCache.current) return
-    hasRenderedCache.current = true
+    if (!user?.id || !activePg?.id) return
 
-    const cached = retrieveDashboardCache(user.id)
+    const cacheKey = `${user.id}_${activePg.id}`
+    const cached = retrieveDashboardCache(cacheKey)
     if (cached) {
       applyAggregates(cached)
-      return
+    } else {
+      // Clear current metrics so we don't display outdated property data while loading
+      applyAggregates({
+        summary: { ok: true, data: {} },
+        monthly: { ok: true, data: [] },
+        activity: { ok: true, data: [] }
+      })
+      void hydrateDashboardCache(cacheKey).then((snapshot) => {
+        if (snapshot) applyAggregates(snapshot)
+      })
     }
-
-    // No synchronous in-memory entry: hydrate from the persisted snapshot so a
-    // Cached_Aggregate from a previous session can still render immediately.
-    void hydrateDashboardCache(user.id).then((snapshot) => {
-      if (snapshot) applyAggregates(snapshot)
-    })
-  }, [user?.id, applyAggregates])
+  }, [user?.id, activePg?.id, applyAggregates])
 
   // Fetch all tables concurrently
   const fetchDashboardData = useCallback(async (silent = false) => {
-    if (!user?.id) {
+    if (!user?.id || !activePg?.id) {
       setDataLoading(false)
       return
     }
@@ -398,19 +411,20 @@ export default function DashboardScreen() {
         supabase
           .from("pg_details")
           .select("id")
-          .eq("owner_id", user.id),
+          .eq("id", activePg.id)
+          .maybeSingle(),
         supabase
           .from("tenants_table")
           .select("id, name, mobile_number, status, room_id, join_date, exit_date, deposit_amount, deposit_refund_amount, rent_due_day, rooms_table(id, room_number, rent_amount)")
-          .eq("owner_id", user.id),
+          .eq("pg_id", activePg.id),
         supabase
           .from("payments")
-          .select("*, tenants_table(name, mobile_number, rooms_table(room_number, rent_amount))")
-          .eq("owner_id", user.id),
+          .select("*, tenants_table!inner(name, mobile_number, pg_id, rooms_table(room_number, rent_amount))")
+          .eq("tenants_table.pg_id", activePg.id),
         supabase
           .from("complaints")
           .select("id, owner_id, complaint_message, status, owner_response, created_at, updated_at, tenant_phone")
-          .eq("owner_id", user.id),
+          .eq("pg_id", activePg.id),
         supabase
           .from("pg_owners")
           .select("chatbot_enabled")
@@ -419,7 +433,7 @@ export default function DashboardScreen() {
         supabase
           .from("leads")
           .select("*")
-          .eq("owner_id", user.id)
+          .eq("pg_id", activePg.id)
           .order("created_at", { ascending: false })
       ])
 
@@ -430,15 +444,14 @@ export default function DashboardScreen() {
       if (ownerRes.error && ownerRes.error.code !== "PGRST116") throw ownerRes.error
       if (leadsRes.error) throw leadsRes.error
 
-      const pgs = pgRes.data || []
-      const pgIds = pgs.map(p => p.id)
+      const roomsPgId = pgRes.data?.id
       
       let roomsData: any[] = []
-      if (pgIds.length > 0) {
+      if (roomsPgId) {
         const { data: rooms, error: roomsErr } = await supabase
           .from("rooms_table")
           .select("id, pg_id, room_number, total_beds, occupied_beds, status, rent_amount")
-          .in("pg_id", pgIds)
+          .eq("pg_id", roomsPgId)
         
         if (roomsErr) throw roomsErr
         roomsData = rooms || []
@@ -454,7 +467,7 @@ export default function DashboardScreen() {
       const chatbotApiUrl = getChatbotApiUrl()
       supabase.auth.getSession().then(({ data }) => {
         if (data.session?.access_token) {
-          fetch(`${chatbotApiUrl}/api/v1/chatbot/status`, {
+          fetch(`${chatbotApiUrl}/api/v1/chatbot/status?pgId=${activePg.id}`, {
             headers: {
               "Authorization": `Bearer ${data.session.access_token}`
             }
@@ -462,8 +475,8 @@ export default function DashboardScreen() {
         }
       })
       setLeads(leadsRes.data || [])
-      if (pgs.length > 0) {
-        setPgId(pgs[0].id)
+      if (roomsPgId) {
+        setPgId(roomsPgId)
       }
 
       hasLoadedOnce.current = true
@@ -474,40 +487,29 @@ export default function DashboardScreen() {
       setDataLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id, showToast, fetchDashboardAggregates])
+  }, [user?.id, activePg?.id, showToast, fetchDashboardAggregates])
 
   useFocusEffect(
     useCallback(() => {
-      if (isAuthenticated && user?.id) {
-        // Cache-first behavior is preserved elsewhere (hasRenderedCache renders cached
-        // aggregates immediately). Here the heavy raw-dataset fetch + chart/analytics work
-        // is deferred past the navigation transition / first interactive paint via the
-        // shared scheduler (Change A); it runs once per focus and is cancelled on
-        // blur-before-run so the load is neither dropped nor duplicated.
+      if (isAuthenticated && user?.id && activePg?.id) {
         const handle = scheduleAfterInteractions(() => {
           void fetchDashboardData(hasLoadedOnce.current)
         })
         return () => handle.cancel()
       }
-    }, [isAuthenticated, user?.id, fetchDashboardData])
+    }, [isAuthenticated, user?.id, activePg?.id, fetchDashboardData])
   )
 
   // Realtime subscribe
-  //
-  // A single trailing-edge debouncer is shared across every channel handler via a
-  // ref so that a burst of events from any subscribed table coalesces into exactly
-  // one refetch after the Debounce_Window (Req 11.1–11.5). The debounced action
-  // invalidates the Cached_Aggregate and then triggers the three-RPC refetch
-  // (Req 10.4). The subscribed tables and owner-scoped filters are unchanged so the
-  // existing realtime contract is preserved (Req 5.1, 5.2).
   const realtimeDebouncerRef = useRef<Debouncer | null>(null)
 
   useEffect(() => {
-    if (!user?.id) return
+    if (!user?.id || !activePg?.id) return
 
     const ownerId = user.id
+    const cacheKey = `${ownerId}_${activePg.id}`
     const debouncer = createDebouncer(() => {
-      invalidateDashboardCache(ownerId)
+      invalidateDashboardCache(cacheKey)
       void fetchDashboardAggregates()
     })
     realtimeDebouncerRef.current = debouncer
@@ -517,7 +519,7 @@ export default function DashboardScreen() {
     }
 
     const channel = supabase
-      .channel(`dashboard_owner_realtime_${ownerId}`)
+      .channel(`dashboard_owner_realtime_${ownerId}_${activePg.id}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "payments", filter: `owner_id=eq.${ownerId}` },
@@ -555,14 +557,13 @@ export default function DashboardScreen() {
       realtimeDebouncerRef.current = null
       void supabase.removeChannel(channel)
     }
-  }, [user?.id, fetchDashboardAggregates])
+  }, [user?.id, activePg?.id, fetchDashboardAggregates])
 
   const onRefresh = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
-    // Manual_Refresh: invalidate the Cached_Aggregate before refetching (Req 10.5).
-    if (user?.id) invalidateDashboardCache(user.id)
+    if (user?.id && activePg?.id) invalidateDashboardCache(`${user.id}_${activePg.id}`)
     void fetchDashboardData()
-  }, [fetchDashboardData, user?.id])
+  }, [fetchDashboardData, user?.id, activePg?.id])
 
   // Custom filter helper function
   const getDateRangeForFilter = useCallback((filter: string, customStartStr?: string, customEndStr?: string) => {
@@ -722,8 +723,12 @@ export default function DashboardScreen() {
     paymentsInRange.forEach(p => {
       const amt = Number(p.total_amount || 0)
       const paid = Number(p.amount_paid || 0)
-      collected += paid
-      pending += Math.max(0, amt - paid)
+      if (p.status === "paid") {
+        collected += amt
+      } else {
+        collected += paid
+        pending += Math.max(0, amt - paid)
+      }
     })
     expected = collected + pending
     
@@ -1406,7 +1411,7 @@ export default function DashboardScreen() {
         console.log("  - Phone:", cleanPhone)
         console.log("  - Token present:", !!token)
 
-        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1512,7 +1517,7 @@ export default function DashboardScreen() {
           console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-whatsapp-notice`)
 
           // Call backend REST endpoint
-          const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+          const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -1615,7 +1620,7 @@ export default function DashboardScreen() {
 
           console.log("[Bulk Notice Retry Debug] Sending to:", cleanPhone)
 
-          const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+          const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
             method: "POST",
             headers: {
               "Content-Type": "application/json",
@@ -1690,7 +1695,7 @@ export default function DashboardScreen() {
 
       showToast("Sending Retry", `Retrying notice for ${item.name}...`, "info")
 
-      const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+      const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2009,15 +2014,24 @@ export default function DashboardScreen() {
       >
         {/* Header */}
         <View className="px-6 pt-4 pb-4 flex-row justify-between items-center">
-          <View>
-            <Text className="text-xl font-black text-foreground dark:text-foreground-dark tracking-tight">
-              {headerGreeting}
+          <View className="flex-1 pr-3">
+            <Text className="text-xl font-black text-foreground dark:text-foreground-dark tracking-tight" numberOfLines={1}>
+              {activePg?.pg_name || "Staytraq Dashboard"}
             </Text>
             <Text className="text-[11px] text-muted dark:text-muted-dark font-bold uppercase tracking-wider mt-0.5">
               {headerDateStr}
             </Text>
           </View>
           <View className="flex-row gap-2">
+            <TouchableOpacity 
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                setSwitchModalVisible(true)
+              }}
+              className="h-9 w-9 border border-border dark:border-border-dark rounded-xl items-center justify-center bg-card dark:bg-card-dark"
+            >
+              <Building size={16} color={isDark ? "#0091ff" : "#0071df"} />
+            </TouchableOpacity>
             <TouchableOpacity 
               onPress={() => {
                 void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -3791,21 +3805,241 @@ export default function DashboardScreen() {
         </View>
       </Modal>
 
-      {/* Confirm Delete Record Modal */}
-      <ConfirmModal
-        visible={deleteConfirmVisible}
-        title="Delete Record"
-        message="Are you sure you want to permanently delete this transaction ledger row? This action is irreversible."
-        confirmText="Delete"
-        cancelText="Cancel"
-        isDestructive={true}
-        onConfirm={confirmDeletePayment}
-        onCancel={() => {
-          setDeleteConfirmVisible(false)
-          setDeletingPaymentId(null)
-        }}
-        icon={<Trash2 size={24} color="#ef4444" />}
-      />
+      {/* PG Switcher Modal */}
+      <Modal
+        visible={switchModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setSwitchModalVisible(false)}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setSwitchModalVisible(false)}
+          className="flex-1 bg-black/60 justify-end"
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+            className="bg-card dark:bg-card-dark border-t border-border dark:border-border-dark rounded-t-3xl max-h-[75%] p-6"
+          >
+            {/* Header */}
+            <View className="flex-row items-center justify-between border-b border-border/10 dark:border-border-dark/10 pb-4 mb-4">
+              <View>
+                <Text className="text-xl font-black text-foreground dark:text-foreground-dark">
+                  Switch Property
+                </Text>
+                <Text className="text-xs text-muted dark:text-muted-dark mt-0.5 font-bold">
+                  Select a property to view its dashboard
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSwitchModalVisible(false)}
+                className="h-8 w-8 bg-muted/10 dark:bg-muted-dark/10 rounded-full items-center justify-center"
+              >
+                <X size={18} color={isDark ? "#ffffff" : "#000000"} />
+              </TouchableOpacity>
+            </View>
+
+            {/* List of PGs */}
+            <ScrollView showsVerticalScrollIndicator={false} className="max-h-[350px]">
+              <View className="gap-2">
+                {pgsList.map((item) => {
+                  const isCurrent = item.id === activePg?.id
+                  return (
+                    <TouchableOpacity
+                      key={item.id}
+                      onPress={async () => {
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                        await selectPg(item.id)
+                        setSwitchModalVisible(false)
+                      }}
+                      className={`flex-row items-center justify-between p-4 rounded-2xl border ${
+                        isCurrent
+                          ? "bg-primary/10 border-primary"
+                          : "bg-card dark:bg-card-dark border-border dark:border-border-dark"
+                      }`}
+                    >
+                      <View className="flex-row items-center gap-3">
+                        <Building size={20} color={isCurrent ? (isDark ? "#0091ff" : "#0071df") : "#9ca3af"} />
+                        <Text className={`text-base font-black ${isCurrent ? "text-primary" : "text-foreground dark:text-foreground-dark"}`}>
+                          {item.pg_name}
+                        </Text>
+                      </View>
+                      {isCurrent && <Check size={18} color={isDark ? "#0091ff" : "#0071df"} />}
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+            </ScrollView>
+
+            {/* Add PG button */}
+            <TouchableOpacity
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+                setSwitchModalVisible(false)
+                setAddPgModalVisible(true)
+              }}
+              className="flex-row items-center justify-center p-4 bg-primary rounded-2xl gap-2 mt-4"
+            >
+              <Building size={18} color="#ffffff" />
+              <Text className="text-white font-black text-base">Add New PG Property</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* Add PG Modal */}
+      <Modal
+        visible={addPgModalVisible}
+        transparent={true}
+        animationType="none"
+        onRequestClose={() => setAddPgModalVisible(false)}
+      >
+        <View className="flex-1 justify-end">
+          <TouchableOpacity
+            activeOpacity={1}
+            onPress={() => setAddPgModalVisible(false)}
+            className="absolute bottom-0 left-0 right-0 top-0 bg-black/60"
+          />
+          <KeyboardAvoidingView
+            behavior="padding"
+            keyboardVerticalOffset={0}
+            className="w-full bg-card dark:bg-card-dark rounded-t-3xl border-t border-border dark:border-border-dark overflow-hidden"
+          >
+            {(() => {
+              const sheetMax = Math.min(
+                height * 0.92,
+                keyboardHeight > 0 ? height - keyboardHeight - insets.top : height * 0.85
+              )
+              return (
+                <View
+                  style={{ 
+                    maxHeight: sheetMax,
+                    paddingBottom: Math.max(24, insets.bottom)
+                  }}
+                  className="p-6"
+                >
+                  {/* Header */}
+                  <View className="flex-row items-center justify-between border-b border-border/10 dark:border-border-dark/10 pb-4 mb-4">
+                    <View>
+                      <Text className="text-xl font-black text-foreground dark:text-foreground-dark">
+                        Add New Property
+                      </Text>
+                      <Text className="text-xs text-muted dark:text-muted-dark mt-0.5 font-bold">
+                        Register a new PG accommodation under your account
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => setAddPgModalVisible(false)}
+                      className="h-8 w-8 bg-muted/10 dark:bg-muted-dark/10 rounded-full items-center justify-center"
+                    >
+                      <X size={18} color={isDark ? "#ffffff" : "#000000"} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Scrollable Form fields */}
+                  <ScrollView showsVerticalScrollIndicator={false} className="flex-grow-0">
+                    <View className="gap-4 py-1">
+                      <View>
+                        <Text className="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">
+                          Property (PG) Name
+                        </Text>
+                        <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark h-12">
+                          <Building size={20} color="#9ca3af" className="mr-3" />
+                          <TextInput
+                            value={newPgName}
+                            onChangeText={setNewPgName}
+                            placeholder="e.g. Staytraq Co-living"
+                            placeholderTextColor="#9ca3af"
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                            className="flex-1 text-base text-foreground dark:text-foreground-dark h-full"
+                          />
+                        </View>
+                      </View>
+
+                      <View>
+                        <Text className="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">
+                          Address
+                        </Text>
+                        <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark h-12">
+                          <MapPin size={20} color="#9ca3af" className="mr-3" />
+                          <TextInput
+                            value={newPgAddress}
+                            onChangeText={setNewPgAddress}
+                            placeholder="e.g. 123 Main St, Sector 2"
+                            placeholderTextColor="#9ca3af"
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                            className="flex-1 text-base text-foreground dark:text-foreground-dark h-full"
+                          />
+                        </View>
+                      </View>
+
+                      <View>
+                        <Text className="text-xs font-semibold text-muted dark:text-muted-dark uppercase tracking-wider mb-2">
+                          City
+                        </Text>
+                        <View className="flex-row items-center border border-border dark:border-border-dark rounded-xl px-3 bg-background dark:bg-background-dark h-12">
+                          <MapPin size={20} color="#9ca3af" className="mr-3" />
+                          <TextInput
+                            value={newPgCity}
+                            onChangeText={setNewPgCity}
+                            placeholder="e.g. Bangalore"
+                            placeholderTextColor="#9ca3af"
+                            autoCapitalize="words"
+                            autoCorrect={false}
+                            className="flex-1 text-base text-foreground dark:text-foreground-dark h-full"
+                          />
+                        </View>
+                      </View>
+                    </View>
+                  </ScrollView>
+
+                  {/* Action Buttons */}
+                  <View className="flex-row gap-3 mt-6">
+                    <TouchableOpacity
+                      onPress={() => setAddPgModalVisible(false)}
+                      className="flex-1 p-4 bg-muted/10 dark:bg-muted-dark/10 rounded-2xl items-center"
+                    >
+                      <Text className="font-bold text-foreground dark:text-foreground-dark text-base">Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      disabled={isCreatingPg || !newPgName.trim()}
+                      onPress={async () => {
+                        if (!newPgName.trim()) return
+                        setIsCreatingPg(true)
+                        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+                        const success = await createPg(newPgName, newPgAddress, newPgCity)
+                        setIsCreatingPg(false)
+                        if (success) {
+                          setNewPgName("")
+                          setNewPgAddress("")
+                          setNewPgCity("")
+                          setAddPgModalVisible(false)
+                          showToast("Success", "New property created successfully", "success")
+                          void fetchDashboardData()
+                        } else {
+                          showToast("Error", "Failed to create property", "error")
+                        }
+                      }}
+                      className={`flex-1 p-4 bg-primary rounded-2xl items-center justify-center ${
+                        (!newPgName.trim() || isCreatingPg) ? "opacity-50" : ""
+                      }`}
+                    >
+                      {isCreatingPg ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <Text className="font-bold text-white text-base">Add Property</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )
+            })()}
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       {/* Toast Notification Container */}
       {renderToast()}

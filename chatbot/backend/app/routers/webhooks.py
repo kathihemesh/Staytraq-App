@@ -75,7 +75,7 @@ class SendNoticeRequest(BaseModel):
     message: str
 
 @router.post("/send-whatsapp-notice")
-async def send_whatsapp_notice(payload: SendNoticeRequest, authorization: str = Header(None)):
+async def send_whatsapp_notice(payload: SendNoticeRequest, pgId: int = None, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -109,8 +109,17 @@ async def send_whatsapp_notice(payload: SendNoticeRequest, authorization: str = 
     if len(clean_phone) == 10:
         clean_phone = "91" + clean_phone
         
+    # Auto-resolve pgId from tenant if not provided
+    resolved_pg_id = pgId
+    if not resolved_pg_id:
+        tenant = await supabase_service.get_active_tenant(clean_phone, owner["id"])
+        if tenant and tenant.get("pg_id"):
+            resolved_pg_id = tenant.get("pg_id")
+            
+    instance_name = f"{owner_email}_{resolved_pg_id}" if resolved_pg_id else owner_email
+        
     success = await evolution_client.send_text_message(
-        instance_name=owner_email,
+        instance_name=instance_name,
         number=clean_phone,
         text=payload.message
     )
@@ -126,7 +135,7 @@ class SendGroupNoticeRequest(BaseModel):
     message: str
 
 @router.post("/send-group-notice")
-async def send_group_notice(payload: SendGroupNoticeRequest, authorization: str = Header(None)):
+async def send_group_notice(payload: SendGroupNoticeRequest, pgId: int = None, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -157,7 +166,7 @@ async def send_group_notice(payload: SendGroupNoticeRequest, authorization: str 
         )
         
     # Fetch owner settings to get whatsapp_invite_link
-    settings_data = await supabase_service.get_owner_settings(owner["id"])
+    settings_data = await supabase_service.get_owner_settings(owner["id"], pg_id=pgId)
     invite_link = settings_data.get("whatsapp_invite_link")
     if not invite_link:
         raise HTTPException(
@@ -165,9 +174,11 @@ async def send_group_notice(payload: SendGroupNoticeRequest, authorization: str 
             detail="WhatsApp invite link is not configured in settings."
         )
         
+    instance_name = f"{owner_email}_{pgId}" if pgId else owner_email
+        
     # Resolve the invite link to get group JID
     jid = await evolution_client.get_group_jid(
-        instance_name=owner_email,
+        instance_name=instance_name,
         invite_url=invite_link
     )
     if not jid:
@@ -178,7 +189,7 @@ async def send_group_notice(payload: SendGroupNoticeRequest, authorization: str 
         
     # Send message to the JID
     success = await evolution_client.send_text_message(
-        instance_name=owner_email,
+        instance_name=instance_name,
         number=jid,
         text=payload.message
     )
@@ -286,9 +297,12 @@ async def send_payment_rejection(payload: PaymentRejectionRequest, authorization
     if len(clean_phone) == 10:
         clean_phone = "91" + clean_phone
         
+    pg_id = tenant.get("pg_id")
+    instance_name = f"{owner_email}_{pg_id}" if pg_id else owner_email
+
     # 5. Send message via Evolution client
     success = await evolution_client.send_text_message(
-        instance_name=owner_email,
+        instance_name=instance_name,
         number=clean_phone,
         text=message
     )
@@ -376,8 +390,11 @@ async def send_whatsapp_notice_service(payload: SendNoticeServiceRequest, author
     if len(clean_phone) == 10:
         clean_phone = "91" + clean_phone
 
+    pg_id = tenant.get("pg_id")
+    instance_name = f"{owner_email}_{pg_id}" if pg_id else owner_email
+
     success = await evolution_client.send_text_message(
-        instance_name=owner_email,
+        instance_name=instance_name,
         number=clean_phone,
         text=payload.message
     )
@@ -393,7 +410,7 @@ async def send_whatsapp_notice_service(payload: SendNoticeServiceRequest, author
 # ==========================================
 
 @router.get("/chatbot/status")
-async def get_chatbot_status(authorization: str = Header(None)):
+async def get_chatbot_status(pgId: int = None, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -427,8 +444,10 @@ async def get_chatbot_status(authorization: str = Header(None)):
             "autoReplyEnabled": False
         }
 
+    instance_name = f"{owner_email}_{pgId}" if pgId else owner_email
+
     # Fetch status from Evolution API
-    evo_status = await evolution_client.get_instance_status(owner_email)
+    evo_status = await evolution_client.get_instance_status(instance_name)
     exists = evo_status.get("exists", False)
     connection_status = evo_status.get("status", "not_created")
     phone_number = evo_status.get("number")
@@ -450,7 +469,6 @@ async def get_chatbot_status(authorization: str = Header(None)):
             owner_id=owner["id"],
             chatbot_enabled=is_connected
         )
-            
     return {
         "status": "success",
         "exists": exists,
@@ -462,7 +480,7 @@ async def get_chatbot_status(authorization: str = Header(None)):
 
 
 @router.post("/chatbot/create")
-async def create_chatbot_instance(request: Request, authorization: str = Header(None)):
+async def create_chatbot_instance(request: Request, pgId: int = None, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -483,7 +501,7 @@ async def create_chatbot_instance(request: Request, authorization: str = Header(
             status_code=400,
             detail="User email not found in auth token"
         )
-
+ 
     owner = await supabase_service.get_owner_by_email(owner_email)
     if not owner:
         raise HTTPException(
@@ -491,11 +509,13 @@ async def create_chatbot_instance(request: Request, authorization: str = Header(
             detail="Owner profile not found in database"
         )
 
+    instance_name = f"{owner_email}_{pgId}" if pgId else owner_email
+
     # Check if instance already exists in Evolution API
-    evo_status = await evolution_client.get_instance_status(owner_email)
+    evo_status = await evolution_client.get_instance_status(instance_name)
     if not evo_status.get("exists"):
         # Create new instance
-        create_res = await evolution_client.create_instance(owner_email)
+        create_res = await evolution_client.create_instance(instance_name)
         if not create_res:
             raise HTTPException(
                 status_code=500,
@@ -504,7 +524,7 @@ async def create_chatbot_instance(request: Request, authorization: str = Header(
             
         # Register webhook
         webhook_url = settings.CHATBOT_WEBHOOK_URL or f"{str(request.base_url).rstrip('/')}/api/v1/whatsapp"
-        await evolution_client.register_webhook(owner_email, webhook_url)
+        await evolution_client.register_webhook(instance_name, webhook_url)
         
     return {
         "status": "success",
@@ -514,6 +534,7 @@ async def create_chatbot_instance(request: Request, authorization: str = Header(
 
 class PairingCodeRequest(BaseModel):
     phoneNumber: str
+    pgId: int = None
 
 
 @router.post("/chatbot/pairing-code")
@@ -547,13 +568,15 @@ async def generate_pairing_code(payload: PairingCodeRequest, authorization: str 
             detail="Invalid phone number provided."
         )
 
+    instance_name = f"{owner_email}_{payload.pgId}" if payload.pgId else owner_email
+
     # The Evolution API only returns a pairingCode when the instance is freshly
     # created (in 'close' state). If the instance is in 'connecting' state,
     # it returns pairingCode: null. So we must delete + recreate first.
     import asyncio
-    await evolution_client.delete_instance(owner_email)
+    await evolution_client.delete_instance(instance_name)
     await asyncio.sleep(2)
-    create_res = await evolution_client.create_instance(owner_email)
+    create_res = await evolution_client.create_instance(instance_name)
     if not create_res:
         raise HTTPException(
             status_code=500,
@@ -563,10 +586,10 @@ async def generate_pairing_code(payload: PairingCodeRequest, authorization: str 
 
     # Register webhook again after recreation
     webhook_url = f"{settings.CHATBOT_WEBHOOK_URL}"
-    await evolution_client.register_webhook(owner_email, webhook_url)
+    await evolution_client.register_webhook(instance_name, webhook_url)
 
     # Call Evolution API to generate pairing code
-    code_res = await evolution_client.get_pairing_code(owner_email, clean_phone)
+    code_res = await evolution_client.get_pairing_code(instance_name, clean_phone)
     if not code_res:
         raise HTTPException(
             status_code=500,
@@ -587,7 +610,7 @@ async def generate_pairing_code(payload: PairingCodeRequest, authorization: str 
     }
 
 @router.delete("/chatbot/delete")
-async def delete_chatbot_instance(authorization: str = Header(None)):
+async def delete_chatbot_instance(pgId: int = None, authorization: str = Header(None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=401,
@@ -616,8 +639,10 @@ async def delete_chatbot_instance(authorization: str = Header(None)):
             detail="Owner profile not found in database"
         )
 
+    instance_name = f"{owner_email}_{pgId}" if pgId else owner_email
+
     # Call Evolution API to delete
-    deleted = await evolution_client.delete_instance(owner_email)
+    deleted = await evolution_client.delete_instance(instance_name)
     
     # Force set chatbot_enabled = false in DB
     await supabase_service.update_owner_chatbot_settings(

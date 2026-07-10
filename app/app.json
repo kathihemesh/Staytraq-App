@@ -60,8 +60,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "302564da-ffd4-4684-a4da-8a8d51261d9a"
+        "projectId": "fdce4ec8-8ac9-481d-b772-8d693f8e039a"
       }
-    }
+    },
+    "owner": "hemesh909"
   }
 }

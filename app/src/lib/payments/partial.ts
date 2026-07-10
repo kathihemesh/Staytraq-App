@@ -40,6 +40,7 @@ export interface PartialPaymentLike {
 
 /** Remaining balance for a payment (never negative). */
 export function paymentBalance(p: PartialPaymentLike): number {
+  if (p.status === "paid") return 0
   const total = Number(p.total_amount) || 0
   const paid = Number(p.amount_paid) || 0
   return Math.max(total - paid, 0)

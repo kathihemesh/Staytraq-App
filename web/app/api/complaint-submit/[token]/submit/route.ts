@@ -54,7 +54,7 @@ export async function POST(
     // 2. Fetch active tenants under this owner to verify identity
     const { data: tenants, error: tenantsError } = await supabase
       .from('tenants_table')
-      .select('id, mobile_number')
+      .select('id, mobile_number, pg_id')
       .eq('owner_id', ownerRecord.id)
       .eq('status', 'active')
 
@@ -133,6 +133,7 @@ export async function POST(
       .from('complaints')
       .insert({
         owner_id: ownerRecord.id,
+        pg_id: matchedTenant.pg_id,
         tenant_phone: tenantPhoneDb,
         complaint_message: sanitizedMessage,
         status: 'Under Working',

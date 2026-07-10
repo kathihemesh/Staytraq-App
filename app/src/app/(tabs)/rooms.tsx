@@ -368,7 +368,7 @@ function RoomFieldRow(props: {
 /** --- Main screen --- */
 
 export default function RoomsScreen() {
-  const { user } = useAuth()
+  const { user, activePg } = useAuth()
   const params = useLocalSearchParams<{ status?: string; sort?: string }>()
   const { isDark, colorScheme } = useTheme()
   const insets = useSafeAreaInsets()
@@ -526,7 +526,7 @@ export default function RoomsScreen() {
   )
 
   const fetchData = useCallback(async (silent = false) => {
-    if (!user?.id) {
+    if (!user?.id || !activePg?.id) {
       setIsLoading(false)
       setIsRefreshing(false)
       return
@@ -542,13 +542,13 @@ export default function RoomsScreen() {
       // Fetch pg_details and tenants concurrently
       const [pgResult, tenantsResult] = await Promise.all([
         runWithNetworkRetry(() =>
-          supabase.from("pg_details").select("id, no_floors").eq("owner_id", user.id).maybeSingle(),
+          supabase.from("pg_details").select("id, no_floors").eq("id", activePg.id).maybeSingle(),
         ),
         runWithNetworkRetry(() =>
           supabase
             .from("tenants_table")
             .select("id, name, mobile_number, email, room_id, join_date, status, extra_charges, exit_date")
-            .eq("owner_id", user.id)
+            .eq("pg_id", activePg.id)
             .neq("status", "move_out"),
         )
       ])
@@ -610,11 +610,11 @@ export default function RoomsScreen() {
       setIsRefreshing(false)
       setHasLoadedOnce(true)
     }
-  }, [user?.id, hasLoadedOnce])
+  }, [user?.id, activePg?.id, hasLoadedOnce])
 
   useFocusEffect(
     useCallback(() => {
-      if (user?.id) {
+      if (user?.id && activePg?.id) {
         // Defer the on-focus fetch past the navigation transition / first interactive
         // paint so it no longer blocks the destination's first paint (Change A). The
         // cached/skeleton shell renders first; the load runs once per focus afterwards
@@ -624,7 +624,7 @@ export default function RoomsScreen() {
         })
         return () => handle.cancel()
       }
-    }, [user?.id, fetchData, hasLoadedOnce])
+    }, [user?.id, activePg?.id, fetchData, hasLoadedOnce])
   )
 
   const selectedRoomIdRef = useRef<string | null>(null)

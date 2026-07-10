@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase"
 import * as WebBrowser from "expo-web-browser"
 import * as Linking from "expo-linking"
 import type { User, Session } from "@supabase/supabase-js"
+import * as SecureStore from "expo-secure-store"
 
 type OnboardingStatus = "unknown" | "onboarded" | "not_onboarded"
 
@@ -19,6 +20,11 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<{ success: boolean; error?: string }>
   logout: () => Promise<void>
   checkOnboardingStatus: (userId: string) => Promise<boolean>
+  activePg: { id: number; pg_name: string } | null
+  pgsList: { id: number; pg_name: string }[]
+  selectPg: (pgId: number) => Promise<void>
+  refreshPgs: () => Promise<void>
+  createPg: (pgName: string, address: string, city: string) => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -35,6 +41,91 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const sessionRef = useRef<Session | null>(null)
   const userIdRef = useRef<string | null>(null)
   const logoutInFlightRef = useRef(false)
+
+  const [pgsList, setPgsList] = useState<{ id: number; pg_name: string }[]>([])
+  const [activePg, setActivePg] = useState<{ id: number; pg_name: string } | null>(null)
+
+  const refreshPgs = useCallback(async () => {
+    if (!userIdRef.current) return
+    try {
+      const { data, error } = await supabase
+        .from("pg_details")
+        .select("id, pg_name")
+        .eq("owner_id", userIdRef.current)
+      
+      if (error) throw error
+      
+      const list = data || []
+      setPgsList(list)
+      
+      if (list.length > 0) {
+        const savedIdStr = await SecureStore.getItemAsync("activePgId")
+        const savedId = savedIdStr ? parseInt(savedIdStr, 10) : null
+        
+        let found = list.find(p => p.id === savedId)
+        if (!found) {
+          found = list[0]
+        }
+        setActivePg(found)
+        await SecureStore.setItemAsync("activePgId", String(found.id))
+      } else {
+        setActivePg(null)
+      }
+    } catch (err) {
+      console.error("Failed to refresh PGs:", err)
+    }
+  }, [])
+
+  const selectPg = useCallback(async (pgId: number) => {
+    const found = pgsList.find(p => p.id === pgId)
+    if (found) {
+      setActivePg(found)
+      await SecureStore.setItemAsync("activePgId", String(pgId))
+    }
+  }, [pgsList])
+
+  const createPg = useCallback(async (pgName: string, address: string, city: string) => {
+    if (!userIdRef.current) return false
+    try {
+      // 1. Insert new property
+      const { data: newPg, error: pgErr } = await supabase
+        .from("pg_details")
+        .insert({
+          owner_id: userIdRef.current,
+          pg_name: pgName.trim(),
+          address: address.trim(),
+          city: city.trim()
+        })
+        .select("id, pg_name")
+        .single()
+      
+      if (pgErr) throw pgErr
+      if (!newPg) throw new Error("Failed to insert PG details")
+      
+      // 2. Insert default settings for the new property
+      const { error: settingsErr } = await supabase
+        .from("settings")
+        .insert({
+          owner_id: userIdRef.current,
+          pg_id: newPg.id,
+          rent_due_day: 5,
+          default_deposit_fees: 0,
+          refund_deposit: 0
+        })
+      
+      if (settingsErr) throw settingsErr
+      
+      // 3. Refresh list and set new PG as active
+      const updatedList = [...pgsList, newPg]
+      setPgsList(updatedList)
+      setActivePg(newPg)
+      await SecureStore.setItemAsync("activePgId", String(newPg.id))
+      return true
+    } catch (err) {
+      console.error("Failed to create PG:", err)
+      return false
+    }
+  }, [pgsList])
   
   const checkOnboardingStatus = useCallback(async (userId: string) => {
     try {
@@ -51,6 +142,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const response = await Promise.race([fetchPromise, timeoutPromise]) as any
       const onboarded = !!response?.data?.is_onboarded
       setOnboardingStatus(onboarded ? "onboarded" : "not_onboarded")
+
+      if (onboarded) {
+        // Fetch properties list immediately
+        const { data, error } = await supabase
+          .from("pg_details")
+          .select("id, pg_name")
+          .eq("owner_id", userId)
+        
+        if (!error && data) {
+          setPgsList(data)
+          if (data.length > 0) {
+            const savedIdStr = await SecureStore.getItemAsync("activePgId")
+            const savedId = savedIdStr ? parseInt(savedIdStr, 10) : null
+            let found = data.find(p => p.id === savedId)
+            if (!found) found = data[0]
+            setActivePg(found)
+            await SecureStore.setItemAsync("activePgId", String(found.id))
+          } else {
+            setActivePg(null)
+          }
+        }
+      }
+
       return onboarded
     } catch (error) {
       console.error("Onboarding status check failed/timed out:", error)
@@ -319,6 +433,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null)
       setIsAuthenticated(false)
       setOnboardingStatus("unknown")
+      setPgsList([])
+      setActivePg(null)
     }
 
     try {
@@ -350,7 +466,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       signInWithGoogle,
       logout,
-      checkOnboardingStatus
+      checkOnboardingStatus,
+      activePg,
+      pgsList,
+      selectPg,
+      refreshPgs,
+      createPg
     }}>
       {children}
     </AuthContext.Provider>

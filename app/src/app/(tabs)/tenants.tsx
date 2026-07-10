@@ -6,7 +6,7 @@ import { useAuth } from "@/context/auth"
 import { supabase } from "@/lib/supabase"
 import { scheduleAfterInteractions } from "@/lib/focus-fetch-scheduler"
 import { deriveIdentityRequestFlag, maskIdentityCode, selectDisplayCode } from "@/lib/identity/verify"
-import { popupStatusPresentation, shouldShowIgnoreButton, applyIgnore, viewerHasSlideControl } from "@/lib/identity/popup"
+import { popupStatusPresentation, shouldShowIgnoreButton, applyIgnore, viewerHasSlideControl, type VerificationStatus } from "@/lib/identity/popup"
 import { ensureVerificationToken, buildVerificationLink } from "@/lib/identity/token"
 import { normalizeWhatsAppNumber, sendIdentityRequest } from "@/lib/identity/message"
 import { Plus, X, Search, Phone, Mail, Calendar, CreditCard, ChevronRight, User, Hotel, Edit3, Trash2, Camera, Upload, Check, AlertTriangle, Info, Maximize2, Copy, Clock, ShieldCheck, LogOut, DollarSign, Lock, Eye, EyeOff } from "lucide-react-native"
@@ -72,8 +72,8 @@ type Tenant = {
   id_documents?: any
   identity_request_flag?: boolean | null
   ignore_identity_flag?: boolean | null
-  verification_status?: "Not_Started" | "In_Progress" | "Verified" | "Ignored" | null
-  identity_type?: "Aadhaar" | "PAN" | null
+  verification_status?: string | null
+  identity_type?: string | null
   aadhaar_number?: string | null
   pan_code?: string | null
   id_front_path?: string | null
@@ -183,7 +183,7 @@ const getPaymentStatusMeta = (status: string | null | undefined) => {
 
 export default function TenantsScreen() {
   const { isDark } = useTheme()
-  const { user } = useAuth()
+  const { user, activePg } = useAuth()
   const { tenant: tenantParam, status: statusParam, search: searchParam } = useLocalSearchParams<{ tenant?: string; status?: string; search?: string }>()
   const { height } = useWindowDimensions()
   const insets = useSafeAreaInsets()
@@ -542,7 +542,7 @@ export default function TenantsScreen() {
   }
 
   const fetchData = useCallback(async (isRefresh = false) => {
-    if (!user?.id) {
+    if (!user?.id || !activePg?.id) {
       setLoading(false)
       return
     }
@@ -561,18 +561,18 @@ export default function TenantsScreen() {
         supabase
           .from("pg_details")
           .select("id, pg_name")
-          .eq("owner_id", user.id)
+          .eq("id", activePg.id)
           .maybeSingle(),
         supabase
           .from("tenants_table")
           .select("*, rooms_table(id, room_number, rent_amount)")
-          .eq("owner_id", user.id)
+          .eq("pg_id", activePg.id)
           .is("deleted_at", null)
           .order("name", { ascending: true }),
         supabase
           .from("settings")
           .select("whatsapp_invite_link, upi_id, upi_name, rent_due_day, refund_deposit, default_deposit_fees")
-          .eq("owner_id", user.id)
+          .eq("pg_id", activePg.id)
           .maybeSingle(),
         supabase
           .from("monthly_payment_links")
@@ -909,7 +909,7 @@ export default function TenantsScreen() {
     if (!phone) return false
 
     const chatbotApiUrl = getChatbotApiUrl()
-    const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+    const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1115,7 +1115,7 @@ export default function TenantsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (user?.id) {
+      if (user?.id && activePg?.id) {
         // Defer the on-focus fetch past the navigation transition / first interactive
         // paint (Change A); cached/skeleton content renders first, then the load runs
         // once per focus and is cancelled on blur-before-run (no drop, no duplicate).
@@ -1124,12 +1124,12 @@ export default function TenantsScreen() {
         })
         return () => handle.cancel()
       }
-    }, [user?.id, fetchData])
+    }, [user?.id, activePg?.id, fetchData])
   )
 
   // Realtime subscription
   useEffect(() => {
-    if (!pgId || !user?.id) return
+    if (!pgId || !user?.id || !activePg?.id) return
 
     const channel = supabase
       .channel(`tenants_realtime_${pgId}`)
@@ -1145,7 +1145,7 @@ export default function TenantsScreen() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [pgId, user?.id, fetchData])
+  }, [pgId, user?.id, activePg?.id, fetchData])
 
   const handleCallTenant = async (mobile: string | null) => {
     if (!mobile) return
@@ -1787,7 +1787,7 @@ export default function TenantsScreen() {
         { id: tenant.id, name: tenant.name, mobile_number: tenant.mobile_number },
         link,
         sessionToken,
-        { db: supabase, pgName }
+        { db: supabase, pgName, pgId: activePg?.id }
       )
     } catch (e) {
       console.error("Identity request failed:", e)
@@ -2126,7 +2126,7 @@ export default function TenantsScreen() {
     const target = selectedTenant
     const prevState = {
       identity_request_flag: !!target.identity_request_flag,
-      verification_status: target.verification_status || "Not_Started",
+      verification_status: (target.verification_status || "Not_Started") as VerificationStatus,
       ignore_identity_flag: !!target.ignore_identity_flag,
     }
     const nextState = applyIgnore(prevState)
@@ -2450,7 +2450,7 @@ export default function TenantsScreen() {
         console.log("  - Phone:", formattedPhone)
         console.log("  - Token present:", !!token)
         
-        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -2508,7 +2508,7 @@ export default function TenantsScreen() {
         console.log("  - Phone:", formattedPhone)
         console.log("  - Token present:", !!token)
 
-        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -3409,7 +3409,7 @@ export default function TenantsScreen() {
                     {(() => {
                       const statusPresentation = popupStatusPresentation({
                         identity_request_flag: !!selectedTenant.identity_request_flag,
-                        verification_status: selectedTenant.verification_status || "Not_Started",
+                        verification_status: (selectedTenant.verification_status || "Not_Started") as VerificationStatus,
                         ignore_identity_flag: !!selectedTenant.ignore_identity_flag,
                       })
                       const displayCode = selectDisplayCode({
@@ -3577,7 +3577,7 @@ export default function TenantsScreen() {
                               {/* "Ignore identity" action — shown only when reminders can still be stopped (Req 15.1, 15.4, 15.5) */}
                               {shouldShowIgnoreButton({
                                 identity_request_flag: !!selectedTenant.identity_request_flag,
-                                verification_status: selectedTenant.verification_status || "Not_Started",
+                                verification_status: (selectedTenant.verification_status || "Not_Started") as VerificationStatus,
                                 ignore_identity_flag: !!selectedTenant.ignore_identity_flag,
                               }) && (
                                 <TouchableOpacity
@@ -4031,7 +4031,16 @@ export default function TenantsScreen() {
                 <View className="flex-1">
                   <ThemeDatePicker
                     value={joinDate}
-                    onChange={setJoinDate}
+                    onChange={(val: string) => {
+                      setJoinDate(val)
+                      // Auto-sync rent due day to the join date's day
+                      if (val) {
+                        const day = new Date(val).getDate()
+                        if (day >= 1 && day <= 28) {
+                          setRentDueDay(String(day))
+                        }
+                      }
+                    }}
                     label="Join Date"
                     placeholder="YYYY-MM-DD"
                   />

@@ -74,7 +74,7 @@ export async function POST(
     // 2. Fetch active tenants under this owner to find a mobile number match
     const { data: tenants, error: tenantsError } = await supabase
       .from('tenants_table')
-      .select('id, name, mobile_number')
+      .select('id, name, mobile_number, pg_id, pg_details(pg_name)')
       .eq('owner_id', ownerRecord.id)
       .eq('status', 'active')
 
@@ -100,19 +100,23 @@ export async function POST(
       return NextResponse.json({ error: 'No tenant found matching this mobile number. Please check or contact the property owner.' }, { status: 404 })
     }
 
-    // 3. Fetch past complaints submitted by this tenant
+    // 3. Fetch past complaints submitted by this tenant for their specific property
     const { data: pastComplaints, error: complaintsError } = await supabase
       .from('complaints')
       .select('id, complaint_message, status, owner_response, created_at')
-      .eq('owner_id', ownerRecord.id)
+      .eq('pg_id', matchedTenant.pg_id)
       .eq('tenant_phone', cleanInput.slice(-10))
       .order('created_at', { ascending: false })
+
+    const tenantPgDetails = matchedTenant.pg_details
+    const pgDetails = Array.isArray(tenantPgDetails) ? tenantPgDetails[0] : tenantPgDetails
 
     return NextResponse.json({
       success: true,
       tenant: {
         name: matchedTenant.name || 'Tenant'
       },
+      pg_name: pgDetails?.pg_name || null,
       complaints: pastComplaints || []
     })
 

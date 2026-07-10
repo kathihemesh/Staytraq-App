@@ -15,7 +15,7 @@ async function resolveTenantTokenPayload(
 ) {
   const { data: tenant } = await supabase
     .from('tenants_table')
-    .select('id, name, owner_id, payment_code, status, rooms_table ( room_number )')
+    .select('id, name, owner_id, pg_id, payment_code, status, rooms_table ( room_number )')
     .eq('payment_portal_token', token)
     .maybeSingle()
 
@@ -25,12 +25,12 @@ async function resolveTenantTokenPayload(
     supabase
       .from('settings')
       .select('upi_id, upi_name, payment_instructions, is_merchant')
-      .eq('owner_id', tenant.owner_id)
+      .eq('pg_id', tenant.pg_id)
       .maybeSingle(),
     supabase
       .from('pg_details')
       .select('pg_name')
-      .eq('owner_id', tenant.owner_id)
+      .eq('id', tenant.pg_id)
       .maybeSingle(),
     supabase
       .from('payments')

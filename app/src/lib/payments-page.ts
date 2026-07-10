@@ -118,6 +118,7 @@ export interface PageArgs {
   search_term: string
   page_size: number
   page_offset: number
+  p_pg_id?: number | null
 }
 
 /** RPC argument object for `get_payment_month_summary`. */
@@ -125,6 +126,7 @@ export interface SummaryArgs {
   owner_id: string
   p_month: number
   p_year: number
+  p_pg_id?: number | null
 }
 
 /**
@@ -153,6 +155,7 @@ export function buildPageArgs(
   ownerId: string,
   filters: PaymentFilters,
   pageOffset: number,
+  pgId?: number | null,
 ): PageArgs {
   return {
     owner_id: ownerId,
@@ -162,15 +165,17 @@ export function buildPageArgs(
     search_term: filters.search,
     page_size: PAGE_SIZE,
     page_offset: pageOffset,
+    p_pg_id: pgId,
   }
 }
 
 /** Pure: build the `get_payment_month_summary` RPC args for a filter set. */
-export function buildSummaryArgs(ownerId: string, filters: PaymentFilters): SummaryArgs {
+export function buildSummaryArgs(ownerId: string, filters: PaymentFilters, pgId?: number | null): SummaryArgs {
   return {
     owner_id: ownerId,
     p_month: filters.month,
     p_year: filters.year,
+    p_pg_id: pgId,
   }
 }
 

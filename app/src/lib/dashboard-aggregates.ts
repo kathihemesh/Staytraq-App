@@ -88,6 +88,7 @@ export interface DashboardAggregates {
 /** Options accepted by `loadDashboardAggregates`. */
 export interface LoadDashboardOptions {
   ownerId: string
+  pgId?: number | null
   /** Months of monthly-collection history to request. Default 6 (Req 2.1). */
   monthsBack?: number
   /** Max recent-activity rows to request. Default 7 (Req 3.2). */
@@ -217,16 +218,17 @@ export async function loadDashboardAggregates(
   supabase: SupabaseLike,
   opts: LoadDashboardOptions,
 ): Promise<DashboardAggregates> {
-  const { ownerId, monthsBack = DEFAULT_MONTHS_BACK, limitCount = DEFAULT_LIMIT_COUNT } = opts
+  const { ownerId, pgId, monthsBack = DEFAULT_MONTHS_BACK, limitCount = DEFAULT_LIMIT_COUNT } = opts
   const call = opts.call ?? identityCall
 
   const [summarySettled, monthlySettled, activitySettled] = await Promise.allSettled([
-    call(() => Promise.resolve(supabase.rpc("get_dashboard_summary", { owner_id: ownerId }))),
+    call(() => Promise.resolve(supabase.rpc("get_dashboard_summary", { owner_id: ownerId, p_pg_id: pgId }))),
     call(() =>
       Promise.resolve(
         supabase.rpc("get_dashboard_monthly_collection", {
           owner_id: ownerId,
           months_back: monthsBack,
+          p_pg_id: pgId,
         }),
       ),
     ),
@@ -235,6 +237,7 @@ export async function loadDashboardAggregates(
         supabase.rpc("get_dashboard_recent_activity", {
           owner_id: ownerId,
           limit_count: limitCount,
+          p_pg_id: pgId,
         }),
       ),
     ),

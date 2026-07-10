@@ -49,6 +49,8 @@ export interface SendIdentityRequestDeps {
   maxAttempts?: number
   /** The owner's PG name, embedded in the message in place of the brand name. */
   pgName?: string | null
+  /** Active property ID to route to the correct WhatsApp instance. */
+  pgId?: number | null
 }
 
 /**
@@ -125,12 +127,16 @@ async function attemptSend(params: {
   message: string
   sessionToken: string
   timeoutMs: number
+  pgId?: number | null
 }): Promise<boolean> {
-  const { fetchImpl, chatbotApiUrl, phone, message, sessionToken, timeoutMs } = params
+  const { fetchImpl, chatbotApiUrl, phone, message, sessionToken, timeoutMs, pgId } = params
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetchImpl(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+    const url = pgId
+      ? `${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${pgId}`
+      : `${chatbotApiUrl}/api/v1/send-whatsapp-notice`
+    const response = await fetchImpl(url, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -171,7 +177,8 @@ export async function sendIdentityRequest(
     chatbotApiUrl = resolveChatbotApiUrl(),
     timeoutMs = ATTEMPT_TIMEOUT_MS,
     maxAttempts = MAX_SEND_ATTEMPTS,
-    pgName = null
+    pgName = null,
+    pgId = null
   } = deps
 
   // No mobile number → do not attempt; record failure; keep flag (Req 3.2).
@@ -198,7 +205,8 @@ export async function sendIdentityRequest(
       phone,
       message,
       sessionToken,
-      timeoutMs
+      timeoutMs,
+      pgId
     })
     if (ok) {
       // Stop at the first success (Req 3.4).

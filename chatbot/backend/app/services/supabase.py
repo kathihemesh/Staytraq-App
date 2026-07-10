@@ -49,13 +49,15 @@ class SupabaseService:
                 logger.error(f"Failed to query owner by id: {e}")
         return None
 
-    async def get_active_tenant(self, phone_number: str, owner_id: str) -> dict:
-        """Looks up active tenant under the owner by phone number (last 10 digits match)."""
+    async def get_active_tenant(self, phone_number: str, owner_id: str, pg_id: int = None) -> dict:
+        """Looks up active tenant under the owner by phone number (last 10 digits match) and optionally pg_id."""
         if not phone_number or not owner_id:
             return None
 
         # Retrieve active tenants under this owner
         url = f"{self.url}/rest/v1/tenants_table?owner_id=eq.{owner_id}&status=eq.active&select=id,name,mobile_number,pg_id,room_id"
+        if pg_id is not None:
+            url += f"&pg_id=eq.{pg_id}"
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(url, headers=self.headers, timeout=10.0)
@@ -174,13 +176,21 @@ class SupabaseService:
         clean_phone = "".join(c for c in tenant_phone if c.isdigit())
         tenant_phone_db = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
         
+        # Lookup active tenant to find pg_id
+        pg_id = None
+        tenant = await self.get_active_tenant(tenant_phone, owner_id)
+        if tenant:
+            pg_id = tenant.get("pg_id")
+        
         payload = {
             "owner_id": owner_id,
             "tenant_phone": tenant_phone_db,
             "complaint_message": message,
             "status": "Under Working"
         }
-        
+        if pg_id is not None:
+            payload["pg_id"] = pg_id
+            
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(url, json=payload, headers=self.headers, timeout=10.0)
@@ -198,7 +208,17 @@ class SupabaseService:
         clean_phone = "".join(c for c in tenant_phone if c.isdigit())
         tenant_phone_db = clean_phone[-10:] if len(clean_phone) >= 10 else clean_phone
         
-        url = f"{self.url}/rest/v1/complaints?owner_id=eq.{owner_id}&tenant_phone=eq.{tenant_phone_db}&order=created_at.desc&limit=5"
+        # Lookup active tenant to find pg_id
+        pg_id = None
+        tenant = await self.get_active_tenant(tenant_phone, owner_id)
+        if tenant:
+            pg_id = tenant.get("pg_id")
+            
+        url = f"{self.url}/rest/v1/complaints?owner_id=eq.{owner_id}&tenant_phone=eq.{tenant_phone_db}"
+        if pg_id is not None:
+            url += f"&pg_id=eq.{pg_id}"
+        url += "&order=created_at.desc&limit=5"
+        
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(url, headers=self.headers, timeout=10.0)
@@ -258,9 +278,12 @@ class SupabaseService:
                 logger.error(f"Failed to query lead: {e}")
         return None
 
-    async def get_owner_settings(self, owner_id: str) -> dict:
+    async def get_owner_settings(self, owner_id: str, pg_id: int = None) -> dict:
         """Retrieves settings details for the owner."""
-        url = f"{self.url}/rest/v1/settings?owner_id=eq.{owner_id}&select=grace_period_days,default_deposit_fees,refund_deposit,rent_due_day,payment_instructions,upi_id,upi_name,whatsapp_invite_link"
+        url = f"{self.url}/rest/v1/settings?owner_id=eq.{owner_id}"
+        if pg_id is not None:
+            url += f"&pg_id=eq.{pg_id}"
+        url += "&select=grace_period_days,default_deposit_fees,refund_deposit,rent_due_day,payment_instructions,upi_id,upi_name,whatsapp_invite_link"
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.get(url, headers=self.headers, timeout=10.0)

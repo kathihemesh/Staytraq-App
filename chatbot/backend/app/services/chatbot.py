@@ -99,18 +99,27 @@ class ChatbotService:
         self.redis = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
         self.session_ttl = 259200  # Sessions expire in 3 days (3 * 24 * 3600)
 
-    def _get_owner_pg_info(self, owner_email: str) -> dict:
-        """Helper to get static info for a specific owner or fallback to default."""
+    def _get_owner_pg_info(self, owner_email: str, pg_id: int = None) -> dict:
+        """Helper to get static info for a specific owner/PG or fallback to default."""
         email = (owner_email or "").strip().lower()
         
         current_dir = os.path.dirname(os.path.abspath(__file__))
         configs_dir = os.path.abspath(os.path.join(current_dir, "..", "pg_configs"))
         
-        # Build path to owner's JSON file
+        # Try loading PG-specific config first
+        if email and pg_id is not None:
+            owner_pg_file_path = os.path.join(configs_dir, f"{email}_{pg_id}.json")
+            if os.path.exists(owner_pg_file_path):
+                try:
+                    with open(owner_pg_file_path, "r", encoding="utf-8") as f:
+                        return json.load(f)
+                except Exception as e:
+                    logger.error(f"Error loading owner pg info from {owner_pg_file_path}: {e}")
+
+        # Try loading owner-specific config next
         owner_file_path = os.path.join(configs_dir, f"{email}.json")
         default_file_path = os.path.join(configs_dir, "default.json")
         
-        # Try loading owner-specific config first
         if email and os.path.exists(owner_file_path):
             try:
                 with open(owner_file_path, "r", encoding="utf-8") as f:
@@ -401,33 +410,40 @@ class ChatbotService:
         
         if norm_phone in norm_global:
             logger.info(f"Ignoring message from globally blocked number: {clean_phone}")
-            return None
+            retur        # 1. Look up Owner by email (extracted from instance_name with optional _pgId suffix)
+        email = instance_name
+        pg_id = None
+        if "_" in instance_name:
+            parts = instance_name.split("_")
+            if parts[-1].isdigit():
+                pg_id = int(parts[-1])
+                email = "_".join(parts[:-1])
 
-        # 1. Look up Owner by email (instance_name)
-        owner_record = await supabase_service.get_owner_by_email(instance_name)
+        owner_record = await supabase_service.get_owner_by_email(email)
         if not owner_record:
-            logger.warning(f"No owner found for instance name (email): {instance_name}. Ignoring message.")
+            logger.warning(f"No owner found for instance name (email): {email}. Ignoring message.")
             return None
 
         # Check if chatbot is enabled and auto-replies are enabled for the owner
         if not owner_record.get("chatbot_enabled") or not owner_record.get("auto_reply_enabled", True):
-            logger.info(f"Chatbot or auto-reply is disabled for owner: {instance_name}. Ignoring message.")
+            logger.info(f"Chatbot or auto-reply is disabled for owner: {email}. Ignoring message.")
             return None
  
         owner_id = owner_record.get("id")
         owner_name = owner_record.get("name", "PG Manager")
 
         # 2. Determine User Type (Tenant vs Customer)
-        tenant_record = await supabase_service.get_active_tenant(clean_phone, owner_id)
+        tenant_record = await supabase_service.get_active_tenant(clean_phone, owner_id, pg_id=pg_id)
         is_tenant = tenant_record is not None
 
         # 3. Retrieve Session
         session = await self.get_session(sender_jid)
         session["owner_id"] = owner_id
+        session["pg_id"] = pg_id
         session["user_type"] = "tenant" if is_tenant else "customer"
 
         # 4. Fetch DB and Configuration Contexts
-        static_info = self._get_owner_pg_info(instance_name)
+        static_info = self._get_owner_pg_info(email, pg_id=pg_id)
         
         # Check owner-specific blocklist
         owner_blocklist = static_info.get("blocklist") or []

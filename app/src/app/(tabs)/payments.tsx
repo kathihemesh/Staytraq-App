@@ -252,7 +252,7 @@ const getPaymentStatusMeta = (status: string | null | undefined) => {
 }
 
 export default function PaymentsScreen() {
-  const { user } = useAuth()
+  const { user, activePg } = useAuth()
   const params = useLocalSearchParams<{ search?: string; status?: string }>()
   const { isDark } = useTheme()
   const { height } = useWindowDimensions()
@@ -547,7 +547,7 @@ export default function PaymentsScreen() {
   }, [user?.id])
 
   const fetchPayments = useCallback(async (silent = false) => {
-    if (!user?.id) {
+    if (!user?.id || !activePg?.id) {
       setLoading(false)
       return
     }
@@ -570,12 +570,12 @@ export default function PaymentsScreen() {
       // concurrently. The unbounded `from("payments").select("*")` is replaced by
       // fetchPaymentsPage; the carousel totals come from fetchMonthSummary (Req 5.5).
       const [pageResult, summaryResult, tenantResult, linkResult, pgResult, ownerResult, settingsResult] = await Promise.all([
-        fetchPaymentsPage(supabase as unknown as SupabaseLike, buildPageArgs(user.id, activeFilters, 0)),
-        fetchMonthSummary(supabase as unknown as SupabaseLike, buildSummaryArgs(user.id, activeFilters)),
+        fetchPaymentsPage(supabase as unknown as SupabaseLike, buildPageArgs(user.id, activeFilters, 0, activePg.id)),
+        fetchMonthSummary(supabase as unknown as SupabaseLike, buildSummaryArgs(user.id, activeFilters, activePg.id)),
         supabase
           .from("tenants_table")
           .select("id, name, extra_charges, rooms_table(room_number, rent_amount)")
-          .eq("owner_id", user.id)
+          .eq("pg_id", activePg.id)
           .eq("status", "active")
           .order("name", { ascending: true }),
         supabase
@@ -588,7 +588,7 @@ export default function PaymentsScreen() {
         supabase
           .from("pg_details")
           .select("pg_name")
-          .eq("owner_id", user.id)
+          .eq("id", activePg.id)
           .maybeSingle(),
         supabase
           .from("pg_owners")
@@ -598,7 +598,7 @@ export default function PaymentsScreen() {
         supabase
           .from("settings")
           .select("whatsapp_invite_link")
-          .eq("owner_id", user.id)
+          .eq("pg_id", activePg.id)
           .maybeSingle()
       ])
 
@@ -652,12 +652,12 @@ export default function PaymentsScreen() {
       setLoading(false)
       setIsRefreshing(false)
     }
-  }, [user?.id])
+  }, [user?.id, activePg?.id])
 
   // Load the next page for the current filters and append it (Req 4.2, 4.3). Keeps
   // the currently displayed rows visible; a short page marks the list fully loaded.
   const loadMorePayments = useCallback(async () => {
-    if (!user?.id) return
+    if (!user?.id || !activePg?.id) return
     const current = pageStateRef.current
     if (current.fullyLoaded || isLoadingMore || current.rows.length === 0) return
 
@@ -671,7 +671,7 @@ export default function PaymentsScreen() {
     try {
       const result = await fetchPaymentsPage(
         supabase as unknown as SupabaseLike,
-        buildPageArgs(user.id, activeFilters, current.pageOffset),
+        buildPageArgs(user.id, activeFilters, current.pageOffset, activePg.id),
       )
       if (!result.ok) throw result.error
       setPageState((prev) =>
@@ -686,7 +686,7 @@ export default function PaymentsScreen() {
     } finally {
       setIsLoadingMore(false)
     }
-  }, [user?.id, isLoadingMore])
+  }, [user?.id, activePg?.id, isLoadingMore])
 
   const handleRefreshPortalLink = async () => {
     if (!user?.id) return
@@ -756,7 +756,7 @@ export default function PaymentsScreen() {
       console.log("[WhatsApp Group Notice Debug] Sharing group notice:")
       console.log("  - URL:", `${chatbotApiUrl}/api/v1/send-group-notice`)
 
-      const response = await fetch(`${chatbotApiUrl}/api/v1/send-group-notice`, {
+      const response = await fetch(`${chatbotApiUrl}/api/v1/send-group-notice?pgId=${activePg?.id}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -843,7 +843,7 @@ export default function PaymentsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (user?.id) {
+      if (user?.id && activePg?.id) {
         // Defer the on-focus fetch past the navigation transition / first interactive
         // paint (Change A); cached/skeleton content renders first, then the load runs
         // once per focus and is cancelled on blur-before-run (no drop, no duplicate).
@@ -853,7 +853,7 @@ export default function PaymentsScreen() {
         })
         return () => handle.cancel()
       }
-    }, [user?.id, fetchPayments, fetchFutureMonths])
+    }, [user?.id, activePg?.id, fetchPayments, fetchFutureMonths])
   )
 
   // Filter changes (month/year/status/search) reset the offset to 0 and request the
@@ -863,20 +863,20 @@ export default function PaymentsScreen() {
   // so this effect skips running before the first load has happened.
   const filterSig = useMemo(() => filterSignature(filters), [filters])
   useEffect(() => {
-    if (!user?.id || !hasLoadedOnce.current) return
+    if (!user?.id || !activePg?.id || !hasLoadedOnce.current) return
     const handle = setTimeout(() => {
       void fetchPayments(true)
     }, 250)
     return () => clearTimeout(handle)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterSig, user?.id, fetchPayments])
+  }, [filterSig, user?.id, activePg?.id, fetchPayments])
 
   // Realtime updates
   useEffect(() => {
-    if (!user?.id) return
+    if (!user?.id || !activePg?.id) return
 
     const channel = supabase
-      .channel(`payments_ledger_realtime_${user.id}`)
+      .channel(`payments_ledger_realtime_${user.id}_${activePg.id}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "payments", filter: `owner_id=eq.${user.id}` },
@@ -889,7 +889,7 @@ export default function PaymentsScreen() {
     return () => {
       void supabase.removeChannel(channel)
     }
-  }, [user?.id, fetchPayments])
+  }, [user?.id, activePg?.id, fetchPayments])
 
   const onRefresh = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
@@ -1065,7 +1065,7 @@ export default function PaymentsScreen() {
         console.log("  - Phone:", formattedPhone)
         console.log("  - Token present:", !!token)
         
-        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice`, {
+        const response = await fetch(`${chatbotApiUrl}/api/v1/send-whatsapp-notice?pgId=${activePg?.id}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -2314,18 +2314,40 @@ export default function PaymentsScreen() {
                       )
                     })()}
 
-                    {(selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount && (
+                    {(selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount && selectedPayment.status !== "paid" && (
                       <View className="flex-row justify-between items-center">
                         <Text className="text-xs font-medium text-blue-600 dark:text-blue-400">Already Paid</Text>
                         <Text className="text-sm font-bold text-blue-600 dark:text-blue-400">- ₹{(selectedPayment.amount_paid ?? 0).toLocaleString()}</Text>
                       </View>
                     )}
+                    {/* When paid after partial: show partial + manual settlement lines */}
+                    {selectedPayment.status === "paid" && (selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount && (
+                      <>
+                        <View className="flex-row justify-between items-center">
+                          <Text className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Paid (Screenshot)</Text>
+                          <Text className="text-sm font-bold text-emerald-600 dark:text-emerald-400">₹{(selectedPayment.amount_paid ?? 0).toLocaleString()}</Text>
+                        </View>
+                        <View className="flex-row justify-between items-center">
+                          <Text className="text-xs font-medium text-emerald-600 dark:text-emerald-400">Settled Manually</Text>
+                          <Text className="text-sm font-bold text-emerald-600 dark:text-emerald-400">₹{(selectedPayment.total_amount - (selectedPayment.amount_paid ?? 0)).toLocaleString()}</Text>
+                        </View>
+                      </>
+                    )}
                     <View className="border-t border-border dark:border-border-dark pt-2.5 flex-row justify-between items-center">
                       <Text className="text-xs font-bold text-foreground dark:text-foreground-dark">
-                        {(selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount ? "Remaining Balance" : "Total Rent Amount"}
+                        {selectedPayment.status === "paid"
+                          ? "Total Paid"
+                          : (selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount
+                            ? "Remaining Balance"
+                            : "Total Rent Amount"}
                       </Text>
                       <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
-                        ₹{((selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount ? selectedPayment.total_amount - (selectedPayment.amount_paid ?? 0) : selectedPayment.total_amount).toLocaleString()}
+                        ₹{(selectedPayment.status === "paid"
+                          ? selectedPayment.total_amount
+                          : (selectedPayment.amount_paid ?? 0) > 0 && (selectedPayment.amount_paid ?? 0) < selectedPayment.total_amount
+                            ? selectedPayment.total_amount - (selectedPayment.amount_paid ?? 0)
+                            : selectedPayment.total_amount
+                        ).toLocaleString()}
                       </Text>
                     </View>
                   </View>
@@ -2333,38 +2355,55 @@ export default function PaymentsScreen() {
                   {/* Partial Payment Balance Summary */}
                   {(((selectedPayment.amount_paid ?? 0) > 0) ||
                     selectedPayment.status === "partially_paid" ||
-                    paymentSubmissions.length > 1) && (
-                    <View className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-3xl gap-2.5">
+                    paymentSubmissions.length > 1) && (() => {
+                    const isPaid = selectedPayment.status === "paid"
+                    const amtPaid = selectedPayment.amount_paid ?? 0
+                    const effectivePaid = isPaid ? selectedPayment.total_amount : amtPaid
+                    const pct = Math.min(100, Math.round((effectivePaid / (selectedPayment.total_amount || 1)) * 100))
+                    const manuallySettled = isPaid && amtPaid > 0 && amtPaid < selectedPayment.total_amount
+                    return (
+                    <View className={`${isPaid ? 'bg-emerald-500/5 border border-emerald-500/20' : 'bg-blue-500/5 border border-blue-500/20'} p-4 rounded-3xl gap-2.5`}>
                       <View className="flex-row items-center justify-between">
-                        <Text className="text-[10px] font-extrabold uppercase tracking-widest text-blue-600 dark:text-blue-400">Payment Progress</Text>
-                        {isPartiallyPaid(selectedPayment) && (
+                        <Text className={`text-[10px] font-extrabold uppercase tracking-widest ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'}`}>Payment Progress</Text>
+                        {isPaid ? (
+                          <View className="bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded">
+                            <Text className="text-[9px] font-black uppercase text-emerald-600 dark:text-emerald-400">Fully Paid</Text>
+                          </View>
+                        ) : isPartiallyPaid(selectedPayment) ? (
                           <View className="bg-blue-500/10 border border-blue-500/30 px-2 py-0.5 rounded">
                             <Text className="text-[9px] font-black uppercase text-blue-600 dark:text-blue-400">Partial</Text>
                           </View>
-                        )}
+                        ) : null}
                       </View>
                       <Text className="text-sm font-black text-foreground dark:text-foreground-dark">
-                        Paid ₹{(selectedPayment.amount_paid ?? 0).toLocaleString()} of ₹{selectedPayment.total_amount.toLocaleString()}
+                        {isPaid
+                          ? `Paid ₹${selectedPayment.total_amount.toLocaleString()} — Fully Settled`
+                          : `Paid ₹${amtPaid.toLocaleString()} of ₹${selectedPayment.total_amount.toLocaleString()}`}
                       </Text>
+                      {manuallySettled && (
+                        <View className="flex-row gap-2">
+                          <View className="flex-1 bg-emerald-500/10 border border-emerald-500/20 p-2 rounded-xl items-center">
+                            <Text className="text-[9px] font-bold text-muted uppercase">Via Proof</Text>
+                            <Text className="text-xs font-black text-emerald-600 dark:text-emerald-400">₹{amtPaid.toLocaleString()}</Text>
+                          </View>
+                          <View className="flex-1 bg-emerald-500/10 border border-emerald-500/20 p-2 rounded-xl items-center">
+                            <Text className="text-[9px] font-bold text-muted uppercase">Manually</Text>
+                            <Text className="text-xs font-black text-emerald-600 dark:text-emerald-400">₹{(selectedPayment.total_amount - amtPaid).toLocaleString()}</Text>
+                          </View>
+                        </View>
+                      )}
                       <View className="h-2 bg-muted/20 rounded-full overflow-hidden">
                         <View
-                          className="h-full bg-blue-500 rounded-full"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              Math.round(
-                                ((selectedPayment.amount_paid ?? 0) /
-                                  (selectedPayment.total_amount || 1)) * 100,
-                              ),
-                            )}%`,
-                          }}
+                          className={`h-full ${isPaid ? 'bg-emerald-500' : 'bg-blue-500'} rounded-full`}
+                          style={{ width: `${pct}%` }}
                         />
                       </View>
-                      <Text className="text-xs font-bold text-blue-600 dark:text-blue-400">
-                        Balance ₹{paymentBalance(selectedPayment).toLocaleString()}
+                      <Text className={`text-xs font-bold ${isPaid ? 'text-emerald-600 dark:text-emerald-400' : 'text-blue-600 dark:text-blue-400'}`}>
+                        {isPaid ? 'No balance remaining' : `Balance ₹${paymentBalance(selectedPayment).toLocaleString()}`}
                       </Text>
                     </View>
-                  )}
+                    )
+                  })()}
 
                   {/* Payment Proofs — full submission history (newest first) */}
                   <View className="bg-purple-500/5 border border-purple-500/10 p-4 rounded-3xl gap-3">
